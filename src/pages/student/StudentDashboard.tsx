@@ -14,39 +14,28 @@ import { DashboardStatSkeleton } from '../../components/ui/LoadingSkeleton';
 import type { Assignment, Announcement } from '../../types';
 
 export default function StudentDashboard() {
-  const { profile } = useAuth();
-  const { data: newEnrollments = [], isLoading: newEnrollmentsLoading } = useMyEnrollments();
+  const { user, profile } = useAuth();
+  const { data: enrollments = [], isLoading: enrollmentsLoading } = useMyEnrollments();
 
-  const [legacyEnrollments, setLegacyEnrollments] = useState<Array<{
-    id: string; course_id: string; progress_percent: number; enrolled_at: string;
-    course: { id: string; title: string; thumbnail_url: string; total_lessons: number; category: string } | null;
-  }>>([]);
   const [certificates, setCertificates] = useState(0);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [sideLoading, setSideLoading] = useState(true);
 
+  // Fetch side-panel data (certs, assignments, announcements) using user.id
+  // so it starts immediately without waiting for profile
   useEffect(() => {
-    if (!profile) return;
-    const fetchData = async () => {
-      // Step 1: fetch enrollments + cert count in parallel
-      const [enrollRes, certRes] = await Promise.all([
-        supabase
-          .from('enrollments')
-          .select('id,course_id,progress_percent,enrolled_at,course:courses(id,title,thumbnail_url,total_lessons,category)')
-          .eq('student_id', profile.id)
-          .order('enrolled_at', { ascending: false }),
+    if (!user) return;
+    let cancelled = false;
+    const fetchSideData = async () => {
+      const courseIds = enrollments.map(e => e.course_id);
+
+      const [certRes, assignRes, annRes] = await Promise.all([
         supabase
           .from('certificates')
           .select('id', { count: 'exact', head: true })
-          .eq('student_id', profile.id)
+          .eq('student_id', user.id)
           .eq('revoked', false),
-      ]);
-
-      const courseIds = enrollRes.data?.map(e => e.course_id) ?? [];
-
-      // Step 2: assignments (needs courseIds) + announcements in parallel
-      const [assignRes, annRes] = await Promise.all([
         courseIds.length > 0
           ? supabase
               .from('assignments')
@@ -56,7 +45,7 @@ export default function StudentDashboard() {
               .gte('due_date', new Date().toISOString())
               .order('due_date', { ascending: true })
               .limit(4)
-          : Promise.resolve({ data: [] }),
+          : Promise.resolve({ data: [], count: null, error: null, status: 200, statusText: 'OK' }),
         supabase
           .from('announcements')
           .select('id,title,content,created_at')
@@ -65,72 +54,48 @@ export default function StudentDashboard() {
           .limit(3),
       ]);
 
-      if (enrollRes.data) setLegacyEnrollments(enrollRes.data as typeof legacyEnrollments);
+      if (cancelled) return;
       setCertificates(certRes.count || 0);
       if (assignRes.data) setAssignments(assignRes.data as Assignment[]);
       if (annRes.data) setAnnouncements(annRes.data as Announcement[]);
-      setLoading(false);
+      setSideLoading(false);
     };
-    fetchData();
-  }, [profile]);
 
-  // Memoize merged enrollment list
-  const allEnrollments = useMemo(() => {
-    const newIds = new Set(newEnrollments.map(e => e.course_id));
-    const legacyOnly = legacyEnrollments.filter(e => !newIds.has(e.course_id));
-    return [
-      ...newEnrollments
-        .filter(e => e.course)
-        .map(e => ({
-          id: e.id,
-          course_id: e.course_id,
-          progress_percent: e.progress_percent,
-          last_accessed_at: e.last_accessed_at,
-          course: e.course
-            ? { id: e.course.id, title: e.course.title, thumbnail_url: e.course.thumbnail_url ?? '', total_lessons: e.course.total_lessons ?? 0, category: e.course.category ?? '' }
-            : null,
-        })),
-      ...legacyOnly.map(e => ({
-        id: e.id,
-        course_id: e.course_id,
-        progress_percent: e.progress_percent,
-        last_accessed_at: e.enrolled_at,
-        course: e.course,
-      })),
-    ].sort((a, b) => new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime());
-  }, [newEnrollments, legacyEnrollments]);
-
-  const isLoading = loading || newEnrollmentsLoading;
+    fetchSideData();
+    return () => { cancelled = true; };
+  }, [user, enrollments]);
 
   const { completed, inProgress, avgProgress } = useMemo(() => {
-    const completed = allEnrollments.filter(e => e.progress_percent === 100).length;
-    const inProgress = allEnrollments.filter(e => e.progress_percent > 0 && e.progress_percent < 100).length;
-    const avgProgress = allEnrollments.length > 0
-      ? Math.round(allEnrollments.reduce((s, e) => s + e.progress_percent, 0) / allEnrollments.length)
+    const completed = enrollments.filter(e => e.progress_percent === 100).length;
+    const inProgress = enrollments.filter(e => e.progress_percent > 0 && e.progress_percent < 100).length;
+    const avgProgress = enrollments.length > 0
+      ? Math.round(enrollments.reduce((s, e) => s + e.progress_percent, 0) / enrollments.length)
       : 0;
     return { completed, inProgress, avgProgress };
-  }, [allEnrollments]);
+  }, [enrollments]);
 
   const continueLesson = useMemo(
-    () => allEnrollments.find(e => e.progress_percent > 0 && e.progress_percent < 100),
-    [allEnrollments]
+    () => enrollments.find(e => e.progress_percent > 0 && e.progress_percent < 100),
+    [enrollments]
   );
 
-  const stats = [
-    { label: 'Enrolled',     value: allEnrollments.length, icon: BookOpen,    color: 'bg-blue-500' },
-    { label: 'Completed',    value: completed,              icon: CheckCircle2, color: 'bg-emerald-500' },
-    { label: 'In Progress',  value: inProgress,             icon: TrendingUp,   color: 'bg-amber-500' },
-    { label: 'Certificates', value: certificates,           icon: Award,        color: 'bg-gold-500' },
-  ];
+  const stats = useMemo(() => [
+    { label: 'Enrolled',     value: enrollments.length, icon: BookOpen,    color: 'bg-blue-500' },
+    { label: 'Completed',    value: completed,           icon: CheckCircle2, color: 'bg-emerald-500' },
+    { label: 'In Progress',  value: inProgress,          icon: TrendingUp,   color: 'bg-amber-500' },
+    { label: 'Certificates', value: certificates,        icon: Award,        color: 'bg-gold-500' },
+  ], [enrollments.length, completed, inProgress, certificates]);
+
+  const displayName = profile?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Learner';
 
   return (
     <DashboardLayout
       navItems={studentNavItems}
       title="My Dashboard"
-      subtitle={`Welcome back, ${profile?.full_name?.split(' ')[0] || 'Learner'}!`}
+      subtitle={`Welcome back, ${displayName}!`}
     >
       <div className="space-y-6">
-        {isLoading ? (
+        {enrollmentsLoading ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[1,2,3,4].map(i => <DashboardStatSkeleton key={i} />)}
           </div>
@@ -150,7 +115,7 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {!isLoading && continueLesson?.course && (
+        {!enrollmentsLoading && continueLesson?.course && (
           <div className="card overflow-hidden">
             <div className="flex items-center gap-4 p-5">
               <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0">
@@ -186,7 +151,7 @@ export default function StudentDashboard() {
                 Browse more <ChevronRight className="w-4 h-4" />
               </Link>
             </div>
-            {isLoading ? (
+            {enrollmentsLoading ? (
               <div className="p-5 space-y-4">
                 {[1,2,3].map(i => (
                   <div key={i} className="flex gap-4 animate-pulse">
@@ -198,7 +163,7 @@ export default function StudentDashboard() {
                   </div>
                 ))}
               </div>
-            ) : allEnrollments.length === 0 ? (
+            ) : enrollments.length === 0 ? (
               <div className="p-10 text-center">
                 <BookOpen className="w-10 h-10 text-gray-300 dark:text-navy-600 mx-auto mb-3" />
                 <p className="text-gray-500 dark:text-gray-400 font-medium mb-2">No courses yet</p>
@@ -206,7 +171,7 @@ export default function StudentDashboard() {
               </div>
             ) : (
               <div className="divide-y divide-gray-50 dark:divide-navy-700">
-                {allEnrollments.slice(0, 5).map(en => en.course && (
+                {enrollments.slice(0, 5).map(en => en.course && (
                   <div key={en.id} className="flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-navy-700/50 transition-colors">
                     <img
                       src={en.course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
@@ -266,7 +231,16 @@ export default function StudentDashboard() {
                   Upcoming Deadlines
                 </h2>
               </div>
-              {assignments.length === 0 ? (
+              {sideLoading ? (
+                <div className="p-4 space-y-3">
+                  {[1,2].map(i => (
+                    <div key={i} className="animate-pulse space-y-1">
+                      <div className="h-4 bg-gray-200 dark:bg-navy-700 rounded w-3/4" />
+                      <div className="h-3 bg-gray-200 dark:bg-navy-700 rounded w-1/3" />
+                    </div>
+                  ))}
+                </div>
+              ) : assignments.length === 0 ? (
                 <div className="p-6 text-center text-gray-400 text-sm">No upcoming deadlines</div>
               ) : (
                 <div className="divide-y divide-gray-50 dark:divide-navy-700">
@@ -292,7 +266,16 @@ export default function StudentDashboard() {
                   Announcements
                 </h2>
               </div>
-              {announcements.length === 0 ? (
+              {sideLoading ? (
+                <div className="p-4 space-y-3">
+                  {[1,2].map(i => (
+                    <div key={i} className="animate-pulse space-y-1">
+                      <div className="h-4 bg-gray-200 dark:bg-navy-700 rounded w-3/4" />
+                      <div className="h-3 bg-gray-200 dark:bg-navy-700 rounded w-full" />
+                    </div>
+                  ))}
+                </div>
+              ) : announcements.length === 0 ? (
                 <div className="p-6 text-center text-gray-400 text-sm">No announcements</div>
               ) : (
                 <div className="divide-y divide-gray-50 dark:divide-navy-700">

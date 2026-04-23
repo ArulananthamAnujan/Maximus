@@ -95,7 +95,7 @@ export function useMyEnrollments() {
   return useQuery({
     queryKey: ['my-enrollments', user?.id],
     enabled: !!user,
-    staleTime: 60 * 1000,
+    staleTime: 5 * 60 * 1000,
     queryFn: async (): Promise<CourseEnrollmentRow[]> => {
       if (!user) return [];
       const { data } = await supabase

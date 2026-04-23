@@ -52,9 +52,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
+        // Unblock the UI immediately — profile loads in the background
+        setLoading(false);
         (async () => {
           await fetchProfile(session.user.id);
-          setLoading(false);
         })();
       } else {
         setProfile(null);
