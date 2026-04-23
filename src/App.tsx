@@ -1,8 +1,21 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 const Home = lazy(() => import('./pages/public/Home'));
 const Courses = lazy(() => import('./pages/public/Courses'));
@@ -103,10 +116,12 @@ function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: 
 
 export default function App() {
   return (
+    <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <ThemeProvider>
         <AuthProvider>
           <ToastProvider>
+            <Toaster position="top-right" richColors closeButton />
             <Suspense fallback={<LoadingScreen />}>
               <Routes>
                 <Route path="/dashboard" element={<DashboardRedirect />} />
@@ -164,5 +179,6 @@ export default function App() {
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
+    </QueryClientProvider>
   );
 }

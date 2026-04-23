@@ -13,9 +13,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'supabase': ['@supabase/supabase-js'],
-          'icons': ['lucide-react'],
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+          'vendor-charts': ['recharts'],
+          'vendor-pdf': ['jspdf', 'jspdf-autotable'],
+          'vendor-utils': ['date-fns', 'papaparse'],
+          'vendor-query': ['@tanstack/react-query'],
+          'vendor-form': ['react-hook-form', 'zod', '@hookform/resolvers'],
+          'vendor-ui': ['sonner', 'clsx', 'tailwind-merge'],
         },
       },
     },
