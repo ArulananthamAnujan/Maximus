@@ -36,45 +36,44 @@ export function useHasCourseAccess(courseId: string | undefined): AccessResult {
     queryFn: async () => {
       if (!courseId || !user) return null;
 
+      // Admins always have access — no DB hit needed
       if (profile?.role === 'admin') return { hasAccess: true, reason: 'admin' as AccessReason };
 
-      // Check if teacher owns this course
-      if (profile?.role === 'teacher') {
-        const { data: course } = await supabase
-          .from('courses')
-          .select('teacher_id')
-          .eq('id', courseId)
-          .maybeSingle();
-        if (course?.teacher_id === user.id) return { hasAccess: true, reason: 'teacher' as AccessReason };
+      // Run all checks in parallel: course ownership + both enrollment tables
+      const [courseRes, newEnrollRes, legacyEnrollRes] = await Promise.all([
+        profile?.role === 'teacher'
+          ? supabase.from('courses').select('teacher_id').eq('id', courseId).maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase
+          .from('course_enrollments')
+          .select('payment_status')
+          .eq('user_id', user.id)
+          .eq('course_id', courseId)
+          .maybeSingle(),
+        supabase
+          .from('enrollments')
+          .select('id')
+          .eq('student_id', user.id)
+          .eq('course_id', courseId)
+          .maybeSingle(),
+      ]);
+
+      // Teacher owns this course
+      if (courseRes.data && (courseRes.data as { teacher_id: string }).teacher_id === user.id) {
+        return { hasAccess: true, reason: 'teacher' as AccessReason };
       }
 
-      // Check new course_enrollments table first
-      const { data: enrollment } = await supabase
-        .from('course_enrollments')
-        .select('enrollment_type, payment_status')
-        .eq('user_id', user.id)
-        .eq('course_id', courseId)
-        .maybeSingle();
-
-      if (enrollment) {
-        if (enrollment.payment_status === 'pending') {
-          return { hasAccess: false, reason: 'payment_pending' as AccessReason };
-        }
-        if (enrollment.payment_status === 'not_required' || enrollment.payment_status === 'completed') {
-          const reason: AccessReason = enrollment.enrollment_type === 'free' ? 'free_enrolled' : 'paid_enrolled';
-          return { hasAccess: true, reason };
+      // New enrollment table result
+      if (newEnrollRes.data) {
+        const status = newEnrollRes.data.payment_status;
+        if (status === 'pending') return { hasAccess: false, reason: 'payment_pending' as AccessReason };
+        if (status === 'not_required' || status === 'completed') {
+          return { hasAccess: true, reason: 'free_enrolled' as AccessReason };
         }
       }
 
-      // Fall back to legacy enrollments table
-      const { data: legacyEnrollment } = await supabase
-        .from('enrollments')
-        .select('id')
-        .eq('student_id', user.id)
-        .eq('course_id', courseId)
-        .maybeSingle();
-
-      if (legacyEnrollment) {
+      // Legacy enrollment table fallback
+      if (legacyEnrollRes.data) {
         return { hasAccess: true, reason: 'free_enrolled' as AccessReason };
       }
 
@@ -93,12 +92,12 @@ export function useCoursePricing(courseId: string | undefined): PricingResult {
   const { data, isLoading } = useQuery({
     queryKey: ['course-pricing', courseId],
     enabled: !!courseId,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
     queryFn: async () => {
       if (!courseId) return null;
       const { data } = await supabase
         .from('courses')
-        .select('is_free, is_paid, price, price_amount, currency, preview_enabled, stripe_payment_link')
+        .select('is_free,is_paid,price,price_amount,stripe_payment_link,preview_enabled')
         .eq('id', courseId)
         .maybeSingle();
       return data;
@@ -109,7 +108,7 @@ export function useCoursePricing(courseId: string | undefined): PricingResult {
     isFree: data?.is_free ?? true,
     isPaid: data?.is_paid ?? false,
     price: data?.price_amount ?? data?.price ?? 0,
-    currency: data?.currency ?? 'AUD',
+    currency: 'AUD',
     previewEnabled: data?.preview_enabled ?? true,
     stripePaymentLink: data?.stripe_payment_link ?? null,
     isLoading,

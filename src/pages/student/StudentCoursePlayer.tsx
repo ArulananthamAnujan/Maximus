@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, CheckCircle2, Circle, Play, FileText,
@@ -19,6 +19,57 @@ interface SectionWithLessons extends Section {
   lessons: Lesson[];
 }
 
+// ─── Memoized sidebar lesson item ────────────────────────────────────────────
+interface LessonItemProps {
+  lesson: Lesson;
+  isCompleted: boolean;
+  isActive: boolean;
+  canAccess: boolean;
+  progressPercent?: number;
+  onClick: (lesson: Lesson) => void;
+}
+
+const LessonItem = memo(function LessonItem({ lesson, isCompleted, isActive, canAccess, progressPercent, onClick }: LessonItemProps) {
+  const icon = useMemo(() => {
+    const icons: Record<string, React.ReactNode> = {
+      video: <Play className="w-3.5 h-3.5" />,
+      pdf: <FileText className="w-3.5 h-3.5" />,
+      text: <BookOpen className="w-3.5 h-3.5" />,
+      article: <BookOpen className="w-3.5 h-3.5" />,
+      link: <LinkIcon className="w-3.5 h-3.5" />,
+    };
+    return icons[lesson.type] ?? null;
+  }, [lesson.type]);
+
+  return (
+    <div
+      className={`w-full flex items-start gap-3 px-4 py-3 transition-colors ${canAccess ? 'hover:bg-gray-50 dark:hover:bg-navy-700/50 cursor-pointer' : 'opacity-50 cursor-not-allowed'} ${isActive ? 'bg-gold-50 dark:bg-gold-900/20 border-l-2 border-gold-500' : ''}`}
+      onClick={() => onClick(lesson)}
+    >
+      <span className={`mt-0.5 shrink-0 ${isCompleted ? 'text-green-500' : isActive ? 'text-gold-500' : 'text-gray-300 dark:text-navy-600'}`}>
+        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : canAccess ? <Circle className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+      </span>
+      <div className="flex-1 min-w-0">
+        <span className={`block text-xs font-medium leading-snug ${isActive ? 'text-gold-700 dark:text-gold-400' : 'text-gray-700 dark:text-gray-300'}`}>
+          {lesson.title}
+        </span>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className={`text-xs ${isActive ? 'text-gold-600 dark:text-gold-500' : 'text-gray-400'}`}>{icon}</span>
+          {lesson.duration_minutes > 0 && (
+            <span className="text-xs text-gray-400">{lesson.duration_minutes}min</span>
+          )}
+          {lesson.is_preview && !canAccess && (
+            <span className="text-xs text-sky-600 font-semibold">Preview</span>
+          )}
+          {progressPercent !== undefined && progressPercent > 0 && !isCompleted && (
+            <span className="text-xs text-amber-500">{progressPercent}%</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function StudentCoursePlayer() {
   const { courseId } = useParams<{ courseId: string }>();
   const { profile } = useAuth();
@@ -33,25 +84,19 @@ export default function StudentCoursePlayer() {
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
 
-  // Access gate
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
-
-  // Progress from React Query
   const { data: courseProgressRows = [] } = useCourseProgress(courseId);
   const updateProgressMutation = useUpdateLessonProgress();
 
-  // Video progress tracking refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressSaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartTime = useRef<number>(Date.now());
-  const lastSavedPosition = useRef<number>(0);
+  const autoCompleteFired = useRef<Set<string>>(new Set()); // prevent duplicate mutations
 
   // Build completed set from progress rows
   useEffect(() => {
     const completed = new Set(
-      courseProgressRows
-        .filter(p => p.status === 'completed')
-        .map(p => p.lesson_id)
+      courseProgressRows.filter(p => p.is_completed).map(p => p.lesson_id)
     );
     setCompletedLessons(completed);
   }, [courseProgressRows]);
@@ -60,8 +105,16 @@ export default function StudentCoursePlayer() {
     if (!courseId || !profile) return;
     const fetchData = async () => {
       const [courseRes, sectionsRes] = await Promise.all([
-        supabase.from('courses').select('*, teacher:profiles(full_name, avatar_url)').eq('id', courseId).maybeSingle(),
-        supabase.from('sections').select('*, lessons(*)').eq('course_id', courseId).order('order_index'),
+        supabase
+          .from('courses')
+          .select('id,title,short_description,thumbnail_url,category,level,total_lessons,teacher_id')
+          .eq('id', courseId)
+          .maybeSingle(),
+        supabase
+          .from('sections')
+          .select('id,title,order_index,lessons(id,title,type,lesson_type,video_url,content,duration_minutes,order_index,is_preview,file_url)')
+          .eq('course_id', courseId)
+          .order('order_index'),
       ]);
       if (courseRes.data) setCourse(courseRes.data as Course);
       if (sectionsRes.data) {
@@ -86,82 +139,112 @@ export default function StudentCoursePlayer() {
       videoRef.current.currentTime = row.last_position_seconds;
     }
     sessionStartTime.current = Date.now();
-    lastSavedPosition.current = row?.last_position_seconds ?? 0;
-  }, [activeLesson?.id]);
+    autoCompleteFired.current = new Set(); // reset per-lesson on switch
+  }, [activeLesson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Throttled video progress save (every 15 seconds)
   const saveVideoProgress = useCallback(() => {
     if (!activeLesson || !courseId || !hasAccess) return;
     const video = videoRef.current;
     if (!video || video.duration === 0) return;
     const position = Math.floor(video.currentTime);
     const percent = Math.floor((video.currentTime / video.duration) * 100);
-    const timeSpent = Math.floor((Date.now() - sessionStartTime.current) / 1000);
-    const isCompleted = percent >= 90;
     updateProgressMutation.mutate({
       lessonId: activeLesson.id,
       courseId,
       lastPositionSeconds: position,
-      timeSpentSeconds: timeSpent,
-      progressPercent: percent,
-      status: isCompleted ? 'completed' : 'in_progress',
-      completedAt: isCompleted ? new Date().toISOString() : null,
+      watchPercentage: percent,
+      isCompleted: percent >= 90,
     });
-    lastSavedPosition.current = position;
   }, [activeLesson, courseId, hasAccess, updateProgressMutation]);
 
+  // 30-second interval (was 15s — halves the network traffic)
   useEffect(() => {
-    if (!activeLesson || activeLesson.type !== 'video') return;
-    progressSaveTimer.current = setInterval(saveVideoProgress, 15000);
+    const lessonType = activeLesson?.type ?? activeLesson?.lesson_type;
+    if (!activeLesson || lessonType !== 'video') return;
+    progressSaveTimer.current = setInterval(saveVideoProgress, 30000);
     return () => {
       if (progressSaveTimer.current) clearInterval(progressSaveTimer.current);
     };
-  }, [activeLesson?.id, saveVideoProgress]);
+  }, [activeLesson?.id, saveVideoProgress]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const allRequired = sections.flatMap(s => s.lessons.filter(l => l.is_required));
-  const completedRequired = allRequired.filter(l => completedLessons.has(l.id)).length;
-  const progress = allRequired.length > 0 ? Math.round((completedRequired / allRequired.length) * 100) : 0;
+  const allLessons = useMemo(() => sections.flatMap(s => s.lessons), [sections]);
+  const completedCount = useMemo(() => allLessons.filter(l => completedLessons.has(l.id)).length, [allLessons, completedLessons]);
+  const progress = allLessons.length > 0 ? Math.round((completedCount / allLessons.length) * 100) : 0;
+
+  // Progress map for sidebar percentages
+  const progressMap = useMemo(() => {
+    const m = new Map<string, number>();
+    courseProgressRows.forEach(r => m.set(r.lesson_id, r.watch_percentage));
+    return m;
+  }, [courseProgressRows]);
+
+  const handleLessonClick = useCallback((lesson: Lesson) => {
+    const canAccess = hasAccess || lesson.is_preview;
+    if (!canAccess) {
+      sonnerToast.error('You need to enrol to access this lesson');
+      return;
+    }
+    setActiveLesson(lesson);
+    setSidebarOpen(false);
+  }, [hasAccess]);
 
   const handleMarkComplete = async () => {
     if (!activeLesson || !profile || completedLessons.has(activeLesson.id) || !courseId) return;
     setMarking(true);
 
-    // Save to new progress table
     updateProgressMutation.mutate({
       lessonId: activeLesson.id,
       courseId,
       lastPositionSeconds: videoRef.current ? Math.floor(videoRef.current.currentTime) : 0,
-      timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
-      progressPercent: 100,
-      status: 'completed',
+      watchPercentage: 100,
+      isCompleted: true,
       completedAt: new Date().toISOString(),
     });
 
-    // Also update legacy lesson_progress for backwards compatibility
-    await supabase.from('lesson_progress').insert({ student_id: profile.id, lesson_id: activeLesson.id }).then(() => {});
-
     const newCompleted = new Set(completedLessons).add(activeLesson.id);
     setCompletedLessons(newCompleted);
-    const newProgress = allRequired.length > 0 ? Math.round((newCompleted.size / allRequired.length) * 100) : 0;
 
-    // Update legacy enrollments
-    await supabase.from('enrollments').update({ progress_percent: newProgress }).eq('student_id', profile.id).eq('course_id', courseId);
-    // Update new enrollments
-    await supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId);
+    // Update legacy tables
+    await Promise.all([
+      supabase.from('lesson_progress').upsert({ student_id: profile.id, lesson_id: activeLesson.id, course_id: courseId, is_completed: true, watch_percentage: 100 }, { onConflict: 'student_id,lesson_id' }),
+      supabase.from('enrollments').update({ progress_percent: progress }).eq('student_id', profile.id).eq('course_id', courseId),
+      supabase.from('course_enrollments').update({ progress_percent: progress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId),
+    ]);
 
     toast.success('Lesson marked as complete!');
     setMarking(false);
   };
 
-  const lessonIcon = (type: Lesson['type']) => {
-    const icons = {
-      video: <Play className="w-3.5 h-3.5" />,
-      pdf: <FileText className="w-3.5 h-3.5" />,
-      article: <BookOpen className="w-3.5 h-3.5" />,
-      link: <LinkIcon className="w-3.5 h-3.5" />,
-    };
-    return icons[type];
-  };
+  // Memoized sidebar to prevent full re-render on every activeLesson change
+  const SidebarContent = useMemo(() => (
+    <div className="flex flex-col h-full">
+      <div className="p-4 border-b border-gray-100 dark:border-navy-700">
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Course Progress</p>
+        <ProgressBar value={progress} />
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{completedCount}/{allLessons.length} lessons completed</p>
+      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {sections.map(section => (
+          <div key={section.id} className="border-b border-gray-100 dark:border-navy-700 last:border-0">
+            <div className="px-4 py-3 bg-gray-50 dark:bg-navy-900/50">
+              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{section.title}</p>
+            </div>
+            {section.lessons.map(lesson => (
+              <LessonItem
+                key={lesson.id}
+                lesson={lesson}
+                isCompleted={completedLessons.has(lesson.id)}
+                isActive={activeLesson?.id === lesson.id}
+                canAccess={hasAccess || lesson.is_preview}
+                progressPercent={progressMap.get(lesson.id)}
+                onClick={handleLessonClick}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  ), [sections, completedLessons, activeLesson?.id, hasAccess, progress, completedCount, allLessons.length, progressMap, handleLessonClick]);
 
   if (loading || accessLoading) {
     return (
@@ -173,9 +256,7 @@ export default function StudentCoursePlayer() {
     );
   }
 
-  // Access guard: if not enrolled and lesson is not a preview, block
-  const activeLessonIsPreview = activeLesson?.is_preview ?? false;
-  if (!hasAccess && !activeLessonIsPreview) {
+  if (!hasAccess && !activeLesson?.is_preview) {
     return (
       <DashboardLayout navItems={studentNavItems} title="Access Denied" subtitle="">
         <div className="text-center py-20">
@@ -191,73 +272,11 @@ export default function StudentCoursePlayer() {
     );
   }
 
-  const Sidebar = () => (
-    <div className="flex flex-col h-full">
-      <div className="p-4 border-b border-gray-100 dark:border-navy-700">
-        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Course Progress</p>
-        <ProgressBar value={progress} />
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{completedRequired}/{allRequired.length} lessons completed</p>
-      </div>
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {sections.map(section => (
-          <div key={section.id} className="border-b border-gray-100 dark:border-navy-700 last:border-0">
-            <div className="px-4 py-3 bg-gray-50 dark:bg-navy-900/50">
-              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{section.title}</p>
-            </div>
-            {section.lessons.map(lesson => {
-              const isCompleted = completedLessons.has(lesson.id);
-              const isActive = activeLesson?.id === lesson.id;
-              const canAccess = hasAccess || lesson.is_preview;
-              const progressRow = courseProgressRows.find(p => p.lesson_id === lesson.id);
-              return (
-                <div
-                  key={lesson.id}
-                  className={`w-full flex items-start gap-3 px-4 py-3 transition-colors ${canAccess ? 'hover:bg-gray-50 dark:hover:bg-navy-700/50 cursor-pointer' : 'opacity-50 cursor-not-allowed'} ${isActive ? 'bg-gold-50 dark:bg-gold-900/20 border-l-2 border-gold-500' : ''}`}
-                  onClick={() => {
-                    if (!canAccess) {
-                      sonnerToast.error('You need to enrol to access this lesson');
-                      return;
-                    }
-                    setActiveLesson(lesson);
-                    setSidebarOpen(false);
-                  }}
-                >
-                  <button
-                    className={`mt-0.5 shrink-0 ${isCompleted ? 'text-green-500' : isActive ? 'text-gold-500' : 'text-gray-300 dark:text-navy-600'}`}
-                  >
-                    {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : canAccess ? <Circle className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <span className={`block text-xs font-medium leading-snug ${isActive ? 'text-gold-700 dark:text-gold-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                      {lesson.title}
-                    </span>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className={`text-xs ${isActive ? 'text-gold-600 dark:text-gold-500' : 'text-gray-400'}`}>{lessonIcon(lesson.type)}</span>
-                      {lesson.duration_minutes > 0 && (
-                        <span className="text-xs text-gray-400">{lesson.duration_minutes}min</span>
-                      )}
-                      {lesson.is_preview && !hasAccess && (
-                        <span className="text-xs text-sky-600 font-semibold">Preview</span>
-                      )}
-                      {progressRow && progressRow.status === 'in_progress' && progressRow.progress_percent > 0 && (
-                        <span className="text-xs text-amber-500">{progressRow.progress_percent}%</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
   return (
     <DashboardLayout navItems={studentNavItems} title={course?.title || 'Course Player'} subtitle="">
       <div className="flex gap-0 -m-4 sm:-m-6 h-[calc(100vh-8rem)]">
         <div className="hidden lg:flex flex-col w-72 border-r border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 overflow-hidden">
-          <Sidebar />
+          {SidebarContent}
         </div>
 
         {sidebarOpen && (
@@ -270,7 +289,7 @@ export default function StudentCoursePlayer() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <Sidebar />
+              {SidebarContent}
             </div>
           </div>
         )}
@@ -290,14 +309,7 @@ export default function StudentCoursePlayer() {
               <div>
                 <div className="flex items-start justify-between mb-6 gap-4">
                   <div>
-                    {(activeLesson.type === 'video' || activeLesson.type === 'pdf' || activeLesson.type === 'link') && activeLesson.url ? (
-                      <a href={activeLesson.url} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-2 mb-1">
-                        <h2 className="text-xl font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{activeLesson.title}</h2>
-                        <LinkIcon className="w-4 h-4 text-gray-300 dark:text-navy-600 group-hover:text-blue-500 transition-colors shrink-0" />
-                      </a>
-                    ) : (
-                      <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1">{activeLesson.title}</h2>
-                    )}
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1">{activeLesson.title}</h2>
                     <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                       <span className="capitalize">{activeLesson.type}</span>
                       {activeLesson.duration_minutes > 0 && <span>· {activeLesson.duration_minutes} min</span>}
@@ -308,11 +320,7 @@ export default function StudentCoursePlayer() {
                     </div>
                   </div>
                   {hasAccess && !completedLessons.has(activeLesson.id) && (
-                    <button
-                      onClick={handleMarkComplete}
-                      disabled={marking}
-                      className="btn-primary text-sm shrink-0 flex items-center gap-2"
-                    >
+                    <button onClick={handleMarkComplete} disabled={marking} className="btn-primary text-sm shrink-0 flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4" />
                       {marking ? 'Saving...' : 'Mark Complete'}
                     </button>
@@ -324,20 +332,28 @@ export default function StudentCoursePlayer() {
                   )}
                 </div>
 
-                {activeLesson.type === 'video' && activeLesson.url && (() => {
-                  const url = activeLesson.url;
+                {/* Video lesson */}
+                {(activeLesson.type === 'video' || activeLesson.lesson_type === 'video') && (() => {
+                  const url = activeLesson.video_url || (activeLesson as unknown as { url?: string }).url || '';
+                  if (!url) {
+                    return (
+                      <div className="rounded-xl bg-gray-900 flex items-center justify-center aspect-video mb-6">
+                        <div className="text-center text-gray-400">
+                          <Play className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                          <p className="text-sm">Video not available</p>
+                        </div>
+                      </div>
+                    );
+                  }
                   const ytMatch = url.match(/(?:v=|youtu\.be\/)([^&?\s]+)/);
                   const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
                   if (ytMatch) {
-                    const thumbnail = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
                     return (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block rounded-xl overflow-hidden mb-6 bg-black relative aspect-video group cursor-pointer"
-                      >
-                        <img src={thumbnail} alt="Video thumbnail" width={640} height={360} loading="lazy" className="w-full h-full object-cover opacity-75 group-hover:opacity-60 transition-opacity" />
+                      <a href={url} target="_blank" rel="noopener noreferrer"
+                        className="block rounded-xl overflow-hidden mb-6 bg-black relative aspect-video group cursor-pointer">
+                        <img src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`} alt="Video thumbnail"
+                          width={640} height={360} loading="lazy"
+                          className="w-full h-full object-cover opacity-75 group-hover:opacity-60 transition-opacity" />
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                           <div className="w-16 h-16 bg-red-600 group-hover:bg-red-700 rounded-full flex items-center justify-center shadow-2xl transition-colors">
                             <svg className="w-7 h-7 text-white ml-1" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -349,13 +365,9 @@ export default function StudentCoursePlayer() {
                   }
                   if (vimeoMatch) {
                     return (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex flex-col items-center justify-center gap-3 rounded-xl mb-6 bg-gray-900 aspect-video group cursor-pointer hover:bg-gray-800 transition-colors"
-                      >
-                        <div className="w-16 h-16 bg-blue-500 group-hover:bg-blue-600 rounded-full flex items-center justify-center shadow-2xl transition-colors">
+                      <a href={url} target="_blank" rel="noopener noreferrer"
+                        className="flex flex-col items-center justify-center gap-3 rounded-xl mb-6 bg-gray-900 aspect-video group cursor-pointer hover:bg-gray-800 transition-colors">
+                        <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center shadow-2xl">
                           <svg className="w-7 h-7 text-white ml-1" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                         </div>
                         <span className="text-white text-sm font-semibold">Watch on Vimeo</span>
@@ -371,20 +383,20 @@ export default function StudentCoursePlayer() {
                         className="w-full aspect-video"
                         onTimeUpdate={() => {
                           const video = videoRef.current;
-                          if (!video || !hasAccess) return;
+                          if (!video || !hasAccess || !activeLesson || !courseId) return;
                           const percent = Math.floor((video.currentTime / video.duration) * 100);
-                          if (percent >= 90 && activeLesson && !completedLessons.has(activeLesson.id) && courseId) {
+                          // Fire auto-complete exactly once per lesson load
+                          if (percent >= 90 && !completedLessons.has(activeLesson.id) && !autoCompleteFired.current.has(activeLesson.id)) {
+                            autoCompleteFired.current.add(activeLesson.id);
                             updateProgressMutation.mutate({
                               lessonId: activeLesson.id,
                               courseId,
                               lastPositionSeconds: Math.floor(video.currentTime),
-                              timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
-                              progressPercent: 100,
-                              status: 'completed',
+                              watchPercentage: 100,
+                              isCompleted: true,
                               completedAt: new Date().toISOString(),
                             });
-                            const newCompleted = new Set(completedLessons).add(activeLesson.id);
-                            setCompletedLessons(newCompleted);
+                            setCompletedLessons(prev => new Set(prev).add(activeLesson.id));
                             sonnerToast.success('Lesson completed!');
                           }
                         }}
@@ -392,67 +404,49 @@ export default function StudentCoursePlayer() {
                     </div>
                   );
                 })()}
-                {activeLesson.type === 'video' && !activeLesson.url && (
-                  <div className="rounded-xl bg-gray-900 flex items-center justify-center aspect-video mb-6">
-                    <div className="text-center text-gray-400">
-                      <Play className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">Video not available</p>
-                    </div>
-                  </div>
-                )}
-                {activeLesson.type === 'article' && (
+
+                {/* Text/article lesson */}
+                {(activeLesson.type === 'text' || activeLesson.type === 'article' || activeLesson.lesson_type === 'text') && (
                   <div className="prose dark:prose-invert max-w-none bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6">
                     <p className="text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">{activeLesson.content}</p>
                   </div>
                 )}
-                {activeLesson.type === 'link' && activeLesson.url && (
-                  <div className="bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">External Resource</p>
-                    <a href={activeLesson.url} target="_blank" rel="noopener noreferrer" className="btn-primary flex items-center gap-2 w-fit">
-                      <LinkIcon className="w-4 h-4" /> Open Resource
-                    </a>
-                  </div>
-                )}
-                {activeLesson.type === 'pdf' && activeLesson.url && (
-                  <div className="bg-white dark:bg-navy-800 rounded-xl border border-gray-100 dark:border-navy-700 mb-6 overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/50">
-                      <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                        <FileText className="w-4 h-4 text-red-500" />
-                        <span className="font-medium truncate max-w-xs">{activeLesson.url.split('/').pop()?.split('?')[0] || 'Document'}</span>
+
+                {/* File/PDF lesson */}
+                {(activeLesson.type === 'pdf' || activeLesson.type === 'file') && (activeLesson.file_url || (activeLesson as unknown as { url?: string }).url) && (() => {
+                  const fileUrl = activeLesson.file_url || (activeLesson as unknown as { url?: string }).url || '';
+                  return (
+                    <div className="bg-white dark:bg-navy-800 rounded-xl border border-gray-100 dark:border-navy-700 mb-6 overflow-hidden">
+                      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/50">
+                        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                          <FileText className="w-4 h-4 text-red-500" />
+                          <span className="font-medium truncate max-w-xs">{activeLesson.title}</span>
+                        </div>
+                        <a href={fileUrl} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 shrink-0 ml-3">
+                          <LinkIcon className="w-3.5 h-3.5" /> Open
+                        </a>
                       </div>
-                      <a
-                        href={activeLesson.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors shrink-0 ml-3"
-                      >
-                        <LinkIcon className="w-3.5 h-3.5" /> Open in New Tab
+                      <a href={fileUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex flex-col items-center justify-center gap-4 py-14 px-6 hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors cursor-pointer group">
+                        <div className="w-20 h-24 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-lg flex flex-col items-center justify-center gap-1 group-hover:border-red-400 transition-colors">
+                          <FileText className="w-8 h-8 text-red-500" />
+                          <span className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">PDF</span>
+                        </div>
+                        <div className="text-center">
+                          <p className="font-semibold text-gray-800 dark:text-white text-sm">{activeLesson.title}</p>
+                          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to open in a new tab</p>
+                        </div>
                       </a>
                     </div>
-                    <a
-                      href={activeLesson.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex flex-col items-center justify-center gap-4 py-14 px-6 hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors cursor-pointer group"
-                    >
-                      <div className="w-20 h-24 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-lg flex flex-col items-center justify-center gap-1 group-hover:border-red-400 transition-colors">
-                        <FileText className="w-8 h-8 text-red-500" />
-                        <span className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">PDF</span>
-                      </div>
-                      <div className="text-center">
-                        <p className="font-semibold text-gray-800 dark:text-white text-sm">{activeLesson.title}</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to open the PDF in a new tab</p>
-                      </div>
-                    </a>
-                  </div>
-                )}
+                  );
+                })()}
 
                 <div className="flex items-center justify-between">
                   <button
                     onClick={() => {
-                      const all = sections.flatMap(s => s.lessons);
-                      const idx = all.findIndex(l => l.id === activeLesson.id);
-                      if (idx > 0) setActiveLesson(all[idx - 1]);
+                      const idx = allLessons.findIndex(l => l.id === activeLesson.id);
+                      if (idx > 0) setActiveLesson(allLessons[idx - 1]);
                     }}
                     className="btn-outline text-sm"
                   >
@@ -460,10 +454,9 @@ export default function StudentCoursePlayer() {
                   </button>
                   <button
                     onClick={() => {
-                      const all = sections.flatMap(s => s.lessons);
-                      const idx = all.findIndex(l => l.id === activeLesson.id);
-                      if (idx < all.length - 1) {
-                        const next = all[idx + 1];
+                      const idx = allLessons.findIndex(l => l.id === activeLesson.id);
+                      if (idx < allLessons.length - 1) {
+                        const next = allLessons[idx + 1];
                         if (!hasAccess && !next.is_preview) {
                           sonnerToast.error('You need to enrol to access this lesson');
                           return;

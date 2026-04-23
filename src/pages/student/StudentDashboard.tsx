@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BookOpen, Award, Clock, TrendingUp, Bell, ChevronRight,
@@ -13,27 +13,14 @@ import { useMyEnrollments } from '../../hooks/useProgress';
 import { DashboardStatSkeleton } from '../../components/ui/LoadingSkeleton';
 import type { Assignment, Announcement } from '../../types';
 
-interface LegacyEnrollmentWithCourse {
-  id: string;
-  course_id: string;
-  progress_percent: number;
-  enrolled_at: string;
-  course: {
-    id: string;
-    title: string;
-    thumbnail_url: string;
-    total_lessons: number;
-    category: string;
-  };
-}
-
 export default function StudentDashboard() {
   const { profile } = useAuth();
-
-  // React Query for new enrollments (separate query per widget — no full re-render)
   const { data: newEnrollments = [], isLoading: newEnrollmentsLoading } = useMyEnrollments();
 
-  const [legacyEnrollments, setLegacyEnrollments] = useState<LegacyEnrollmentWithCourse[]>([]);
+  const [legacyEnrollments, setLegacyEnrollments] = useState<Array<{
+    id: string; course_id: string; progress_percent: number; enrolled_at: string;
+    course: { id: string; title: string; thumbnail_url: string; total_lessons: number; category: string } | null;
+  }>>([]);
   const [certificates, setCertificates] = useState(0);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -42,28 +29,43 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (!profile) return;
     const fetchData = async () => {
-      const [enrollRes, certRes, assignRes, annRes] = await Promise.all([
+      // Step 1: fetch enrollments + cert count in parallel
+      const [enrollRes, certRes] = await Promise.all([
         supabase
           .from('enrollments')
           .select('id,course_id,progress_percent,enrolled_at,course:courses(id,title,thumbnail_url,total_lessons,category)')
           .eq('student_id', profile.id)
           .order('enrolled_at', { ascending: false }),
-        supabase.from('certificates').select('id', { count: 'exact' }).eq('student_id', profile.id).eq('revoked', false),
         supabase
-          .from('assignments')
-          .select('*')
-          .in(
-            'course_id',
-            (await supabase.from('enrollments').select('course_id').eq('student_id', profile.id)).data?.map(e => e.course_id) ?? []
-          )
-          .not('due_date', 'is', null)
-          .gte('due_date', new Date().toISOString())
-          .order('due_date', { ascending: true })
-          .limit(4),
-        supabase.from('announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(3),
+          .from('certificates')
+          .select('id', { count: 'exact', head: true })
+          .eq('student_id', profile.id)
+          .eq('revoked', false),
       ]);
 
-      if (enrollRes.data) setLegacyEnrollments(enrollRes.data as LegacyEnrollmentWithCourse[]);
+      const courseIds = enrollRes.data?.map(e => e.course_id) ?? [];
+
+      // Step 2: assignments (needs courseIds) + announcements in parallel
+      const [assignRes, annRes] = await Promise.all([
+        courseIds.length > 0
+          ? supabase
+              .from('assignments')
+              .select('id,title,due_date,course_id')
+              .in('course_id', courseIds)
+              .not('due_date', 'is', null)
+              .gte('due_date', new Date().toISOString())
+              .order('due_date', { ascending: true })
+              .limit(4)
+          : Promise.resolve({ data: [] }),
+        supabase
+          .from('announcements')
+          .select('id,title,content,created_at')
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(3),
+      ]);
+
+      if (enrollRes.data) setLegacyEnrollments(enrollRes.data as typeof legacyEnrollments);
       setCertificates(certRes.count || 0);
       if (assignRes.data) setAssignments(assignRes.data as Assignment[]);
       if (annRes.data) setAnnouncements(annRes.data as Announcement[]);
@@ -72,52 +74,53 @@ export default function StudentDashboard() {
     fetchData();
   }, [profile]);
 
-  // Merge both enrollment sources
-  const newEnrollmentCourseIds = new Set(newEnrollments.map(e => e.course_id));
-  const legacyOnly = legacyEnrollments.filter(e => !newEnrollmentCourseIds.has(e.course_id));
-
-  // Build unified list for display: prefer new enrollments, fall back to legacy
-  const allEnrollments = [
-    ...newEnrollments.map(e => ({
-      id: e.id,
-      course_id: e.course_id,
-      progress_percent: e.progress_percent,
-      last_accessed_at: e.last_accessed_at,
-      course: e.course
-        ? {
-            id: e.course.id,
-            title: e.course.title,
-            thumbnail_url: e.course.thumbnail_url ?? '',
-            total_lessons: e.course.total_lessons ?? 0,
-            category: e.course.category ?? '',
-          }
-        : null,
-    })).filter(e => e.course),
-    ...legacyOnly.map(e => ({
-      id: e.id,
-      course_id: e.course_id,
-      progress_percent: e.progress_percent,
-      last_accessed_at: e.enrolled_at,
-      course: e.course,
-    })),
-  ].sort((a, b) => new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime());
+  // Memoize merged enrollment list
+  const allEnrollments = useMemo(() => {
+    const newIds = new Set(newEnrollments.map(e => e.course_id));
+    const legacyOnly = legacyEnrollments.filter(e => !newIds.has(e.course_id));
+    return [
+      ...newEnrollments
+        .filter(e => e.course)
+        .map(e => ({
+          id: e.id,
+          course_id: e.course_id,
+          progress_percent: e.progress_percent,
+          last_accessed_at: e.last_accessed_at,
+          course: e.course
+            ? { id: e.course.id, title: e.course.title, thumbnail_url: e.course.thumbnail_url ?? '', total_lessons: e.course.total_lessons ?? 0, category: e.course.category ?? '' }
+            : null,
+        })),
+      ...legacyOnly.map(e => ({
+        id: e.id,
+        course_id: e.course_id,
+        progress_percent: e.progress_percent,
+        last_accessed_at: e.enrolled_at,
+        course: e.course,
+      })),
+    ].sort((a, b) => new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime());
+  }, [newEnrollments, legacyEnrollments]);
 
   const isLoading = loading || newEnrollmentsLoading;
-  const totalEnrolled = allEnrollments.length;
-  const completed = allEnrollments.filter(e => e.progress_percent === 100).length;
-  const inProgress = allEnrollments.filter(e => e.progress_percent > 0 && e.progress_percent < 100).length;
-  const avgProgress = totalEnrolled > 0
-    ? Math.round(allEnrollments.reduce((s, e) => s + e.progress_percent, 0) / totalEnrolled)
-    : 0;
 
-  // "Continue Learning" — most recently accessed in-progress course
-  const continueLesson = allEnrollments.find(e => e.progress_percent > 0 && e.progress_percent < 100);
+  const { completed, inProgress, avgProgress } = useMemo(() => {
+    const completed = allEnrollments.filter(e => e.progress_percent === 100).length;
+    const inProgress = allEnrollments.filter(e => e.progress_percent > 0 && e.progress_percent < 100).length;
+    const avgProgress = allEnrollments.length > 0
+      ? Math.round(allEnrollments.reduce((s, e) => s + e.progress_percent, 0) / allEnrollments.length)
+      : 0;
+    return { completed, inProgress, avgProgress };
+  }, [allEnrollments]);
+
+  const continueLesson = useMemo(
+    () => allEnrollments.find(e => e.progress_percent > 0 && e.progress_percent < 100),
+    [allEnrollments]
+  );
 
   const stats = [
-    { label: 'Enrolled', value: totalEnrolled, icon: BookOpen, color: 'bg-blue-500' },
-    { label: 'Completed', value: completed, icon: CheckCircle2, color: 'bg-emerald-500' },
-    { label: 'In Progress', value: inProgress, icon: TrendingUp, color: 'bg-amber-500' },
-    { label: 'Certificates', value: certificates, icon: Award, color: 'bg-gold-500' },
+    { label: 'Enrolled',     value: allEnrollments.length, icon: BookOpen,    color: 'bg-blue-500' },
+    { label: 'Completed',    value: completed,              icon: CheckCircle2, color: 'bg-emerald-500' },
+    { label: 'In Progress',  value: inProgress,             icon: TrendingUp,   color: 'bg-amber-500' },
+    { label: 'Certificates', value: certificates,           icon: Award,        color: 'bg-gold-500' },
   ];
 
   return (
@@ -147,7 +150,6 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {/* Continue Learning Banner */}
         {!isLoading && continueLesson?.course && (
           <div className="card overflow-hidden">
             <div className="flex items-center gap-4 p-5">
@@ -155,8 +157,7 @@ export default function StudentDashboard() {
                 <img
                   src={continueLesson.course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
                   alt=""
-                  width={56}
-                  height={56}
+                  width={56} height={56}
                   loading="lazy"
                   className="w-full h-full object-cover"
                 />
@@ -169,10 +170,7 @@ export default function StudentDashboard() {
                   <p className="text-xs text-gray-400 mt-1">{continueLesson.progress_percent}% complete</p>
                 </div>
               </div>
-              <Link
-                to={`/student/courses/${continueLesson.course_id}`}
-                className="btn-primary text-sm flex items-center gap-2 shrink-0"
-              >
+              <Link to={`/student/courses/${continueLesson.course_id}`} className="btn-primary text-sm flex items-center gap-2 shrink-0">
                 <PlayCircle className="w-4 h-4" />
                 Resume
               </Link>
@@ -213,8 +211,7 @@ export default function StudentDashboard() {
                     <img
                       src={en.course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
                       alt=""
-                      width={64}
-                      height={48}
+                      width={64} height={48}
                       loading="lazy"
                       className="w-16 h-12 rounded-lg object-cover shrink-0"
                     />

@@ -36,7 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id,email,full_name,avatar_url,bio,role,phone,created_at,updated_at')
         .eq('id', userId)
         .maybeSingle();
       if (data && !error) setProfile(data as Profile);
@@ -46,13 +46,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) await fetchProfile(session.user.id);
-      setLoading(false);
-    });
-
+    // Single source of truth: onAuthStateChange fires on init with the
+    // current session, so we don't need a separate getSession() call.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
