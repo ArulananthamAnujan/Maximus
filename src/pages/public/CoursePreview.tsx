@@ -2,77 +2,88 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Star, Clock, BookOpen, Users, CheckCircle2, ChevronDown, ChevronUp,
-  Play, FileText, Link as LinkIcon, ArrowLeft, ShoppingCart
+  Play, FileText, Link as LinkIcon, ArrowLeft, ShoppingCart, Lock, Unlock,
+  CreditCard, X
 } from 'lucide-react';
 import PublicHeader from '../../components/layout/PublicHeader';
 import PublicFooter from '../../components/layout/PublicFooter';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import type { Course, Section, Enrollment } from '../../types';
+import { useHasCourseAccess } from '../../hooks/useAccess';
+import { useEnrollInFreeCourse } from '../../hooks/useProgress';
+import { toast as sonnerToast } from 'sonner';
+import type { Course, Section } from '../../types';
 
 export default function CoursePreview() {
   const { id } = useParams<{ id: string }>();
   const [course, setCourse] = useState<Course | null>(null);
   const [sections, setSections] = useState<Section[]>([]);
-  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [loading, setLoading] = useState(true);
-  const [enrolling, setEnrolling] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [promoCode, setPromoCode] = useState('');
   const [discount, setDiscount] = useState(0);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  const { hasAccess, reason, isLoading: accessLoading } = useHasCourseAccess(id);
+  const enrollMutation = useEnrollInFreeCourse();
+
   useEffect(() => {
+    if (!id) return;
     const fetchData = async () => {
-      if (!id) return;
       const [courseRes, sectionsRes] = await Promise.all([
         supabase.from('courses').select('*, teacher:profiles(full_name, avatar_url, bio)').eq('id', id).maybeSingle(),
-        supabase.from('sections').select('*, lessons(*)').eq('course_id', id).order('order_index'),
+        supabase.from('sections').select('*, lessons(id,title,type,duration_minutes,is_preview,order_index)').eq('course_id', id).order('order_index'),
       ]);
       if (courseRes.data) setCourse(courseRes.data as Course);
-      if (sectionsRes.data) setSections(sectionsRes.data as Section[]);
-      if (user) {
-        const { data: enr } = await supabase.from('enrollments').select('*').eq('student_id', user.id).eq('course_id', id).maybeSingle();
-        if (enr) setEnrollment(enr as Enrollment);
+      if (sectionsRes.data) {
+        const sorted = sectionsRes.data.map(s => ({
+          ...s,
+          lessons: [...(s.lessons || [])].sort((a, b) => a.order_index - b.order_index),
+        }));
+        setSections(sorted as Section[]);
+        if (sorted.length) setExpandedSections(new Set([sorted[0].id]));
       }
       setLoading(false);
-      if (sectionsRes.data?.length) setExpandedSections(new Set([sectionsRes.data[0].id]));
     };
     fetchData();
-  }, [id, user]);
+  }, [id]);
 
   const applyPromo = async () => {
     if (!promoCode) return;
     const { data } = await supabase.from('promo_codes').select('*').eq('code', promoCode.toUpperCase()).eq('is_active', true).maybeSingle();
     if (data) {
       setDiscount(data.discount_percent);
-      toast.success(`Promo applied! ${data.discount_percent}% off`);
+      sonnerToast.success(`Promo applied! ${data.discount_percent}% off`);
     } else {
-      toast.error('Invalid or expired promo code');
+      sonnerToast.error('Invalid or expired promo code');
     }
   };
 
-  const handleEnroll = async () => {
+  const handleEnrollFree = async () => {
     if (!user || !profile) { navigate('/login'); return; }
-    if (!course) return;
-    setEnrolling(true);
-    if (course.is_free || course.price === 0) {
-      const { error } = await supabase.from('enrollments').insert({ student_id: user.id, course_id: course.id });
-      if (!error) {
-        toast.success('Enrolled successfully! Start learning now.');
-        navigate('/student/courses');
-      } else {
-        toast.error('Enrollment failed. You may already be enrolled.');
-      }
-    } else if (course.stripe_payment_link) {
+    if (!id) return;
+    enrollMutation.mutate(id, {
+      onSuccess: () => {
+        sonnerToast.success('Enrolled successfully! Start learning now.');
+        navigate(`/student/courses/${id}`);
+      },
+      onError: (err) => {
+        sonnerToast.error(err instanceof Error ? err.message : 'Enrollment failed.');
+      },
+    });
+  };
+
+  const handleBuyNow = () => {
+    if (!user || !profile) { navigate('/login'); return; }
+    if (course?.stripe_payment_link) {
       window.location.href = course.stripe_payment_link;
     } else {
-      toast.error('Payment is not yet configured for this course. Please contact us.');
+      setShowPaymentModal(true);
     }
-    setEnrolling(false);
   };
 
   const toggleSection = (sectionId: string) => {
@@ -84,7 +95,9 @@ export default function CoursePreview() {
     });
   };
 
-  const finalPrice = course ? course.price * (1 - discount / 100) : 0;
+  const price = course?.price_amount ?? course?.price ?? 0;
+  const isFree = course?.is_free || (!course?.is_paid && price === 0);
+  const finalPrice = price * (1 - discount / 100);
 
   if (loading) {
     return (
@@ -112,11 +125,94 @@ export default function CoursePreview() {
     </div>
   );
 
-  const enrollButtonLabel = () => {
-    if (enrolling) return 'Processing...';
-    if (course.is_free) return 'Enrol Free';
-    if (course.stripe_payment_link) return `Enrol Now — A$${finalPrice.toFixed(2)}`;
-    return `Enrol Now — A$${finalPrice.toFixed(2)}`;
+  const enrollButtonContent = () => {
+    if (enrollMutation.isPending) return 'Processing...';
+    if (isFree) return 'Enrol for Free';
+    if (course.stripe_payment_link) return `Buy Now — A$${finalPrice.toFixed(2)}`;
+    return `Buy Now — A$${finalPrice.toFixed(2)}`;
+  };
+
+  const renderEnrollmentCard = () => {
+    if (accessLoading) {
+      return <div className="h-12 bg-slate-100 rounded-xl animate-pulse" />;
+    }
+
+    if (hasAccess) {
+      return (
+        <div>
+          <div className="flex items-center gap-2 text-emerald-600 text-sm font-semibold mb-3 bg-emerald-50 rounded-xl px-4 py-2.5">
+            <Unlock className="w-4 h-4 shrink-0" />
+            {reason === 'admin' ? 'Admin access' : reason === 'teacher' ? 'Instructor access' : 'You are enrolled'}
+          </div>
+          <button
+            onClick={() => navigate(`/student/courses/${course.id}`)}
+            className="w-full px-4 py-3 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl transition-colors text-center"
+          >
+            Continue Learning
+          </button>
+        </div>
+      );
+    }
+
+    if (reason === 'payment_pending') {
+      return (
+        <div className="text-center py-3 px-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <p className="text-amber-700 font-semibold text-sm">Payment processing...</p>
+          <p className="text-amber-600 text-xs mt-1">Your payment is being verified. Please check back shortly.</p>
+        </div>
+      );
+    }
+
+    if (isFree) {
+      return (
+        <div>
+          <div className="text-3xl font-bold text-slate-900 font-playfair mb-4">Free</div>
+          <button
+            onClick={handleEnrollFree}
+            disabled={enrollMutation.isPending}
+            className="w-full px-4 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 mb-3 shadow-lg shadow-emerald-600/20"
+          >
+            <Unlock className="w-4 h-4" />
+            {enrollMutation.isPending ? 'Enrolling...' : 'Enrol for Free'}
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-3xl font-bold text-slate-900 font-playfair">
+            A${finalPrice.toFixed(2)}
+          </span>
+          {discount > 0 && (
+            <span className="text-lg text-slate-400 line-through">A${price.toFixed(2)}</span>
+          )}
+        </div>
+        <div className="flex gap-2 mb-3">
+          <input
+            type="text"
+            placeholder="Promo code"
+            value={promoCode}
+            onChange={e => setPromoCode(e.target.value.toUpperCase())}
+            className="input-field flex-1 text-sm py-2"
+          />
+          <button onClick={applyPromo} className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors font-semibold">Apply</button>
+        </div>
+        <button
+          onClick={handleBuyNow}
+          className="w-full px-4 py-3.5 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 mb-3 shadow-lg shadow-sky-600/25"
+        >
+          <ShoppingCart className="w-4 h-4" />
+          {enrollButtonContent()}
+        </button>
+        {!course.stripe_payment_link && (
+          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 text-center mb-3">
+            Payment not yet configured. Contact us to enrol.
+          </p>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -147,58 +243,39 @@ export default function CoursePreview() {
                   <p className="text-slate-400 text-sm mt-3">Instructor: <span className="text-white font-medium">{(course.teacher as { full_name: string }).full_name}</span></p>
                 )}
               </div>
+
               <div className="bg-white rounded-2xl overflow-hidden shadow-2xl border border-slate-100">
                 <div className="relative h-48">
-                  <img src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'} alt={course.title} className="w-full h-full object-cover" />
+                  <img
+                    src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
+                    alt={course.title}
+                    width={400}
+                    height={192}
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                     <button className="w-14 h-14 bg-white rounded-full flex items-center justify-center hover:scale-110 transition-transform shadow-xl">
                       <Play className="w-6 h-6 text-slate-900 ml-1" />
                     </button>
                   </div>
+                  {isFree && (
+                    <div className="absolute top-3 left-3 bg-emerald-500 text-white text-xs font-bold px-2 py-1 rounded-lg">FREE</div>
+                  )}
                 </div>
                 <div className="p-5">
-                  {enrollment ? (
-                    <button onClick={() => navigate('/student/courses')} className="w-full px-4 py-3 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl transition-colors text-center mb-3">Continue Learning</button>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-3 mb-4">
-                        <span className="text-3xl font-bold text-slate-900 font-playfair">
-                          {course.is_free ? 'Free' : `A$${finalPrice.toFixed(2)}`}
-                        </span>
-                        {discount > 0 && !course.is_free && (
-                          <span className="text-lg text-slate-400 line-through">A${course.price.toFixed(2)}</span>
-                        )}
-                      </div>
-                      {!course.is_free && (
-                        <div className="flex gap-2 mb-3">
-                          <input
-                            type="text"
-                            placeholder="Promo code"
-                            value={promoCode}
-                            onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                            className="input-field flex-1 text-sm py-2"
-                          />
-                          <button onClick={applyPromo} className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors font-semibold">Apply</button>
-                        </div>
-                      )}
-                      <button
-                        onClick={handleEnroll}
-                        disabled={enrolling}
-                        className="w-full px-4 py-3.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-bold rounded-xl transition-colors text-center flex items-center justify-center gap-2 mb-3 shadow-lg shadow-sky-600/25"
-                      >
-                        <ShoppingCart className="w-4 h-4" />
-                        {enrollButtonLabel()}
-                      </button>
-                      {!course.is_free && !course.stripe_payment_link && (
-                        <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 text-center mb-3">
-                          Payment not yet configured. Contact us to enrol.
-                        </p>
-                      )}
-                    </>
+                  {renderEnrollmentCard()}
+                  {!hasAccess && (
+                    <p className="text-xs text-slate-400 text-center mb-4">30-day money-back guarantee</p>
                   )}
-                  <p className="text-xs text-slate-400 text-center mb-4">30-day money-back guarantee</p>
                   <div className="space-y-2 text-sm">
-                    {[`${course.duration_hours} hours of content`, `${course.total_lessons} lessons`, 'Certificate of completion', 'Lifetime access', 'Mobile & desktop access'].map(item => (
+                    {[
+                      `${course.duration_hours} hours of content`,
+                      `${course.total_lessons} lessons`,
+                      'Certificate of completion',
+                      'Lifetime access',
+                      'Mobile & desktop access',
+                    ].map(item => (
                       <div key={item} className="flex items-center gap-2 text-slate-600">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
                         {item}
@@ -230,6 +307,12 @@ export default function CoursePreview() {
             <section className="mb-10">
               <h2 className="font-playfair text-2xl font-bold text-slate-900 mb-5">Course Content</h2>
               <p className="text-slate-500 text-sm mb-4">{sections.length} sections • {course.total_lessons} lessons • {course.duration_hours} hours total</p>
+              {!hasAccess && (
+                <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 mb-4">
+                  <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+                  Lesson content is locked until you enrol. Lessons marked "Preview" can be watched for free.
+                </div>
+              )}
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 {sections.map((section, idx) => (
                   <div key={section.id} className={idx > 0 ? 'border-t border-slate-200' : ''}>
@@ -247,10 +330,22 @@ export default function CoursePreview() {
                       <div className="bg-slate-50 divide-y divide-slate-100">
                         {section.lessons.map(lesson => (
                           <div key={lesson.id} className="flex items-center gap-3 px-5 py-3">
-                            {lesson.type === 'video' ? <Play className="w-4 h-4 text-slate-400 shrink-0" /> : lesson.type === 'pdf' ? <FileText className="w-4 h-4 text-slate-400 shrink-0" /> : <LinkIcon className="w-4 h-4 text-slate-400 shrink-0" />}
-                            <span className="text-sm text-slate-700 flex-1">{lesson.title}</span>
-                            {lesson.is_preview && <span className="text-xs text-sky-600 font-semibold bg-sky-50 px-2 py-0.5 rounded-md">Preview</span>}
-                            <span className="text-xs text-slate-400">{lesson.duration_minutes}m</span>
+                            {hasAccess || lesson.is_preview ? (
+                              lesson.type === 'video'
+                                ? <Play className="w-4 h-4 text-sky-500 shrink-0" />
+                                : lesson.type === 'pdf'
+                                  ? <FileText className="w-4 h-4 text-red-400 shrink-0" />
+                                  : <LinkIcon className="w-4 h-4 text-slate-400 shrink-0" />
+                            ) : (
+                              <Lock className="w-4 h-4 text-slate-300 shrink-0" />
+                            )}
+                            <span className={`text-sm flex-1 ${(!hasAccess && !lesson.is_preview) ? 'text-slate-400' : 'text-slate-700'}`}>{lesson.title}</span>
+                            {lesson.is_preview && (
+                              <span className="text-xs text-sky-600 font-semibold bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-md">Preview</span>
+                            )}
+                            {lesson.duration_minutes > 0 && (
+                              <span className="text-xs text-slate-400">{lesson.duration_minutes}m</span>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -270,6 +365,37 @@ export default function CoursePreview() {
         </div>
       </div>
       <PublicFooter />
+
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
+            <button
+              onClick={() => setShowPaymentModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="w-12 h-12 bg-sky-100 rounded-2xl flex items-center justify-center mb-4">
+              <CreditCard className="w-6 h-6 text-sky-600" />
+            </div>
+            <h3 className="font-playfair text-xl font-bold text-slate-900 mb-2">Payment Coming Soon</h3>
+            <p className="text-slate-500 text-sm mb-4 leading-relaxed">
+              Secure online payment for <strong>{course.title}</strong> is being set up. Please contact us to complete your enrolment.
+            </p>
+            <div className="bg-slate-50 rounded-xl p-4 mb-4 text-sm text-slate-600">
+              <p className="font-semibold mb-1">Course Price</p>
+              <p className="text-2xl font-bold text-slate-900 font-playfair">A${finalPrice.toFixed(2)}</p>
+            </div>
+            <Link
+              to="/contact"
+              onClick={() => setShowPaymentModal(false)}
+              className="w-full block text-center btn-primary"
+            >
+              Contact Us to Enrol
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

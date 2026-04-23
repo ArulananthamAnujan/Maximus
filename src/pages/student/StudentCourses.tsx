@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, BookOpen, Star, Clock, Users, CheckCircle2 } from 'lucide-react';
+import { Search, Filter, BookOpen, Star, Clock, Users, CheckCircle2, Lock } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useEnrollInFreeCourse, useMyEnrollments } from '../../hooks/useProgress';
 import ProgressBar from '../../components/ui/ProgressBar';
+import { toast as sonnerToast } from 'sonner';
 import type { Course } from '../../types';
 
 const CATEGORIES = ['All', 'Business', 'Technology', 'Marketing', 'Finance', 'Management', 'Leadership'];
@@ -15,53 +16,76 @@ const LEVELS = ['All', 'beginner', 'intermediate', 'advanced'];
 interface CourseWithEnrollment extends Course {
   enrolled?: boolean;
   progress?: number;
+  paymentStatus?: string;
 }
 
 export default function StudentCourses() {
   const { profile } = useAuth();
-  const { toast } = useToast();
   const [courses, setCourses] = useState<CourseWithEnrollment[]>([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [level, setLevel] = useState('All');
   const [tab, setTab] = useState<'browse' | 'enrolled'>('browse');
   const [loading, setLoading] = useState(true);
-  const [enrolling, setEnrolling] = useState<string | null>(null);
+
+  const { data: newEnrollments = [] } = useMyEnrollments();
+  const enrollMutation = useEnrollInFreeCourse();
 
   useEffect(() => {
     if (!profile) return;
     const fetchData = async () => {
-      const [coursesRes, enrollRes] = await Promise.all([
-        supabase.from('courses').select('*, teacher:profiles(full_name)').eq('is_published', true).eq('is_archived', false).order('created_at', { ascending: false }),
+      const [coursesRes, legacyEnrollRes] = await Promise.all([
+        supabase
+          .from('courses')
+          .select('id,title,short_description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,stripe_payment_link,teacher:profiles(full_name)')
+          .eq('is_published', true)
+          .eq('is_archived', false)
+          .order('created_at', { ascending: false }),
         supabase.from('enrollments').select('course_id, progress_percent').eq('student_id', profile.id),
       ]);
-      const enrollMap = new Map((enrollRes.data || []).map(e => [e.course_id, e.progress_percent]));
-      const enriched = (coursesRes.data || []).map(c => ({
-        ...c,
-        enrolled: enrollMap.has(c.id),
-        progress: enrollMap.get(c.id) ?? 0,
-      }));
+
+      // Build enrollment map from both sources
+      const legacyMap = new Map((legacyEnrollRes.data || []).map(e => [e.course_id, { progress: e.progress_percent, paymentStatus: 'not_required' }]));
+      const newMap = new Map(newEnrollments.map(e => [e.course_id, { progress: e.progress_percent, paymentStatus: e.payment_status }]));
+
+      const enriched = (coursesRes.data || []).map(c => {
+        const ne = newMap.get(c.id) ?? legacyMap.get(c.id);
+        return {
+          ...c,
+          enrolled: !!ne,
+          progress: ne?.progress ?? 0,
+          paymentStatus: ne?.paymentStatus,
+        };
+      });
       setCourses(enriched as CourseWithEnrollment[]);
       setLoading(false);
     };
     fetchData();
-  }, [profile]);
+  }, [profile, newEnrollments]);
 
-  const handleEnroll = async (courseId: string, isFree: boolean) => {
+  const handleEnroll = async (courseId: string, course: CourseWithEnrollment) => {
     if (!profile) return;
+    const price = course.price_amount ?? course.price ?? 0;
+    const isFree = course.is_free || (!course.is_paid && price === 0);
+
     if (!isFree) {
-      toast.info('Paid enrolment via Stripe coming soon. Use promo code WELCOME20 for 20% off!');
+      if (course.stripe_payment_link) {
+        window.location.href = course.stripe_payment_link;
+      } else {
+        sonnerToast.info('Paid enrolment coming soon. Contact us to enrol in this course.');
+      }
       return;
     }
-    setEnrolling(courseId);
-    const { error } = await supabase.from('enrollments').insert({ student_id: profile.id, course_id: courseId, progress_percent: 0 });
-    if (error) {
-      toast.error('Enrolment failed. Please try again.');
-    } else {
-      toast.success('Successfully enrolled!');
-      setCourses(prev => prev.map(c => c.id === courseId ? { ...c, enrolled: true, progress: 0 } : c));
-    }
-    setEnrolling(null);
+
+    enrollMutation.mutate(courseId, {
+      onSuccess: () => {
+        sonnerToast.success('Successfully enrolled!');
+        setCourses(prev => prev.map(c => c.id === courseId ? { ...c, enrolled: true, progress: 0, paymentStatus: 'not_required' } : c));
+      },
+      onError: (err) => {
+        sonnerToast.error(err instanceof Error ? err.message : 'Enrolment failed. Please try again.');
+      },
+    });
   };
 
   const filtered = useMemo(() => {
@@ -70,7 +94,7 @@ export default function StudentCourses() {
       if (tab === 'enrolled' && !c.enrolled) return false;
       if (category !== 'All' && c.category !== category) return false;
       if (level !== 'All' && c.level !== level) return false;
-      if (q && !c.title.toLowerCase().includes(q) && !c.short_description.toLowerCase().includes(q)) return false;
+      if (q && !c.title.toLowerCase().includes(q) && !(c.short_description || '').toLowerCase().includes(q)) return false;
       return true;
     });
   }, [courses, search, category, level, tab]);
@@ -135,71 +159,88 @@ export default function StudentCourses() {
           </div>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filtered.map(course => (
-              <div key={course.id} className="card group hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
-                <div className="relative h-44 overflow-hidden">
-                  <img
-                    src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
-                    alt={course.title}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                  <div className="absolute top-3 left-3 flex gap-2">
-                    <span className={`badge ${levelColors[course.level]}`}>{course.level}</span>
-                    {course.is_free && <span className="badge bg-gold-500 text-white">Free</span>}
-                  </div>
-                  {course.enrolled && (
-                    <div className="absolute top-3 right-3">
-                      <CheckCircle2 className="w-5 h-5 text-green-400" />
+            {filtered.map(course => {
+              const price = course.price_amount ?? course.price ?? 0;
+              const isFree = course.is_free || (!course.is_paid && price === 0);
+              const isPending = course.paymentStatus === 'pending';
+              return (
+                <div key={course.id} className="card group hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
+                  <div className="relative h-44 overflow-hidden">
+                    <img
+                      src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
+                      alt={course.title}
+                      width={400}
+                      height={176}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                    <div className="absolute top-3 left-3 flex gap-2">
+                      <span className={`badge ${levelColors[course.level]}`}>{course.level}</span>
+                      {isFree && <span className="badge bg-emerald-500 text-white">Free</span>}
+                      {!isFree && <span className="badge bg-sky-600 text-white">Paid</span>}
                     </div>
-                  )}
-                </div>
-                <div className="p-5">
-                  <div className="flex items-center gap-1 mb-2">
-                    {[1,2,3,4,5].map(i => (
-                      <Star key={i} className={`w-3.5 h-3.5 ${i <= Math.round(course.rating) ? 'fill-gold-400 text-gold-400' : 'text-gray-300'}`} />
-                    ))}
-                    <span className="text-xs text-gray-400 ml-1">({course.rating})</span>
-                  </div>
-                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1 line-clamp-2 leading-snug">{course.title}</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 line-clamp-2">{course.short_description}</p>
-                  <div className="flex items-center gap-3 text-xs text-gray-400 mb-4">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{course.duration_hours}h</span>
-                    <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{course.total_lessons} lessons</span>
-                    <span className="flex items-center gap-1"><Users className="w-3 h-3" />{course.total_students}</span>
-                  </div>
-                  {course.enrolled ? (
-                    <div>
-                      <div className="mb-2">
-                        <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-                          <span>Progress</span>
-                          <span>{course.progress}%</span>
-                        </div>
-                        <ProgressBar value={course.progress || 0} size="sm" />
+                    {course.enrolled && (
+                      <div className="absolute top-3 right-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-400" />
                       </div>
-                      <Link to={`/student/courses/${course.id}`} className="w-full btn-primary text-sm text-center block">
-                        {course.progress === 100 ? 'Review Course' : 'Continue Learning'}
-                      </Link>
+                    )}
+                  </div>
+                  <div className="p-5">
+                    <div className="flex items-center gap-1 mb-2">
+                      {[1,2,3,4,5].map(i => (
+                        <Star key={i} className={`w-3.5 h-3.5 ${i <= Math.round(course.rating) ? 'fill-gold-400 text-gold-400' : 'text-gray-300'}`} />
+                      ))}
+                      <span className="text-xs text-gray-400 ml-1">({course.rating})</span>
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-lg text-navy-900 dark:text-white">
-                        {course.is_free ? 'Free' : `A$${course.price.toFixed(2)}`}
-                      </span>
-                      <button
-                        onClick={() => handleEnroll(course.id, course.is_free)}
-                        disabled={enrolling === course.id}
-                        className="btn-primary text-sm py-2 px-4 disabled:opacity-60"
-                      >
-                        {enrolling === course.id ? 'Enrolling...' : 'Enrol Now'}
-                      </button>
+                    <h3 className="font-semibold text-gray-900 dark:text-white mb-1 line-clamp-2 leading-snug">{course.title}</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 line-clamp-2">{course.short_description}</p>
+                    <div className="flex items-center gap-3 text-xs text-gray-400 mb-4">
+                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{course.duration_hours}h</span>
+                      <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{course.total_lessons} lessons</span>
+                      <span className="flex items-center gap-1"><Users className="w-3 h-3" />{course.total_students}</span>
                     </div>
-                  )}
+                    {course.enrolled ? (
+                      <div>
+                        {isPending ? (
+                          <div className="text-center py-2 text-sm text-amber-600 bg-amber-50 rounded-lg mb-2 font-medium">
+                            Payment processing...
+                          </div>
+                        ) : (
+                          <div className="mb-2">
+                            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                              <span>Progress</span>
+                              <span>{course.progress}%</span>
+                            </div>
+                            <ProgressBar value={course.progress || 0} size="sm" />
+                          </div>
+                        )}
+                        {!isPending && (
+                          <Link to={`/student/courses/${course.id}`} className="w-full btn-primary text-sm text-center block">
+                            {course.progress === 100 ? 'Review Course' : 'Continue Learning'}
+                          </Link>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-lg text-navy-900 dark:text-white">
+                          {isFree ? 'Free' : `A$${price.toFixed(2)}`}
+                        </span>
+                        <button
+                          onClick={() => handleEnroll(course.id, course)}
+                          disabled={enrollMutation.isPending}
+                          className={`text-sm py-2 px-4 disabled:opacity-60 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${isFree ? 'btn-primary' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
+                        >
+                          {isFree ? null : <Lock className="w-3.5 h-3.5" />}
+                          {enrollMutation.isPending ? 'Enrolling...' : isFree ? 'Enrol Free' : 'Buy Now'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

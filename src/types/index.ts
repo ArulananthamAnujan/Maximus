@@ -38,6 +38,9 @@ export interface Course {
   what_you_learn: string[];
   requirements: string[];
   stripe_payment_link: string | null;
+  is_paid: boolean;
+  price_amount: number;
+  preview_enabled: boolean;
   created_at: string;
   updated_at: string;
   teacher?: Profile;
@@ -81,6 +84,51 @@ export interface LessonProgress {
   id: string;
   student_id: string;
   lesson_id: string;
+  completed_at: string;
+}
+
+export interface CourseEnrollment {
+  id: string;
+  user_id: string;
+  course_id: string;
+  enrollment_type: 'free' | 'paid' | 'admin_granted';
+  payment_status: 'not_required' | 'pending' | 'completed' | 'refunded';
+  payment_id: string | null;
+  amount_paid: number;
+  currency: string | null;
+  enrolled_at: string;
+  completed_at: string | null;
+  progress_percent: number;
+  last_accessed_at: string;
+  course?: Course;
+}
+
+export interface LessonProgressV2 {
+  id: string;
+  user_id: string;
+  lesson_id: string;
+  course_id: string;
+  status: 'not_started' | 'in_progress' | 'completed';
+  progress_percent: number;
+  last_position_seconds: number;
+  time_spent_seconds: number;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserQuizAttempt {
+  id: string;
+  user_id: string;
+  quiz_id: string;
+  course_id: string;
+  score: number;
+  max_score: number;
+  percentage: number;
+  passed: boolean;
+  answers: Record<string, string>;
+  attempt_number: number;
+  started_at: string | null;
   completed_at: string;
 }
 
