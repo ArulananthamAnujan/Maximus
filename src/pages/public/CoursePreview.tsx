@@ -35,8 +35,8 @@ export default function CoursePreview() {
     if (!id) return;
     const fetchData = async () => {
       const [courseRes, sectionsRes] = await Promise.all([
-        supabase.from('courses').select('*, teacher:profiles(full_name, avatar_url, bio)').eq('id', id).maybeSingle(),
-        supabase.from('sections').select('*, lessons(id,title,type,duration_minutes,is_preview,order_index)').eq('course_id', id).order('order_index'),
+        supabase.from('courses').select('id,title,short_description,description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,stripe_payment_link,what_you_learn,teacher_id,teacher:profiles(full_name,avatar_url,bio)').eq('id', id).maybeSingle(),
+        supabase.from('sections').select('id,title,order_index,lessons(id,title,type,duration_minutes,is_preview,order_index)').eq('course_id', id).order('order_index'),
       ]);
       if (courseRes.data) setCourse(courseRes.data as Course);
       if (sectionsRes.data) {
@@ -54,7 +54,7 @@ export default function CoursePreview() {
 
   const applyPromo = async () => {
     if (!promoCode) return;
-    const { data } = await supabase.from('promo_codes').select('*').eq('code', promoCode.toUpperCase()).eq('is_active', true).maybeSingle();
+    const { data } = await supabase.from('promo_codes').select('discount_percent').eq('code', promoCode.toUpperCase()).eq('is_active', true).maybeSingle();
     if (data) {
       setDiscount(data.discount_percent);
       sonnerToast.success(`Promo applied! ${data.discount_percent}% off`);

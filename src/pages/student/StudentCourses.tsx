@@ -20,7 +20,7 @@ interface CourseWithEnrollment extends Course {
 }
 
 export default function StudentCourses() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const [courses, setCourses] = useState<CourseWithEnrollment[]>([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -32,7 +32,7 @@ export default function StudentCourses() {
   const enrollMutation = useEnrollInFreeCourse();
 
   useEffect(() => {
-    if (!profile) return;
+    if (!user) return;
     const fetchData = async () => {
       const [coursesRes, legacyEnrollRes] = await Promise.all([
         supabase
@@ -41,7 +41,7 @@ export default function StudentCourses() {
           .eq('is_published', true)
           .eq('is_archived', false)
           .order('created_at', { ascending: false }),
-        supabase.from('enrollments').select('course_id, progress_percent').eq('student_id', profile.id),
+        supabase.from('enrollments').select('course_id, progress_percent').eq('student_id', user.id),
       ]);
 
       // Build enrollment map from both sources
@@ -61,10 +61,10 @@ export default function StudentCourses() {
       setLoading(false);
     };
     fetchData();
-  }, [profile, newEnrollments]);
+  }, [user, newEnrollments]);
 
   const handleEnroll = async (courseId: string, course: CourseWithEnrollment) => {
-    if (!profile) return;
+    if (!user) return;
     const price = course.price_amount ?? course.price ?? 0;
     const isFree = course.is_free || (!course.is_paid && price === 0);
 
