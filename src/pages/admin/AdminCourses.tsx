@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, Plus, CreditCard as Edit, Trash2, Eye, Archive, Users, Layers } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -10,7 +10,7 @@ import Badge from '../../components/ui/Badge';
 import type { Course, Profile } from '../../types';
 
 export default function AdminCourses() {
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [allCourses, setAllCourses] = useState<Course[]>([]);
   const [teachers, setTeachers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -24,71 +24,113 @@ export default function AdminCourses() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 350);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [search]);
 
   const fetchData = async () => {
     const [coursesRes, teachersRes] = await Promise.all([
-      supabase.from('courses').select('*, teacher:profiles(full_name)').ilike('title', `%${debouncedSearch}%`).order('created_at', { ascending: false }),
-      supabase.from('profiles').select('*').eq('role', 'teacher'),
+      supabase
+        .from('courses')
+        .select('id,title,short_description,description,thumbnail_url,price,price_amount,is_free,is_paid,is_published,is_archived,category,level,teacher_id,stripe_payment_link,total_lessons,total_students,created_at,teacher:profiles(full_name)')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('profiles')
+        .select('id,full_name,email')
+        .eq('role', 'teacher'),
     ]);
-    if (coursesRes.data) setCourses(coursesRes.data as Course[]);
+    if (coursesRes.data) setAllCourses(coursesRes.data as Course[]);
     if (teachersRes.data) setTeachers(teachersRes.data as Profile[]);
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [debouncedSearch]);
+  useEffect(() => { fetchData(); }, []);
+
+  // Filter client-side — no extra DB calls per keystroke
+  const courses = useMemo(() => {
+    if (!debouncedSearch) return allCourses;
+    const q = debouncedSearch.toLowerCase();
+    return allCourses.filter(c =>
+      c.title.toLowerCase().includes(q) ||
+      (c.category || '').toLowerCase().includes(q)
+    );
+  }, [allCourses, debouncedSearch]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
     const { error } = await supabase.from('courses').delete().eq('id', deleteTarget.id);
-    if (!error) { toast.success('Course deleted'); fetchData(); }
-    else toast.error('Failed to delete course');
+    if (!error) {
+      toast.success('Course deleted');
+      setAllCourses(prev => prev.filter(c => c.id !== deleteTarget.id));
+    } else {
+      toast.error('Failed to delete course');
+    }
     setDeleteTarget(null);
   };
 
   const handleArchive = async (course: Course) => {
-    await supabase.from('courses').update({ is_archived: !course.is_archived }).eq('id', course.id);
-    toast.success(course.is_archived ? 'Course unarchived' : 'Course archived');
-    fetchData();
+    const { error } = await supabase.from('courses').update({ is_archived: !course.is_archived }).eq('id', course.id);
+    if (!error) {
+      toast.success(course.is_archived ? 'Course unarchived' : 'Course archived');
+      setAllCourses(prev => prev.map(c => c.id === course.id ? { ...c, is_archived: !course.is_archived } : c));
+    }
   };
 
   const handleTogglePublish = async (course: Course) => {
-    await supabase.from('courses').update({ is_published: !course.is_published }).eq('id', course.id);
-    toast.success(course.is_published ? 'Course unpublished' : 'Course published');
-    fetchData();
+    const { error } = await supabase.from('courses').update({ is_published: !course.is_published }).eq('id', course.id);
+    if (!error) {
+      toast.success(course.is_published ? 'Course unpublished' : 'Course published');
+      setAllCourses(prev => prev.map(c => c.id === course.id ? { ...c, is_published: !course.is_published } : c));
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editCourse) return;
     setSaving(true);
-    const coursePayload = editCourse as Partial<Course>;
     const payload = {
-      title: coursePayload.title,
-      description: coursePayload.description,
-      short_description: coursePayload.short_description,
-      price: coursePayload.price || 0,
-      category: coursePayload.category || 'General',
-      level: coursePayload.level || 'beginner',
-      teacher_id: coursePayload.teacher_id || null,
-      is_free: coursePayload.is_free || false,
-      stripe_payment_link: coursePayload.stripe_payment_link || null,
+      title: editCourse.title,
+      description: editCourse.description,
+      short_description: editCourse.short_description,
+      price: editCourse.price || 0,
+      category: editCourse.category || 'General',
+      level: editCourse.level || 'beginner',
+      teacher_id: editCourse.teacher_id || null,
+      is_free: editCourse.is_free || false,
+      stripe_payment_link: editCourse.stripe_payment_link || null,
     };
     if (editCourse.id) {
       const { error } = await supabase.from('courses').update(payload).eq('id', editCourse.id);
-      if (!error) { toast.success('Course updated'); setShowModal(false); fetchData(); }
-      else toast.error('Failed to update');
+      if (!error) {
+        toast.success('Course updated');
+        setShowModal(false);
+        // Update in-place without refetch
+        const teacher = teachers.find(t => t.id === payload.teacher_id);
+        setAllCourses(prev => prev.map(c => c.id === editCourse.id
+          ? { ...c, ...payload, teacher: teacher ? { full_name: teacher.full_name } : c.teacher }
+          : c
+        ));
+      } else {
+        toast.error('Failed to update');
+      }
     } else {
-      const { error } = await supabase.from('courses').insert({ ...payload, is_published: false });
-      if (!error) { toast.success('Course created'); setShowModal(false); fetchData(); }
-      else toast.error('Failed to create');
+      const { data, error } = await supabase.from('courses').insert({ ...payload, is_published: false }).select('id,title,short_description,description,thumbnail_url,price,price_amount,is_free,is_paid,is_published,is_archived,category,level,teacher_id,stripe_payment_link,total_lessons,total_students,created_at').maybeSingle();
+      if (!error && data) {
+        toast.success('Course created');
+        setShowModal(false);
+        const teacher = teachers.find(t => t.id === payload.teacher_id);
+        setAllCourses(prev => [{ ...data, teacher: teacher ? { full_name: teacher.full_name } : null } as Course, ...prev]);
+      } else {
+        toast.error('Failed to create');
+      }
     }
     setSaving(false);
   };
 
-  const openCreate = () => { setEditCourse({ title: '', description: '', short_description: '', price: 0, category: 'Business', level: 'beginner', is_free: false }); setShowModal(true); };
+  const openCreate = () => {
+    setEditCourse({ title: '', description: '', short_description: '', price: 0, category: 'Business', level: 'beginner', is_free: false });
+    setShowModal(true);
+  };
   const openEdit = (c: Course) => { setEditCourse(c); setShowModal(true); };
 
   return (
@@ -97,7 +139,13 @@ export default function AdminCourses() {
         <div className="flex flex-col sm:flex-row gap-3 justify-between">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input type="text" placeholder="Search courses..." value={search} onChange={e => setSearch(e.target.value)} className="input-field pl-9 py-2 text-sm" />
+            <input
+              type="text"
+              placeholder="Search courses..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="input-field pl-9 py-2 text-sm"
+            />
           </div>
           <button onClick={openCreate} className="btn-primary text-sm py-2 flex items-center gap-2">
             <Plus className="w-4 h-4" /> New Course
@@ -117,58 +165,95 @@ export default function AdminCourses() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-navy-700">
-                {loading ? Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i}>{[1,2,3,4,5].map(j => <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-200 dark:bg-navy-700 rounded animate-pulse" /></td>)}</tr>
-                )) : courses.map(course => (
-                  <tr key={course.id} className="hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <img src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'} alt="" loading="lazy" decoding="async" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                        <div>
-                          <p className="font-medium text-gray-900 dark:text-white text-sm line-clamp-1">{course.title}</p>
-                          <p className="text-xs text-gray-400 capitalize">{course.category} • {course.level}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">
-                      {(course.teacher as { full_name: string } | undefined)?.full_name || '—'}
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <div className="flex gap-1.5">
-                        <Badge variant={course.is_published ? 'success' : 'warning'}>{course.is_published ? 'Published' : 'Draft'}</Badge>
-                        {course.is_archived && <Badge variant="error">Archived</Badge>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white hidden lg:table-cell">
-                      {course.is_free ? 'Free' : `A$${course.price}`}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Link to={`/admin/builder?courseId=${course.id}`} className="p-1.5 rounded-lg text-teal-500 hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors" title="Build curriculum & quizzes">
-                          <Layers className="w-4 h-4" />
-                        </Link>
-                        <button onClick={() => handleTogglePublish(course)} className={`p-1.5 rounded-lg transition-colors ${course.is_published ? 'text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20' : 'text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`} title={course.is_published ? 'Unpublish' : 'Publish'}>
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleArchive(course)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors" title="Archive">
-                          <Archive className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => openEdit(course)} className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => setDeleteTarget(course)} className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {loading
+                  ? Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i}>
+                        {[1,2,3,4,5].map(j => (
+                          <td key={j} className="px-4 py-3">
+                            <div className="h-4 bg-gray-200 dark:bg-navy-700 rounded animate-pulse" />
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  : courses.map(course => (
+                      <tr key={course.id} className="hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              className="w-10 h-10 rounded-lg object-cover shrink-0"
+                            />
+                            <div>
+                              <p className="font-medium text-gray-900 dark:text-white text-sm line-clamp-1">{course.title}</p>
+                              <p className="text-xs text-gray-400 capitalize">{course.category} • {course.level}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">
+                          {(course.teacher as { full_name: string } | undefined)?.full_name || '—'}
+                        </td>
+                        <td className="px-4 py-3 hidden sm:table-cell">
+                          <div className="flex gap-1.5">
+                            <Badge variant={course.is_published ? 'success' : 'warning'}>
+                              {course.is_published ? 'Published' : 'Draft'}
+                            </Badge>
+                            {course.is_archived && <Badge variant="error">Archived</Badge>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white hidden lg:table-cell">
+                          {course.is_free ? 'Free' : `A$${course.price}`}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Link
+                              to={`/admin/builder?courseId=${course.id}`}
+                              className="p-1.5 rounded-lg text-teal-500 hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors"
+                              title="Build curriculum & quizzes"
+                            >
+                              <Layers className="w-4 h-4" />
+                            </Link>
+                            <button
+                              onClick={() => handleTogglePublish(course)}
+                              className={`p-1.5 rounded-lg transition-colors ${course.is_published ? 'text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20' : 'text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`}
+                              title={course.is_published ? 'Unpublish' : 'Publish'}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleArchive(course)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors"
+                              title="Archive"
+                            >
+                              <Archive className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => openEdit(course)}
+                              className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setDeleteTarget(course)}
+                              className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                }
               </tbody>
             </table>
             {!loading && courses.length === 0 && (
               <div className="text-center py-12">
                 <Users className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                <p className="text-gray-500 dark:text-gray-400 text-sm">No courses found</p>
+                <p className="text-gray-500 dark:text-gray-400 text-sm">
+                  {search ? 'No courses match your search' : 'No courses yet'}
+                </p>
               </div>
             )}
           </div>
@@ -179,30 +264,58 @@ export default function AdminCourses() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowModal(false)} />
           <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-slide-up max-h-[90vh] overflow-y-auto">
-            <h3 className="font-playfair text-xl font-bold text-gray-900 dark:text-white mb-5">{editCourse.id ? 'Edit Course' : 'Create Course'}</h3>
+            <h3 className="font-playfair text-xl font-bold text-gray-900 dark:text-white mb-5">
+              {editCourse.id ? 'Edit Course' : 'Create Course'}
+            </h3>
             <form onSubmit={handleSave} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Title</label>
-                <input type="text" value={editCourse.title || ''} onChange={e => setEditCourse(c => ({ ...c!, title: e.target.value }))} className="input-field" required />
+                <input
+                  type="text"
+                  value={editCourse.title || ''}
+                  onChange={e => setEditCourse(c => ({ ...c!, title: e.target.value }))}
+                  className="input-field"
+                  required
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Short Description</label>
-                <input type="text" value={editCourse.short_description || ''} onChange={e => setEditCourse(c => ({ ...c!, short_description: e.target.value }))} className="input-field" />
+                <input
+                  type="text"
+                  value={editCourse.short_description || ''}
+                  onChange={e => setEditCourse(c => ({ ...c!, short_description: e.target.value }))}
+                  className="input-field"
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Description</label>
-                <textarea value={editCourse.description || ''} onChange={e => setEditCourse(c => ({ ...c!, description: e.target.value }))} className="input-field resize-none" rows={3} />
+                <textarea
+                  value={editCourse.description || ''}
+                  onChange={e => setEditCourse(c => ({ ...c!, description: e.target.value }))}
+                  className="input-field resize-none"
+                  rows={3}
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Category</label>
-                  <select value={editCourse.category || 'Business'} onChange={e => setEditCourse(c => ({ ...c!, category: e.target.value }))} className="input-field">
-                    {['Business', 'Technology', 'Marketing', 'Finance', 'Management', 'Leadership'].map(cat => <option key={cat}>{cat}</option>)}
+                  <select
+                    value={editCourse.category || 'Business'}
+                    onChange={e => setEditCourse(c => ({ ...c!, category: e.target.value }))}
+                    className="input-field"
+                  >
+                    {['Business', 'Technology', 'Marketing', 'Finance', 'Management', 'Leadership', 'Language', 'IELTS', 'PTE', 'Xero', 'General'].map(cat => (
+                      <option key={cat}>{cat}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Level</label>
-                  <select value={editCourse.level || 'beginner'} onChange={e => setEditCourse(c => ({ ...c!, level: e.target.value as 'beginner' | 'intermediate' | 'advanced' }))} className="input-field">
+                  <select
+                    value={editCourse.level || 'beginner'}
+                    onChange={e => setEditCourse(c => ({ ...c!, level: e.target.value as 'beginner' | 'intermediate' | 'advanced' }))}
+                    className="input-field"
+                  >
                     <option value="beginner">Beginner</option>
                     <option value="intermediate">Intermediate</option>
                     <option value="advanced">Advanced</option>
@@ -212,11 +325,24 @@ export default function AdminCourses() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Price (AUD)</label>
-                  <input type="number" min="0" step="0.01" value={editCourse.price || 0} onChange={e => setEditCourse(c => ({ ...c!, price: Number(e.target.value) }))} className="input-field" disabled={editCourse.is_free} />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editCourse.price || 0}
+                    onChange={e => setEditCourse(c => ({ ...c!, price: Number(e.target.value) }))}
+                    className="input-field"
+                    disabled={editCourse.is_free}
+                  />
                 </div>
                 <div className="flex items-end pb-1">
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={editCourse.is_free || false} onChange={e => setEditCourse(c => ({ ...c!, is_free: e.target.checked, price: e.target.checked ? 0 : c?.price }))} className="w-4 h-4 accent-gold-500" />
+                    <input
+                      type="checkbox"
+                      checked={editCourse.is_free || false}
+                      onChange={e => setEditCourse(c => ({ ...c!, is_free: e.target.checked, price: e.target.checked ? 0 : c?.price }))}
+                      className="w-4 h-4 accent-gold-500"
+                    />
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Free course</span>
                   </label>
                 </div>
@@ -225,9 +351,15 @@ export default function AdminCourses() {
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                   Assign Teacher <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
-                <select value={(editCourse as Partial<Course>).teacher_id || ''} onChange={e => setEditCourse(c => ({ ...c!, teacher_id: e.target.value || null }))} className="input-field">
+                <select
+                  value={(editCourse as Partial<Course>).teacher_id || ''}
+                  onChange={e => setEditCourse(c => ({ ...c!, teacher_id: e.target.value || null }))}
+                  className="input-field"
+                >
                   <option value="">— No teacher assigned —</option>
-                  {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name || t.email}</option>)}
+                  {teachers.map(t => (
+                    <option key={t.id} value={t.id}>{t.full_name || t.email}</option>
+                  ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-1">Courses can be published and enrolled without a teacher.</p>
               </div>
@@ -245,15 +377,30 @@ export default function AdminCourses() {
                 <p className="text-xs text-gray-400 mt-1">Students will be redirected here to complete payment before accessing the course.</p>
               </div>
               <div className="flex gap-3 justify-end pt-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-lg hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">Cancel</button>
-                <button type="submit" disabled={saving} className="btn-primary text-sm py-2 disabled:opacity-60">{saving ? 'Saving...' : 'Save Course'}</button>
+                <button
+                  type="button"
+                  onClick={() => setShowModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-lg hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button type="submit" disabled={saving} className="btn-primary text-sm py-2 disabled:opacity-60">
+                  {saving ? 'Saving...' : 'Save Course'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      <ConfirmDialog isOpen={!!deleteTarget} title="Delete Course" message={`Delete "${deleteTarget?.title}"? All sections, lessons, and enrollments will be removed.`} onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} confirmText="Delete" />
+      <ConfirmDialog
+        isOpen={!!deleteTarget}
+        title="Delete Course"
+        message={`Delete "${deleteTarget?.title}"? All sections, lessons, and enrollments will be removed.`}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+        confirmText="Delete"
+      />
     </DashboardLayout>
   );
 }

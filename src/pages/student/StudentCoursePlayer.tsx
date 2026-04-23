@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import {
   ChevronLeft, CheckCircle2, Circle, Play, FileText,
   Link as LinkIcon, BookOpen, Lock, Menu, X
@@ -9,7 +9,6 @@ import { studentNavItems } from './studentNav';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../contexts/ToastContext';
 import { useHasCourseAccess } from '../../hooks/useAccess';
 import { useCourseProgress, useUpdateLessonProgress } from '../../hooks/useProgress';
 import { toast as sonnerToast } from 'sonner';
@@ -19,7 +18,6 @@ interface SectionWithLessons extends Section {
   lessons: Lesson[];
 }
 
-// ─── Memoized sidebar lesson item ────────────────────────────────────────────
 interface LessonItemProps {
   lesson: Lesson;
   isCompleted: boolean;
@@ -72,26 +70,24 @@ const LessonItem = memo(function LessonItem({ lesson, isCompleted, isActive, can
 
 export default function StudentCoursePlayer() {
   const { courseId } = useParams<{ courseId: string }>();
-  const { profile } = useAuth();
-  const { toast } = useToast();
-  const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [course, setCourse] = useState<Course | null>(null);
   const [sections, setSections] = useState<SectionWithLessons[]>([]);
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [contentLoading, setContentLoading] = useState(true);
   const [marking, setMarking] = useState(false);
 
+  // Access check and progress run in parallel with content fetch — don't block render
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
   const { data: courseProgressRows = [] } = useCourseProgress(courseId);
   const updateProgressMutation = useUpdateLessonProgress();
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressSaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sessionStartTime = useRef<number>(Date.now());
-  const autoCompleteFired = useRef<Set<string>>(new Set()); // prevent duplicate mutations
+  const autoCompleteFired = useRef<Set<string>>(new Set());
 
   // Build completed set from progress rows
   useEffect(() => {
@@ -101,8 +97,10 @@ export default function StudentCoursePlayer() {
     setCompletedLessons(completed);
   }, [courseProgressRows]);
 
+  // Gate on user (available immediately) not profile (requires extra round-trip)
   useEffect(() => {
-    if (!courseId || !profile) return;
+    if (!courseId || !user) return;
+    let cancelled = false;
     const fetchData = async () => {
       const [courseRes, sectionsRes] = await Promise.all([
         supabase
@@ -116,6 +114,7 @@ export default function StudentCoursePlayer() {
           .eq('course_id', courseId)
           .order('order_index'),
       ]);
+      if (cancelled) return;
       if (courseRes.data) setCourse(courseRes.data as Course);
       if (sectionsRes.data) {
         const secs = sectionsRes.data.map(s => ({
@@ -126,52 +125,46 @@ export default function StudentCoursePlayer() {
         const firstLesson = secs[0]?.lessons[0];
         if (firstLesson) setActiveLesson(firstLesson);
       }
-      setLoading(false);
+      setContentLoading(false);
     };
     fetchData();
-  }, [courseId, profile]);
+    return () => { cancelled = true; };
+  }, [courseId, user]);
 
-  // Restore last position when lesson changes
+  // Restore last video position when lesson changes
   useEffect(() => {
     if (!activeLesson || !courseProgressRows.length) return;
     const row = courseProgressRows.find(p => p.lesson_id === activeLesson.id);
     if (row && row.last_position_seconds > 0 && videoRef.current) {
       videoRef.current.currentTime = row.last_position_seconds;
     }
-    sessionStartTime.current = Date.now();
-    autoCompleteFired.current = new Set(); // reset per-lesson on switch
+    autoCompleteFired.current = new Set();
   }, [activeLesson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveVideoProgress = useCallback(() => {
     if (!activeLesson || !courseId || !hasAccess) return;
     const video = videoRef.current;
     if (!video || video.duration === 0) return;
-    const position = Math.floor(video.currentTime);
-    const percent = Math.floor((video.currentTime / video.duration) * 100);
     updateProgressMutation.mutate({
       lessonId: activeLesson.id,
       courseId,
-      lastPositionSeconds: position,
-      watchPercentage: percent,
-      isCompleted: percent >= 90,
+      lastPositionSeconds: Math.floor(video.currentTime),
+      watchPercentage: Math.floor((video.currentTime / video.duration) * 100),
+      isCompleted: (video.currentTime / video.duration) >= 0.9,
     });
   }, [activeLesson, courseId, hasAccess, updateProgressMutation]);
 
-  // 30-second interval (was 15s — halves the network traffic)
   useEffect(() => {
     const lessonType = activeLesson?.type ?? activeLesson?.lesson_type;
     if (!activeLesson || lessonType !== 'video') return;
     progressSaveTimer.current = setInterval(saveVideoProgress, 30000);
-    return () => {
-      if (progressSaveTimer.current) clearInterval(progressSaveTimer.current);
-    };
+    return () => { if (progressSaveTimer.current) clearInterval(progressSaveTimer.current); };
   }, [activeLesson?.id, saveVideoProgress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const allLessons = useMemo(() => sections.flatMap(s => s.lessons), [sections]);
   const completedCount = useMemo(() => allLessons.filter(l => completedLessons.has(l.id)).length, [allLessons, completedLessons]);
   const progress = allLessons.length > 0 ? Math.round((completedCount / allLessons.length) * 100) : 0;
 
-  // Progress map for sidebar percentages
   const progressMap = useMemo(() => {
     const m = new Map<string, number>();
     courseProgressRows.forEach(r => m.set(r.lesson_id, r.watch_percentage));
@@ -179,8 +172,7 @@ export default function StudentCoursePlayer() {
   }, [courseProgressRows]);
 
   const handleLessonClick = useCallback((lesson: Lesson) => {
-    const canAccess = hasAccess || lesson.is_preview;
-    if (!canAccess) {
+    if (!hasAccess && !lesson.is_preview) {
       sonnerToast.error('You need to enrol to access this lesson');
       return;
     }
@@ -189,7 +181,7 @@ export default function StudentCoursePlayer() {
   }, [hasAccess]);
 
   const handleMarkComplete = async () => {
-    if (!activeLesson || !profile || completedLessons.has(activeLesson.id) || !courseId) return;
+    if (!activeLesson || !user || completedLessons.has(activeLesson.id) || !courseId) return;
     setMarking(true);
 
     updateProgressMutation.mutate({
@@ -204,18 +196,17 @@ export default function StudentCoursePlayer() {
     const newCompleted = new Set(completedLessons).add(activeLesson.id);
     setCompletedLessons(newCompleted);
 
-    // Update legacy tables
+    // Sync progress to both enrollment tables
+    const newProgress = allLessons.length > 0 ? Math.round((newCompleted.size / allLessons.length) * 100) : 0;
     await Promise.all([
-      supabase.from('lesson_progress').upsert({ student_id: profile.id, lesson_id: activeLesson.id, course_id: courseId, is_completed: true, watch_percentage: 100 }, { onConflict: 'student_id,lesson_id' }),
-      supabase.from('enrollments').update({ progress_percent: progress }).eq('student_id', profile.id).eq('course_id', courseId),
-      supabase.from('course_enrollments').update({ progress_percent: progress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId),
+      supabase.from('enrollments').update({ progress_percent: newProgress }).eq('student_id', user.id).eq('course_id', courseId),
+      supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', user.id).eq('course_id', courseId),
     ]);
 
-    toast.success('Lesson marked as complete!');
+    sonnerToast.success('Lesson marked as complete!');
     setMarking(false);
   };
 
-  // Memoized sidebar to prevent full re-render on every activeLesson change
   const SidebarContent = useMemo(() => (
     <div className="flex flex-col h-full">
       <div className="p-4 border-b border-gray-100 dark:border-navy-700">
@@ -246,17 +237,37 @@ export default function StudentCoursePlayer() {
     </div>
   ), [sections, completedLessons, activeLesson?.id, hasAccess, progress, completedCount, allLessons.length, progressMap, handleLessonClick]);
 
-  if (loading || accessLoading) {
+  // Show skeleton while content loads — don't wait for access check
+  if (contentLoading) {
     return (
-      <DashboardLayout navItems={studentNavItems} title="Loading..." subtitle="">
-        <div className="flex items-center justify-center h-64">
-          <div className="w-10 h-10 border-4 border-gold-500 border-t-transparent rounded-full animate-spin" />
+      <DashboardLayout navItems={studentNavItems} title="Loading course..." subtitle="">
+        <div className="flex -m-4 sm:-m-6 h-[calc(100vh-8rem)]">
+          <div className="hidden lg:flex flex-col w-72 border-r border-gray-200 dark:border-navy-700 animate-pulse">
+            <div className="p-4 space-y-3 border-b border-gray-100 dark:border-navy-700">
+              <div className="h-3 bg-gray-200 dark:bg-navy-700 rounded w-1/2" />
+              <div className="h-2 bg-gray-200 dark:bg-navy-700 rounded w-full" />
+            </div>
+            {[1,2,3,4,5].map(i => (
+              <div key={i} className="flex gap-3 px-4 py-3">
+                <div className="w-4 h-4 rounded-full bg-gray-200 dark:bg-navy-700 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <div className="h-3 bg-gray-200 dark:bg-navy-700 rounded w-3/4" />
+                  <div className="h-2 bg-gray-200 dark:bg-navy-700 rounded w-1/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex-1 p-4 sm:p-6 animate-pulse space-y-4">
+            <div className="h-7 bg-gray-200 dark:bg-navy-700 rounded w-2/3" />
+            <div className="aspect-video bg-gray-200 dark:bg-navy-700 rounded-xl" />
+          </div>
         </div>
       </DashboardLayout>
     );
   }
 
-  if (!hasAccess && !activeLesson?.is_preview) {
+  // Access denied — only shown once access check resolves AND no access
+  if (!accessLoading && !hasAccess && !activeLesson?.is_preview) {
     return (
       <DashboardLayout navItems={studentNavItems} title="Access Denied" subtitle="">
         <div className="text-center py-20">
@@ -313,7 +324,9 @@ export default function StudentCoursePlayer() {
                     <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                       <span className="capitalize">{activeLesson.type}</span>
                       {activeLesson.duration_minutes > 0 && <span>· {activeLesson.duration_minutes} min</span>}
-                      {activeLesson.is_preview && <span className="badge bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Preview</span>}
+                      {activeLesson.is_preview && (
+                        <span className="badge bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Preview</span>
+                      )}
                       {!hasAccess && activeLesson.is_preview && (
                         <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">Preview — enrol for full access</span>
                       )}
@@ -384,8 +397,7 @@ export default function StudentCoursePlayer() {
                         onTimeUpdate={() => {
                           const video = videoRef.current;
                           if (!video || !hasAccess || !activeLesson || !courseId) return;
-                          const percent = Math.floor((video.currentTime / video.duration) * 100);
-                          // Fire auto-complete exactly once per lesson load
+                          const percent = (video.currentTime / video.duration) * 100;
                           if (percent >= 90 && !completedLessons.has(activeLesson.id) && !autoCompleteFired.current.has(activeLesson.id)) {
                             autoCompleteFired.current.add(activeLesson.id);
                             updateProgressMutation.mutate({
@@ -448,7 +460,8 @@ export default function StudentCoursePlayer() {
                       const idx = allLessons.findIndex(l => l.id === activeLesson.id);
                       if (idx > 0) setActiveLesson(allLessons[idx - 1]);
                     }}
-                    className="btn-outline text-sm"
+                    disabled={allLessons.findIndex(l => l.id === activeLesson.id) === 0}
+                    className="btn-outline text-sm disabled:opacity-40"
                   >
                     Previous
                   </button>
@@ -464,7 +477,8 @@ export default function StudentCoursePlayer() {
                         setActiveLesson(next);
                       }
                     }}
-                    className="btn-primary text-sm"
+                    disabled={allLessons.findIndex(l => l.id === activeLesson.id) === allLessons.length - 1}
+                    className="btn-primary text-sm disabled:opacity-40"
                   >
                     Next Lesson
                   </button>
