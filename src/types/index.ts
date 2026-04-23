@@ -245,9 +245,9 @@ export interface ActivityLog {
   id: string;
   user_id: string;
   action: string;
-  resource_type: string;
-  resource_id: string;
-  details: string;
+  entity_type?: string;
+  entity_id?: string;
+  details: string | Record<string, unknown>;
   created_at: string;
   user?: Profile;
 }

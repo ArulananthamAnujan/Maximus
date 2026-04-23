@@ -39,7 +39,7 @@ export default function AdminDashboard() {
         supabase.from('enrollments').select('id', { count: 'exact' }),
         supabase.from('payments').select('amount, status').eq('status', 'completed'),
         supabase.from('certificates').select('id', { count: 'exact' }).eq('revoked', false),
-        supabase.from('activity_logs').select('*, user:profiles(full_name, email, role)').order('created_at', { ascending: false }).limit(10),
+        supabase.from('activity_logs').select('id, action, entity_type, details, created_at, user:profiles(full_name, email, role)').order('created_at', { ascending: false }).limit(10),
         supabase.from('payments').select('amount, created_at').eq('status', 'completed').gte('created_at', thirtyDaysAgo.toISOString()),
       ]);
 
@@ -220,7 +220,15 @@ export default function AdminDashboard() {
                       <p className="text-sm text-gray-900 dark:text-white">
                         <span className="font-medium">{user?.full_name || 'Unknown'}</span>
                         {' '}
-                        <span className="text-gray-500 dark:text-gray-400">{log.details}</span>
+                        <span className="text-gray-500 dark:text-gray-400">
+                          {typeof log.details === 'string'
+                            ? log.details
+                            : log.details && typeof log.details === 'object'
+                              ? (log.details as Record<string, unknown>).note as string
+                                ?? (log.details as Record<string, unknown>).message as string
+                                ?? JSON.stringify(log.details)
+                              : ''}
+                        </span>
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5">{new Date(log.created_at).toLocaleString('en-AU')}</p>
                     </div>
@@ -228,7 +236,7 @@ export default function AdminDashboard() {
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${actionColors[action] || 'bg-gray-100 text-gray-600 dark:bg-navy-700 dark:text-gray-400'}`}>
                         {log.action}
                       </span>
-                      <span className="text-xs text-gray-400 hidden sm:block">{log.resource_type}</span>
+                      <span className="text-xs text-gray-400 hidden sm:block">{(log as Record<string, unknown>).entity_type as string}</span>
                     </div>
                   </div>
                 );
