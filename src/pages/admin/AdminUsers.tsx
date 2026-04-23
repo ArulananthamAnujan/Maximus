@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react';
-import { Search, Plus, Download, CreditCard as Edit2, Trash2, UserCheck, UserX, Shield, GraduationCap, BookOpen } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  Search, Plus, Download, Pencil, Trash2, UserCheck, UserX,
+  Shield, GraduationCap, BookOpen, KeyRound, ExternalLink,
+} from 'lucide-react';
+import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { adminNavItems } from './adminNav';
 import { supabase } from '../../lib/supabase';
@@ -9,21 +13,17 @@ import Badge from '../../components/ui/Badge';
 import type { Profile } from '../../types';
 
 const ROLE_COLORS: Record<string, 'error' | 'info' | 'success'> = {
-  admin: 'error',
-  teacher: 'info',
-  student: 'success',
+  admin: 'error', teacher: 'info', student: 'success',
 };
-
 const ROLE_ICONS: Record<string, React.ElementType> = {
-  admin: Shield,
-  teacher: BookOpen,
-  student: GraduationCap,
+  admin: Shield, teacher: BookOpen, student: GraduationCap,
 };
 
 export default function AdminUsers() {
-  const [users, setUsers] = useState<Profile[]>([]);
+  const [allUsers, setAllUsers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
@@ -33,27 +33,50 @@ export default function AdminUsers() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'student', password: '' });
   const [creating, setCreating] = useState(false);
+  const [resetTarget, setResetTarget] = useState<Profile | null>(null);
+  const [resetting, setResetting] = useState(false);
   const { toast } = useToast();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [search]);
 
   const fetchUsers = async () => {
-    let query = supabase.from('profiles').select('*').order('created_at', { ascending: false });
-    if (roleFilter !== 'all') query = query.eq('role', roleFilter);
-    if (statusFilter === 'active') query = query.eq('is_active', true);
-    if (statusFilter === 'inactive') query = query.eq('is_active', false);
-    if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
-    const { data } = await query;
-    if (data) setUsers(data as Profile[]);
+    const { data } = await supabase
+      .from('profiles')
+      .select('id,email,full_name,role,phone,bio,avatar_url,is_active,created_at,updated_at')
+      .order('created_at', { ascending: false });
+    if (data) setAllUsers(data as Profile[]);
     setLoading(false);
   };
 
-  useEffect(() => { fetchUsers(); }, [search, roleFilter, statusFilter]);
+  useEffect(() => { fetchUsers(); }, []);
+
+  // All filtering done client-side — zero DB calls on filter/search changes
+  const users = useMemo(() => {
+    let result = allUsers;
+    if (roleFilter !== 'all') result = result.filter(u => u.role === roleFilter);
+    if (statusFilter === 'active') result = result.filter(u => u.is_active !== false);
+    if (statusFilter === 'inactive') result = result.filter(u => u.is_active === false);
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      result = result.filter(u =>
+        (u.full_name || '').toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [allUsers, roleFilter, statusFilter, debouncedSearch]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
     const { error } = await supabase.from('profiles').delete().eq('id', deleteTarget.id);
     if (!error) {
       toast.success('User deleted');
-      fetchUsers();
+      setAllUsers(prev => prev.filter(u => u.id !== deleteTarget.id));
     } else {
       toast.error('Failed to delete user');
     }
@@ -62,10 +85,13 @@ export default function AdminUsers() {
 
   const handleUpdateUser = async () => {
     if (!editTarget) return;
-    const { error } = await supabase.from('profiles').update({ role: editRole, full_name: editName }).eq('id', editTarget.id);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ role: editRole, full_name: editName })
+      .eq('id', editTarget.id);
     if (!error) {
       toast.success('User updated');
-      fetchUsers();
+      setAllUsers(prev => prev.map(u => u.id === editTarget.id ? { ...u, role: editRole, full_name: editName } : u));
     } else {
       toast.error('Failed to update user');
     }
@@ -73,11 +99,27 @@ export default function AdminUsers() {
   };
 
   const handleToggleActive = async (user: Profile) => {
-    const { error } = await supabase.from('profiles').update({ is_active: !user.is_active }).eq('id', user.id);
+    const newState = user.is_active === false ? true : false;
+    const { error } = await supabase.from('profiles').update({ is_active: newState }).eq('id', user.id);
     if (!error) {
-      toast.success(`User ${user.is_active ? 'deactivated' : 'activated'}`);
-      fetchUsers();
+      toast.success(newState ? 'User activated' : 'User deactivated');
+      setAllUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: newState } : u));
     }
+  };
+
+  const handleSendPasswordReset = async () => {
+    if (!resetTarget) return;
+    setResetting(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(resetTarget.email, {
+      redirectTo: `${window.location.origin}/forgot-password`,
+    });
+    if (!error) {
+      toast.success(`Password reset email sent to ${resetTarget.email}`);
+    } else {
+      toast.error('Failed to send reset email');
+    }
+    setResetting(false);
+    setResetTarget(null);
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -115,7 +157,7 @@ export default function AdminUsers() {
   const exportCSV = () => {
     const header = 'Name,Email,Role,Status,Created At\n';
     const rows = users.map(u =>
-      `"${u.full_name}","${u.email}","${u.role}","${u.is_active ? 'Active' : 'Inactive'}","${new Date(u.created_at).toLocaleDateString('en-AU')}"`
+      `"${u.full_name || ''}","${u.email}","${u.role}","${u.is_active === false ? 'Inactive' : 'Active'}","${new Date(u.created_at).toLocaleDateString('en-AU')}"`
     ).join('\n');
     const blob = new Blob([header + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -124,11 +166,11 @@ export default function AdminUsers() {
     URL.revokeObjectURL(url);
   };
 
-  const totalByRole = {
-    admin: users.filter(u => u.role === 'admin').length,
-    teacher: users.filter(u => u.role === 'teacher').length,
-    student: users.filter(u => u.role === 'student').length,
-  };
+  const totalByRole = useMemo(() => ({
+    admin: allUsers.filter(u => u.role === 'admin').length,
+    teacher: allUsers.filter(u => u.role === 'teacher').length,
+    student: allUsers.filter(u => u.role === 'student').length,
+  }), [allUsers]);
 
   return (
     <DashboardLayout navItems={adminNavItems} title="Users" subtitle="Manage all platform users">
@@ -174,7 +216,10 @@ export default function AdminUsers() {
             </select>
           </div>
           <div className="flex gap-2 shrink-0">
-            <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 dark:border-navy-600 rounded-lg hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors text-gray-700 dark:text-gray-300">
+            <button
+              onClick={exportCSV}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-200 dark:border-navy-600 rounded-lg hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors text-gray-700 dark:text-gray-300"
+            >
               <Download className="w-4 h-4" /> Export CSV
             </button>
             <button onClick={() => setShowCreateModal(true)} className="flex items-center gap-2 btn-primary text-sm py-2">
@@ -212,12 +257,13 @@ export default function AdminUsers() {
                   </tr>
                 ) : users.map(user => {
                   const RoleIcon = ROLE_ICONS[user.role] || GraduationCap;
+                  const isActive = user.is_active !== false;
                   return (
                     <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-navy-500 to-navy-800 flex items-center justify-center text-white text-sm font-bold shrink-0">
-                            {user.full_name?.[0] || user.email[0].toUpperCase()}
+                            {(user.full_name?.[0] || user.email[0]).toUpperCase()}
                           </div>
                           <div>
                             <p className="font-medium text-gray-900 dark:text-white text-sm">{user.full_name || '—'}</p>
@@ -232,26 +278,42 @@ export default function AdminUsers() {
                         </div>
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell">
-                        <Badge variant={user.is_active ? 'success' : 'error'}>{user.is_active ? 'Active' : 'Inactive'}</Badge>
+                        <Badge variant={isActive ? 'success' : 'error'}>{isActive ? 'Active' : 'Inactive'}</Badge>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden lg:table-cell">
                         {new Date(user.created_at).toLocaleDateString('en-AU')}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {/* Grant course access — link to enrollments filtered by user */}
+                          <Link
+                            to={`/admin/enrollments?userId=${user.id}`}
+                            className="p-1.5 rounded-lg text-teal-500 hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors"
+                            title="Manage enrolments"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </Link>
+                          {/* Send password reset email */}
+                          <button
+                            onClick={() => setResetTarget(user)}
+                            className="p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                            title="Send password reset email"
+                          >
+                            <KeyRound className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => handleToggleActive(user)}
-                            className={`p-1.5 rounded-lg transition-colors ${user.is_active ? 'text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`}
-                            title={user.is_active ? 'Deactivate' : 'Activate'}
+                            className={`p-1.5 rounded-lg transition-colors ${isActive ? 'text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20'}`}
+                            title={isActive ? 'Deactivate' : 'Activate'}
                           >
-                            {user.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                            {isActive ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
                           </button>
                           <button
                             onClick={() => { setEditTarget(user); setEditRole(user.role); setEditName(user.full_name || ''); }}
                             className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                             title="Edit User"
                           >
-                            <Edit2 className="w-4 h-4" />
+                            <Pencil className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => setDeleteTarget(user)}
@@ -270,12 +332,13 @@ export default function AdminUsers() {
           </div>
           {!loading && (
             <div className="px-4 py-3 border-t border-gray-100 dark:border-navy-700 text-xs text-gray-400">
-              Showing {users.length} user{users.length !== 1 ? 's' : ''}
+              Showing {users.length} of {allUsers.length} user{allUsers.length !== 1 ? 's' : ''}
             </div>
           )}
         </div>
       </div>
 
+      {/* Edit User Modal */}
       {editTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
@@ -284,12 +347,7 @@ export default function AdminUsers() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Full Name</label>
-                <input
-                  type="text"
-                  value={editName}
-                  onChange={e => setEditName(e.target.value)}
-                  className="input-field"
-                />
+                <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className="input-field" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email</label>
@@ -312,6 +370,29 @@ export default function AdminUsers() {
         </div>
       )}
 
+      {/* Password Reset Confirmation */}
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setResetTarget(null)} />
+          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-md p-6 animate-slide-up">
+            <div className="w-12 h-12 bg-amber-100 dark:bg-amber-900/30 rounded-2xl flex items-center justify-center mb-4">
+              <KeyRound className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+            </div>
+            <h3 className="font-playfair text-xl font-bold text-gray-900 dark:text-white mb-2">Send Password Reset</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              A password reset link will be sent to <strong className="text-gray-900 dark:text-white">{resetTarget.email}</strong>. The user can follow the link to set a new password.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setResetTarget(null)} className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-lg hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">Cancel</button>
+              <button onClick={handleSendPasswordReset} disabled={resetting} className="btn-primary text-sm py-2 disabled:opacity-60">
+                {resetting ? 'Sending...' : 'Send Reset Email'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create User Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowCreateModal(false)} />
@@ -320,37 +401,15 @@ export default function AdminUsers() {
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Full Name</label>
-                <input
-                  type="text"
-                  value={newUser.full_name}
-                  onChange={e => setNewUser(u => ({ ...u, full_name: e.target.value }))}
-                  className="input-field"
-                  placeholder="Jane Smith"
-                  required
-                />
+                <input type="text" value={newUser.full_name} onChange={e => setNewUser(u => ({ ...u, full_name: e.target.value }))} className="input-field" placeholder="Jane Smith" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={newUser.email}
-                  onChange={e => setNewUser(u => ({ ...u, email: e.target.value }))}
-                  className="input-field"
-                  placeholder="jane@example.com"
-                  required
-                />
+                <input type="email" value={newUser.email} onChange={e => setNewUser(u => ({ ...u, email: e.target.value }))} className="input-field" placeholder="jane@example.com" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Password</label>
-                <input
-                  type="password"
-                  value={newUser.password}
-                  onChange={e => setNewUser(u => ({ ...u, password: e.target.value }))}
-                  className="input-field"
-                  placeholder="Min. 8 characters"
-                  required
-                  minLength={8}
-                />
+                <input type="password" value={newUser.password} onChange={e => setNewUser(u => ({ ...u, password: e.target.value }))} className="input-field" placeholder="Min. 8 characters" required minLength={8} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Role</label>
