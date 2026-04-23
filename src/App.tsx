@@ -42,6 +42,7 @@ const AdminPromoCodes = lazy(() => import('./pages/admin/AdminPromoCodes'));
 const AdminAnnouncements = lazy(() => import('./pages/admin/AdminAnnouncements'));
 const AdminActivityLog = lazy(() => import('./pages/admin/AdminActivityLog'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
+const AdminAIUsage = lazy(() => import('./pages/admin/AdminAIUsage'));
 
 const TeacherDashboard = lazy(() => import('./pages/teacher/TeacherDashboard'));
 const TeacherCourses = lazy(() => import('./pages/teacher/TeacherCourses'));
@@ -152,6 +153,7 @@ export default function App() {
                 <Route path="/admin/announcements" element={<ProtectedRoute role="admin"><AdminAnnouncements /></ProtectedRoute>} />
                 <Route path="/admin/activity" element={<ProtectedRoute role="admin"><AdminActivityLog /></ProtectedRoute>} />
                 <Route path="/admin/settings" element={<ProtectedRoute role="admin"><AdminSettings /></ProtectedRoute>} />
+                <Route path="/admin/ai-usage" element={<ProtectedRoute role="admin"><AdminAIUsage /></ProtectedRoute>} />
 
                 <Route path="/teacher" element={<ProtectedRoute role="teacher"><TeacherDashboard /></ProtectedRoute>} />
                 <Route path="/teacher/courses" element={<ProtectedRoute role="teacher"><TeacherCourses /></ProtectedRoute>} />

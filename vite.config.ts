@@ -21,6 +21,7 @@ export default defineConfig({
           'vendor-query': ['@tanstack/react-query'],
           'vendor-form': ['react-hook-form', 'zod', '@hookform/resolvers'],
           'vendor-ui': ['sonner', 'clsx', 'tailwind-merge'],
+          'vendor-ai': ['react-player'],
         },
       },
     },

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import {
   ChevronLeft, CheckCircle2, Circle, Play, FileText,
-  Link as LinkIcon, BookOpen, Lock, Menu, X
+  Link as LinkIcon, BookOpen, Lock, Menu, X, ChevronDown, ChevronUp,
+  BookMarked, Sparkles,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -15,6 +16,8 @@ import { useCourseProgress, useUpdateLessonProgress } from '../../hooks/useProgr
 import { toast as sonnerToast } from 'sonner';
 import type { Course, Section, Lesson } from '../../types';
 
+const FlashcardStudyModal = lazy(() => import('../../components/ai/FlashcardStudyModal'));
+
 interface SectionWithLessons extends Section {
   lessons: Lesson[];
 }
@@ -23,7 +26,6 @@ export default function StudentCoursePlayer() {
   const { courseId } = useParams<{ courseId: string }>();
   const { profile } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   const [course, setCourse] = useState<Course | null>(null);
   const [sections, setSections] = useState<SectionWithLessons[]>([]);
@@ -32,6 +34,10 @@ export default function StudentCoursePlayer() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [lessonSummary, setLessonSummary] = useState<{ summary: string; generated_at: string | null } | null>(null);
+  const [flashcards, setFlashcards] = useState<Array<{ id: string; front: string; back: string }>>([]);
+  const [showFlashcards, setShowFlashcards] = useState(false);
 
   // Access gate
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
@@ -77,6 +83,37 @@ export default function StudentCoursePlayer() {
     };
     fetchData();
   }, [courseId, profile]);
+
+  // Fetch summary + flashcards when lesson changes
+  useEffect(() => {
+    if (!activeLesson) return;
+    setSummaryOpen(false);
+    setFlashcards([]);
+
+    // Fetch ai_summary from lessons table
+    supabase
+      .from('lessons')
+      .select('ai_summary, ai_summary_generated_at')
+      .eq('id', activeLesson.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.ai_summary) {
+          setLessonSummary({ summary: data.ai_summary, generated_at: data.ai_summary_generated_at });
+        } else {
+          setLessonSummary(null);
+        }
+      });
+
+    // Fetch flashcards
+    supabase
+      .from('flashcards')
+      .select('id, front, back')
+      .eq('lesson_id', activeLesson.id)
+      .order('order_index')
+      .then(({ data }) => {
+        setFlashcards((data || []) as Array<{ id: string; front: string; back: string }>);
+      });
+  }, [activeLesson?.id]);
 
   // Restore last position when lesson changes
   useEffect(() => {
@@ -324,6 +361,41 @@ export default function StudentCoursePlayer() {
                   )}
                 </div>
 
+                {/* AI Quick Summary */}
+                {lessonSummary && (
+                  <div className="mb-5 border border-sky-200 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setSummaryOpen(o => !o)}
+                      className="w-full flex items-center gap-3 px-4 py-3 bg-sky-50 hover:bg-sky-100 transition-colors text-left"
+                    >
+                      <Sparkles className="w-4 h-4 text-sky-500 shrink-0" />
+                      <span className="text-sm font-semibold text-sky-800 flex-1">Quick Summary</span>
+                      {summaryOpen ? <ChevronUp className="w-4 h-4 text-sky-400" /> : <ChevronDown className="w-4 h-4 text-sky-400" />}
+                    </button>
+                    {summaryOpen && (
+                      <div className="p-4 bg-white">
+                        <p className="text-sm text-slate-700 leading-relaxed">{lessonSummary.summary}</p>
+                        {lessonSummary.generated_at && (
+                          <p className="text-xs text-slate-400 mt-3">Generated {new Date(lessonSummary.generated_at).toLocaleDateString('en-AU', { dateStyle: 'medium' })}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Flashcards button */}
+                {flashcards.length > 0 && (
+                  <div className="mb-5">
+                    <button
+                      onClick={() => setShowFlashcards(true)}
+                      className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:border-sky-300 hover:bg-sky-50 rounded-xl transition-colors"
+                    >
+                      <BookMarked className="w-4 h-4 text-sky-500" />
+                      Study Flashcards ({flashcards.length})
+                    </button>
+                  </div>
+                )}
+
                 {activeLesson.type === 'video' && activeLesson.url && (() => {
                   const url = activeLesson.url;
                   const ytMatch = url.match(/(?:v=|youtu\.be\/)([^&?\s]+)/);
@@ -486,6 +558,15 @@ export default function StudentCoursePlayer() {
           </div>
         </div>
       </div>
+
+      {showFlashcards && flashcards.length > 0 && (
+        <Suspense fallback={null}>
+          <FlashcardStudyModal
+            cards={flashcards}
+            onClose={() => setShowFlashcards(false)}
+          />
+        </Suspense>
+      )}
     </DashboardLayout>
   );
 }

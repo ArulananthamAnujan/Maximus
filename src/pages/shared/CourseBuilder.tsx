@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Video, FileText,
   Link as LinkIcon, BookOpen, Save, Settings, Layers, HelpCircle, Calendar,
   Clock, CheckCircle, AlertCircle, Pencil, Upload, X, Eye,
   PlayCircle, ExternalLink, XCircle, ChevronRight, Image, DollarSign,
-  Globe, Lock, Award, BarChart2, AlignLeft, Info, Check,
+  Globe, Lock, Award, BarChart2, AlignLeft, Info, Check, Sparkles,
+  LayoutList,
 } from 'lucide-react';
 import { resumableUpload } from '../../lib/resumableUpload';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -16,6 +17,11 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import type { NavItem } from '../../components/layout/DashboardLayout';
 import type { Course, Section, Lesson, Quiz, QuizQuestion } from '../../types';
 
+const AICourseGeneratorModal = lazy(() => import('../../components/ai/AICourseGeneratorModal'));
+const AILessonToolbar = lazy(() => import('../../components/ai/AILessonToolbar'));
+const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
+const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
+
 const LESSON_ICONS = { video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon };
 const LESSON_COLORS = {
   video:   { bg: 'bg-sky-100',   text: 'text-sky-600',   border: 'border-sky-200' },
@@ -24,7 +30,7 @@ const LESSON_COLORS = {
   link:    { bg: 'bg-slate-100', text: 'text-slate-500',  border: 'border-slate-200' },
 };
 
-type Tab = 'details' | 'curriculum' | 'quizzes';
+type Tab = 'details' | 'curriculum' | 'quizzes' | 'flashcards';
 
 interface CourseBuilderProps {
   navItems: NavItem[];
@@ -376,6 +382,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [activeTab, setActiveTab] = useState<Tab>('details');
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'section' | 'lesson' | 'quiz' | 'question'; id: string; name: string } | null>(null);
 
+  const [showAIGenerator, setShowAIGenerator] = useState(false);
+  const [flashcardsLessonId, setFlashcardsLessonId] = useState<string>('');
+  const [flashcardsList, setFlashcardsList] = useState<Array<{ id: string; front: string; back: string; order_index: number }>>([]);
+  const [aiQuizTarget, setAiQuizTarget] = useState<string | null>(null);
+
   const [addingSection, setAddingSection] = useState(false);
   const [sectionTitle, setSectionTitle] = useState('');
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -423,6 +434,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse) { setQuizzes([]); return; }
     const { data } = await supabase.from('quizzes').select('*, questions:quiz_questions(*)').eq('course_id', selectedCourse).order('created_at');
     if (data) setQuizzes(data as QuizWithQuestions[]);
+  };
+
+  const fetchFlashcards = async (lessonId: string) => {
+    const { data } = await supabase.from('flashcards').select('*').eq('lesson_id', lessonId).order('order_index');
+    setFlashcardsList((data || []) as Array<{ id: string; front: string; back: string; order_index: number }>);
   };
 
   const loadCourseData = () => {
@@ -548,6 +564,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     { id: 'details', label: 'Course Info', icon: Info },
     { id: 'curriculum', label: 'Curriculum', icon: Layers, count: totalLessons },
     { id: 'quizzes', label: 'Quizzes', icon: HelpCircle, count: quizzes.length },
+    { id: 'flashcards', label: 'Flashcards', icon: LayoutList },
   ];
 
   return (
@@ -577,8 +594,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           </div>
         )}
 
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex-1 min-w-[200px]">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Select Course to Edit</label>
             <div className="relative max-w-sm">
               <BookOpen className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -593,6 +610,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             </div>
           </div>
+          <button
+            onClick={() => setShowAIGenerator(true)}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors whitespace-nowrap"
+          >
+            <Sparkles className="w-4 h-4" /> Generate Course with AI
+          </button>
         </div>
 
         {!selectedCourse && !loading && (
@@ -929,6 +952,24 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>
                               )}
+                              {lesson.type === 'article' && lesson.content && (
+                                <button
+                                  onClick={async () => {
+                                    const { generateFlashcards: _gf, summarizeLesson } = await import('../../lib/ai');
+                                    const result = await summarizeLesson({ lesson_content: lesson.content }).catch(() => null);
+                                    if (!result) { toast.error('Failed to generate summary'); return; }
+                                    await supabase.from('lessons').update({
+                                      ai_summary: result.summary,
+                                      ai_summary_generated_at: new Date().toISOString(),
+                                    }).eq('id', lesson.id);
+                                    toast.success('Summary generated and saved');
+                                  }}
+                                  title="Generate AI Summary"
+                                  className="p-1.5 rounded-lg text-slate-300 hover:text-sky-500 hover:bg-sky-50 transition-colors"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <button onClick={() => setDeleteTarget({ type: 'lesson', id: lesson.id, name: lesson.title })} className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1043,9 +1084,19 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           )}
 
                           {lessonForm.type === 'article' && (
-                            <div>
-                              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Article Content</label>
-                              <textarea value={lessonForm.content} onChange={e => setLessonForm(f => ({ ...f, content: e.target.value }))} className="input-field resize-none text-sm leading-relaxed" rows={7} placeholder="Write your lesson content here. You can use plain text or markdown formatting." />
+                            <div className="space-y-3">
+                              <Suspense fallback={null}>
+                                <AILessonToolbar
+                                  lessonTitle={lessonForm.title}
+                                  courseContext={courses.find(c => c.id === selectedCourse)?.title || ''}
+                                  currentContent={lessonForm.content}
+                                  onContentChange={html => setLessonForm(f => ({ ...f, content: html }))}
+                                />
+                              </Suspense>
+                              <div>
+                                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Article Content</label>
+                                <textarea value={lessonForm.content} onChange={e => setLessonForm(f => ({ ...f, content: e.target.value }))} className="input-field resize-none text-sm leading-relaxed" rows={7} placeholder="Write your lesson content here. You can use plain text or markdown formatting." />
+                              </div>
                             </div>
                           )}
 
@@ -1134,16 +1185,68 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               </div>
             )}
 
+            {activeTab === 'flashcards' && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-bold text-slate-800">Flashcards</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">Create and manage flashcards for lessons</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Select Lesson</label>
+                  <select
+                    value={flashcardsLessonId}
+                    onChange={e => {
+                      setFlashcardsLessonId(e.target.value);
+                      if (e.target.value) fetchFlashcards(e.target.value);
+                    }}
+                    className="input-field max-w-sm"
+                  >
+                    <option value="">Choose a lesson...</option>
+                    {sections.flatMap(s => s.lessons.map(l => (
+                      <option key={l.id} value={l.id}>{s.title} — {l.title}</option>
+                    )))}
+                  </select>
+                </div>
+                {flashcardsLessonId && (
+                  <Suspense fallback={<div className="text-sm text-slate-400">Loading flashcards...</div>}>
+                    <FlashcardsManager
+                      lessonId={flashcardsLessonId}
+                      courseId={selectedCourse}
+                      lessonContent={(() => {
+                        const lesson = sections.flatMap(s => s.lessons).find(l => l.id === flashcardsLessonId);
+                        return lesson?.content || '';
+                      })()}
+                      initialCards={flashcardsList}
+                      onUpdate={() => fetchFlashcards(flashcardsLessonId)}
+                    />
+                  </Suspense>
+                )}
+                {!flashcardsLessonId && (
+                  <div className="lms-panel">
+                    <div className="flex flex-col items-center justify-center py-14 text-center px-6">
+                      <div className="w-12 h-12 bg-sky-100 rounded-2xl flex items-center justify-center mb-4">
+                        <LayoutList className="w-6 h-6 text-sky-400" />
+                      </div>
+                      <h3 className="font-bold text-slate-800 mb-1">Select a lesson</h3>
+                      <p className="text-sm text-slate-500 max-w-xs">Choose a lesson above to view, generate, or edit its flashcards.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === 'quizzes' && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h2 className="font-bold text-slate-800">Quizzes</h2>
                     <p className="text-sm text-slate-500 mt-0.5">Test student knowledge and track progress</p>
                   </div>
-                  <button onClick={() => setShowQuizCreate(true)} className="btn-primary text-sm py-2 flex items-center gap-2">
-                    <Plus className="w-4 h-4" /> New Quiz
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowQuizCreate(true)} className="btn-primary text-sm py-2 flex items-center gap-2">
+                      <Plus className="w-4 h-4" /> New Quiz
+                    </button>
+                  </div>
                 </div>
 
                 {quizzes.length === 0 && (
@@ -1182,6 +1285,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={e => { e.stopPropagation(); setAiQuizTarget(quiz.id); }}
+                          className="p-1.5 rounded-lg text-sky-400 hover:text-sky-600 hover:bg-sky-50 transition-colors"
+                          title="Generate questions with AI"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                        </button>
                         <button onClick={e => { e.stopPropagation(); setDeleteTarget({ type: 'quiz', id: quiz.id, name: quiz.title }); }} className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1374,6 +1484,29 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         onCancel={() => setDeleteTarget(null)}
         confirmText="Delete"
       />
+
+      {/* AI Course Generator Modal */}
+      {showAIGenerator && (
+        <Suspense fallback={null}>
+          <AICourseGeneratorModal
+            onClose={() => setShowAIGenerator(false)}
+            navigatePrefix={role === 'admin' ? '/admin/builder' : '/teacher/builder'}
+          />
+        </Suspense>
+      )}
+
+      {/* AI Quiz Generator Modal */}
+      {aiQuizTarget && (
+        <Suspense fallback={null}>
+          <AIQuizGeneratorModal
+            quizId={aiQuizTarget}
+            courseId={selectedCourse}
+            lessons={sections.flatMap(s => s.lessons.map(l => ({ id: l.id, title: l.title, content: l.content })))}
+            onClose={() => setAiQuizTarget(null)}
+            onAdded={() => { fetchQuizzes(); setAiQuizTarget(null); }}
+          />
+        </Suspense>
+      )}
     </DashboardLayout>
   );
 }

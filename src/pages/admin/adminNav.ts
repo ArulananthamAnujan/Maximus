@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, BookOpen, GraduationCap, CreditCard, Award,
-  Tag, Bell, Settings, Activity, Layers,
+  Tag, Bell, Settings, Activity, Layers, Sparkles,
 } from 'lucide-react';
 import type { NavItem } from '../../components/layout/DashboardLayout';
 
@@ -15,5 +15,6 @@ export const adminNavItems: NavItem[] = [
   { label: 'Promo Codes', href: '/admin/promo-codes', icon: Tag },
   { label: 'Announcements', href: '/admin/announcements', icon: Bell },
   { label: 'Activity Log', href: '/admin/activity', icon: Activity },
+  { label: 'AI Usage', href: '/admin/ai-usage', icon: Sparkles },
   { label: 'Settings', href: '/admin/settings', icon: Settings },
 ];
