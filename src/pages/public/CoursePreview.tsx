@@ -1,0 +1,275 @@
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import {
+  Star, Clock, BookOpen, Users, CheckCircle2, ChevronDown, ChevronUp,
+  Play, FileText, Link as LinkIcon, ArrowLeft, ShoppingCart
+} from 'lucide-react';
+import PublicHeader from '../../components/layout/PublicHeader';
+import PublicFooter from '../../components/layout/PublicFooter';
+import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
+import type { Course, Section, Enrollment } from '../../types';
+
+export default function CoursePreview() {
+  const { id } = useParams<{ id: string }>();
+  const [course, setCourse] = useState<Course | null>(null);
+  const [sections, setSections] = useState<Section[]>([]);
+  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [enrolling, setEnrolling] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [promoCode, setPromoCode] = useState('');
+  const [discount, setDiscount] = useState(0);
+  const { user, profile } = useAuth();
+  const { toast } = useToast();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!id) return;
+      const [courseRes, sectionsRes] = await Promise.all([
+        supabase.from('courses').select('*, teacher:profiles(full_name, avatar_url, bio)').eq('id', id).maybeSingle(),
+        supabase.from('sections').select('*, lessons(*)').eq('course_id', id).order('order_index'),
+      ]);
+      if (courseRes.data) setCourse(courseRes.data as Course);
+      if (sectionsRes.data) setSections(sectionsRes.data as Section[]);
+      if (user) {
+        const { data: enr } = await supabase.from('enrollments').select('*').eq('student_id', user.id).eq('course_id', id).maybeSingle();
+        if (enr) setEnrollment(enr as Enrollment);
+      }
+      setLoading(false);
+      if (sectionsRes.data?.length) setExpandedSections(new Set([sectionsRes.data[0].id]));
+    };
+    fetchData();
+  }, [id, user]);
+
+  const applyPromo = async () => {
+    if (!promoCode) return;
+    const { data } = await supabase.from('promo_codes').select('*').eq('code', promoCode.toUpperCase()).eq('is_active', true).maybeSingle();
+    if (data) {
+      setDiscount(data.discount_percent);
+      toast.success(`Promo applied! ${data.discount_percent}% off`);
+    } else {
+      toast.error('Invalid or expired promo code');
+    }
+  };
+
+  const handleEnroll = async () => {
+    if (!user || !profile) { navigate('/login'); return; }
+    if (!course) return;
+    setEnrolling(true);
+    if (course.is_free || course.price === 0) {
+      const { error } = await supabase.from('enrollments').insert({ student_id: user.id, course_id: course.id });
+      if (!error) {
+        toast.success('Enrolled successfully! Start learning now.');
+        navigate('/student/courses');
+      } else {
+        toast.error('Enrollment failed. You may already be enrolled.');
+      }
+    } else if (course.stripe_payment_link) {
+      window.location.href = course.stripe_payment_link;
+    } else {
+      toast.error('Payment is not yet configured for this course. Please contact us.');
+    }
+    setEnrolling(false);
+  };
+
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    });
+  };
+
+  const finalPrice = course ? course.price * (1 - discount / 100) : 0;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white">
+        <PublicHeader />
+        <div className="pt-20 max-w-7xl mx-auto px-4 py-16">
+          <div className="animate-pulse space-y-8">
+            <div className="h-12 bg-slate-200 rounded w-3/4" />
+            <div className="h-6 bg-slate-200 rounded w-full" />
+            <div className="h-64 bg-slate-200 rounded" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!course) return (
+    <div className="min-h-screen bg-white">
+      <PublicHeader />
+      <div className="pt-20 text-center py-20">
+        <h1 className="text-2xl font-bold text-slate-900">Course not found</h1>
+        <Link to="/courses" className="mt-4 inline-block text-sky-600">Browse all courses</Link>
+      </div>
+      <PublicFooter />
+    </div>
+  );
+
+  const enrollButtonLabel = () => {
+    if (enrolling) return 'Processing...';
+    if (course.is_free) return 'Enrol Free';
+    if (course.stripe_payment_link) return `Enrol Now — A$${finalPrice.toFixed(2)}`;
+    return `Enrol Now — A$${finalPrice.toFixed(2)}`;
+  };
+
+  return (
+    <div className="bg-white min-h-screen">
+      <PublicHeader />
+      <div className="pt-16 lg:pt-20">
+        <div className="bg-slate-900 py-12">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <Link to="/courses" className="inline-flex items-center gap-2 text-slate-400 hover:text-white mb-6 transition-colors text-sm">
+              <ArrowLeft className="w-4 h-4" /> Back to Courses
+            </Link>
+            <div className="grid lg:grid-cols-3 gap-8 items-start">
+              <div className="lg:col-span-2">
+                <span className="inline-block bg-sky-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-4">{course.category}</span>
+                <h1 className="font-playfair text-3xl lg:text-4xl font-bold text-white mb-4">{course.title}</h1>
+                <p className="text-slate-300 text-lg mb-6">{course.short_description}</p>
+                <div className="flex flex-wrap items-center gap-5 text-sm text-slate-300">
+                  <div className="flex items-center gap-1">
+                    {[1,2,3,4,5].map(i => <Star key={i} className={`w-4 h-4 ${i <= Math.round(course.rating) ? 'fill-amber-400 text-amber-400' : 'text-slate-600'}`} />)}
+                    <span className="text-amber-400 font-medium ml-1">{course.rating}</span>
+                  </div>
+                  <span className="flex items-center gap-1"><Users className="w-4 h-4" />{course.total_students} students</span>
+                  <span className="flex items-center gap-1"><Clock className="w-4 h-4" />{course.duration_hours} hours</span>
+                  <span className="flex items-center gap-1"><BookOpen className="w-4 h-4" />{course.total_lessons} lessons</span>
+                  <span className="capitalize">{course.level}</span>
+                </div>
+                {course.teacher && (
+                  <p className="text-slate-400 text-sm mt-3">Instructor: <span className="text-white font-medium">{(course.teacher as { full_name: string }).full_name}</span></p>
+                )}
+              </div>
+              <div className="bg-white rounded-2xl overflow-hidden shadow-2xl border border-slate-100">
+                <div className="relative h-48">
+                  <img src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'} alt={course.title} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <button className="w-14 h-14 bg-white rounded-full flex items-center justify-center hover:scale-110 transition-transform shadow-xl">
+                      <Play className="w-6 h-6 text-slate-900 ml-1" />
+                    </button>
+                  </div>
+                </div>
+                <div className="p-5">
+                  {enrollment ? (
+                    <button onClick={() => navigate('/student/courses')} className="w-full px-4 py-3 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl transition-colors text-center mb-3">Continue Learning</button>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-3 mb-4">
+                        <span className="text-3xl font-bold text-slate-900 font-playfair">
+                          {course.is_free ? 'Free' : `A$${finalPrice.toFixed(2)}`}
+                        </span>
+                        {discount > 0 && !course.is_free && (
+                          <span className="text-lg text-slate-400 line-through">A${course.price.toFixed(2)}</span>
+                        )}
+                      </div>
+                      {!course.is_free && (
+                        <div className="flex gap-2 mb-3">
+                          <input
+                            type="text"
+                            placeholder="Promo code"
+                            value={promoCode}
+                            onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                            className="input-field flex-1 text-sm py-2"
+                          />
+                          <button onClick={applyPromo} className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors font-semibold">Apply</button>
+                        </div>
+                      )}
+                      <button
+                        onClick={handleEnroll}
+                        disabled={enrolling}
+                        className="w-full px-4 py-3.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white font-bold rounded-xl transition-colors text-center flex items-center justify-center gap-2 mb-3 shadow-lg shadow-sky-600/25"
+                      >
+                        <ShoppingCart className="w-4 h-4" />
+                        {enrollButtonLabel()}
+                      </button>
+                      {!course.is_free && !course.stripe_payment_link && (
+                        <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 text-center mb-3">
+                          Payment not yet configured. Contact us to enrol.
+                        </p>
+                      )}
+                    </>
+                  )}
+                  <p className="text-xs text-slate-400 text-center mb-4">30-day money-back guarantee</p>
+                  <div className="space-y-2 text-sm">
+                    {[`${course.duration_hours} hours of content`, `${course.total_lessons} lessons`, 'Certificate of completion', 'Lifetime access', 'Mobile & desktop access'].map(item => (
+                      <div key={item} className="flex items-center gap-2 text-slate-600">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        {item}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+          <div className="lg:max-w-2xl">
+            {(course.what_you_learn as string[]).length > 0 && (
+              <section className="mb-10">
+                <h2 className="font-playfair text-2xl font-bold text-slate-900 mb-5">What You'll Learn</h2>
+                <div className="grid md:grid-cols-2 gap-3">
+                  {(course.what_you_learn as string[]).map((item, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                      <span className="text-slate-700 text-sm">{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="mb-10">
+              <h2 className="font-playfair text-2xl font-bold text-slate-900 mb-5">Course Content</h2>
+              <p className="text-slate-500 text-sm mb-4">{sections.length} sections • {course.total_lessons} lessons • {course.duration_hours} hours total</p>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                {sections.map((section, idx) => (
+                  <div key={section.id} className={idx > 0 ? 'border-t border-slate-200' : ''}>
+                    <button
+                      onClick={() => toggleSection(section.id)}
+                      className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="font-semibold text-slate-900 text-sm">{section.title}</span>
+                      <span className="flex items-center gap-3">
+                        <span className="text-xs text-slate-400">{section.lessons?.length || 0} lessons</span>
+                        {expandedSections.has(section.id) ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                      </span>
+                    </button>
+                    {expandedSections.has(section.id) && section.lessons && (
+                      <div className="bg-slate-50 divide-y divide-slate-100">
+                        {section.lessons.map(lesson => (
+                          <div key={lesson.id} className="flex items-center gap-3 px-5 py-3">
+                            {lesson.type === 'video' ? <Play className="w-4 h-4 text-slate-400 shrink-0" /> : lesson.type === 'pdf' ? <FileText className="w-4 h-4 text-slate-400 shrink-0" /> : <LinkIcon className="w-4 h-4 text-slate-400 shrink-0" />}
+                            <span className="text-sm text-slate-700 flex-1">{lesson.title}</span>
+                            {lesson.is_preview && <span className="text-xs text-sky-600 font-semibold bg-sky-50 px-2 py-0.5 rounded-md">Preview</span>}
+                            <span className="text-xs text-slate-400">{lesson.duration_minutes}m</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {course.description && (
+              <section className="mb-10">
+                <h2 className="font-playfair text-2xl font-bold text-slate-900 mb-4">About This Course</h2>
+                <p className="text-slate-600 leading-relaxed">{course.description}</p>
+              </section>
+            )}
+          </div>
+        </div>
+      </div>
+      <PublicFooter />
+    </div>
+  );
+}
