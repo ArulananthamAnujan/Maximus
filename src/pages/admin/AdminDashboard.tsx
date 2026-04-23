@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Users, BookOpen, GraduationCap, DollarSign, Award, TrendingUp, UserCheck, AlertCircle, ArrowUpRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -34,18 +34,18 @@ export default function AdminDashboard() {
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       const [usersRes, coursesRes, enrollmentsRes, paymentsRes, certsRes, logsRes, recentPaymentsRes] = await Promise.all([
-        supabase.from('profiles').select('id,role', { count: 'exact' }),
-        supabase.from('courses').select('id,is_published', { count: 'exact' }),
+        supabase.from('profiles').select('id, role, is_active', { count: 'exact' }),
+        supabase.from('courses').select('id, is_published', { count: 'exact' }),
         supabase.from('enrollments').select('id', { count: 'exact' }),
-        supabase.from('payments').select('amount').eq('status', 'completed'),
+        supabase.from('payments').select('amount, status').eq('status', 'completed'),
         supabase.from('certificates').select('id', { count: 'exact' }).eq('revoked', false),
-        supabase.from('activity_logs').select('id,action,entity_type,entity_id,details,created_at,user:profiles(full_name,email,role)').order('created_at', { ascending: false }).limit(10),
-        supabase.from('payments').select('amount,created_at').eq('status', 'completed').gte('created_at', thirtyDaysAgo.toISOString()),
+        supabase.from('activity_logs').select('*, user:profiles(full_name, email, role)').order('created_at', { ascending: false }).limit(10),
+        supabase.from('payments').select('amount, created_at').eq('status', 'completed').gte('created_at', thirtyDaysAgo.toISOString()),
       ]);
 
       const revenue = paymentsRes.data?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
       const publishedCourses = coursesRes.data?.filter(c => c.is_published).length || 0;
-      const activeStudents = usersRes.data?.filter(u => u.role === 'student').length || 0;
+      const activeStudents = usersRes.data?.filter(u => u.role === 'student' && u.is_active).length || 0;
 
       setStats({
         totalUsers: usersRes.count || 0,
@@ -77,14 +77,14 @@ export default function AdminDashboard() {
     fetchData();
   }, []);
 
-  const STAT_CARDS = useMemo(() => stats ? [
-    { title: 'Total Users',       value: stats.totalUsers.toLocaleString(),                                                     icon: Users,         color: 'bg-blue-500',    change: '+12%', href: '/admin/users' },
-    { title: 'Total Courses',     value: stats.totalCourses.toLocaleString(),                                                   icon: BookOpen,      color: 'bg-amber-500',   change: '+5%',  href: '/admin/courses' },
-    { title: 'Total Enrolments',  value: stats.totalEnrollments.toLocaleString(),                                               icon: GraduationCap, color: 'bg-green-500',   change: '+18%', href: '/admin/enrollments' },
-    { title: 'Total Revenue',     value: `A$${stats.totalRevenue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}`,       icon: DollarSign,    color: 'bg-emerald-600', change: '+23%', href: '/admin/payments' },
-    { title: 'Certificates',      value: stats.totalCertificates.toLocaleString(),                                              icon: Award,         color: 'bg-gold-500',    change: '+9%',  href: '/admin/certificates' },
-    { title: 'Active Students',   value: stats.activeStudents.toLocaleString(),                                                 icon: UserCheck,     color: 'bg-teal-500',    change: '+8%',  href: '/admin/users' },
-  ] : [], [stats]);
+  const STAT_CARDS = stats ? [
+    { title: 'Total Users', value: stats.totalUsers.toLocaleString(), icon: Users, color: 'bg-blue-500', change: '+12%', href: '/admin/users' },
+    { title: 'Total Courses', value: stats.totalCourses.toLocaleString(), icon: BookOpen, color: 'bg-amber-500', change: '+5%', href: '/admin/courses' },
+    { title: 'Total Enrolments', value: stats.totalEnrollments.toLocaleString(), icon: GraduationCap, color: 'bg-green-500', change: '+18%', href: '/admin/enrollments' },
+    { title: 'Total Revenue', value: `A$${stats.totalRevenue.toLocaleString('en-AU', { minimumFractionDigits: 2 })}`, icon: DollarSign, color: 'bg-emerald-600', change: '+23%', href: '/admin/payments' },
+    { title: 'Certificates Issued', value: stats.totalCertificates.toLocaleString(), icon: Award, color: 'bg-gold-500', change: '+9%', href: '/admin/certificates' },
+    { title: 'Active Students', value: stats.activeStudents.toLocaleString(), icon: UserCheck, color: 'bg-teal-500', change: '+8%', href: '/admin/users' },
+  ] : [];
 
   const maxRevenue = Math.max(...revenueData.map(d => d.amount), 1);
 
@@ -220,11 +220,7 @@ export default function AdminDashboard() {
                       <p className="text-sm text-gray-900 dark:text-white">
                         <span className="font-medium">{user?.full_name || 'Unknown'}</span>
                         {' '}
-                        <span className="text-gray-500 dark:text-gray-400">
-                          {typeof log.details === 'object' && log.details !== null
-                            ? (log.details as Record<string, string>).note ?? log.action
-                            : String(log.details ?? log.action)}
-                        </span>
+                        <span className="text-gray-500 dark:text-gray-400">{log.details}</span>
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5">{new Date(log.created_at).toLocaleString('en-AU')}</p>
                     </div>
@@ -232,7 +228,7 @@ export default function AdminDashboard() {
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${actionColors[action] || 'bg-gray-100 text-gray-600 dark:bg-navy-700 dark:text-gray-400'}`}>
                         {log.action}
                       </span>
-                      <span className="text-xs text-gray-400 hidden sm:block">{log.entity_type ?? log.resource_type}</span>
+                      <span className="text-xs text-gray-400 hidden sm:block">{log.resource_type}</span>
                     </div>
                   </div>
                 );

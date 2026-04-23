@@ -13,7 +13,7 @@ interface AssignmentWithSubmission extends Assignment {
 }
 
 export default function StudentAssignments() {
-  const { user } = useAuth();
+  const { profile } = useAuth();
   const { toast } = useToast();
   const [assignments, setAssignments] = useState<AssignmentWithSubmission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,28 +22,19 @@ export default function StudentAssignments() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!profile) return;
     fetchData();
-  }, [user]);
+  }, [profile]);
 
   const fetchData = async () => {
-    if (!user) return;
-    // Query both enrollment tables to catch legacy + new enrollments
-    const [legacyRes, newRes] = await Promise.all([
-      supabase.from('enrollments').select('course_id').eq('student_id', user.id),
-      supabase.from('course_enrollments').select('course_id').eq('user_id', user.id),
-    ]);
-    const courseIds = [
-      ...new Set([
-        ...(legacyRes.data || []).map(e => e.course_id),
-        ...(newRes.data || []).map(e => e.course_id),
-      ]),
-    ];
+    if (!profile) return;
+    const { data: enrollments } = await supabase.from('enrollments').select('course_id').eq('student_id', profile.id);
+    const courseIds = (enrollments || []).map(e => e.course_id);
     if (courseIds.length === 0) { setLoading(false); return; }
 
     const [assignRes, subRes] = await Promise.all([
-      supabase.from('assignments').select('id,title,description,due_date,max_marks,course_id,course:courses(title)').in('course_id', courseIds).order('due_date', { ascending: true }),
-      supabase.from('assignment_submissions').select('id,assignment_id,content,submitted_at,grade,feedback').eq('student_id', user.id),
+      supabase.from('assignments').select('*, course:courses(title)').in('course_id', courseIds).order('due_date', { ascending: true }),
+      supabase.from('assignment_submissions').select('*').eq('student_id', profile.id),
     ]);
 
     const submissionMap = new Map((subRes.data || []).map(s => [s.assignment_id, s]));
@@ -52,13 +43,13 @@ export default function StudentAssignments() {
   };
 
   const handleSubmit = async (assignmentId: string) => {
-    if (!user || !drafts[assignmentId]?.trim()) {
+    if (!profile || !drafts[assignmentId]?.trim()) {
       toast.error('Please write your submission before submitting.'); return;
     }
     setSubmitting(assignmentId);
     const { error } = await supabase.from('assignment_submissions').upsert({
       assignment_id: assignmentId,
-      student_id: user.id,
+      student_id: profile.id,
       content: drafts[assignmentId],
       submitted_at: new Date().toISOString(),
     }, { onConflict: 'assignment_id,student_id' });

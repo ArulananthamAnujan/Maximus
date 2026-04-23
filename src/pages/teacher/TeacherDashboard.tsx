@@ -37,47 +37,69 @@ export default function TeacherDashboard() {
     setLoadingCourses(true);
     setLoadingActivity(true);
 
-    const fetchAll = async () => {
-      // Step 1: fetch courses first (needed for courseIds)
-      const { data: courseData } = await supabase
-        .from('courses')
-        .select('id,title,thumbnail_url,total_students,category,is_published,is_archived,created_at')
-        .eq('teacher_id', teacherId)
-        .eq('is_archived', false)
-        .order('created_at', { ascending: false });
+    supabase
+      .from('courses')
+      .select('id, title, thumbnail_url, total_students, category, is_published, is_archived, created_at')
+      .eq('teacher_id', teacherId)
+      .eq('is_archived', false)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const list = (data || []) as Course[];
+        setCourses(list);
+        setLoadingCourses(false);
 
-      const list = (courseData || []) as Course[];
-      setCourses(list);
-      setLoadingCourses(false);
+        if (list.length === 0) {
+          setLoadingStats(false);
+          setLoadingActivity(false);
+          return;
+        }
 
-      if (list.length === 0) {
-        setLoadingStats(false);
-        setLoadingActivity(false);
-        return;
-      }
+        const courseIds = list.map(c => c.id);
 
-      const courseIds = list.map(c => c.id);
+        Promise.all([
+          supabase
+            .from('enrollments')
+            .select('id', { count: 'exact', head: true })
+            .in('course_id', courseIds),
+          supabase
+            .from('live_sessions')
+            .select('*')
+            .eq('teacher_id', teacherId)
+            .gte('scheduled_at', now)
+            .order('scheduled_at', { ascending: true })
+            .limit(3),
+        ]).then(([studRes, sessRes]) => {
+          setTotalStudents(studRes.count || 0);
+          if (sessRes.data) setLiveSessions(sessRes.data as LiveSession[]);
+          setLoadingStats(false);
+        });
 
-      // Step 2: all remaining queries in a single Promise.all
-      const [studRes, sessRes, assignRes, subRes, pendRes] = await Promise.all([
-        supabase.from('enrollments').select('id', { count: 'exact', head: true }).in('course_id', courseIds),
-        supabase.from('live_sessions').select('id,title,scheduled_at,duration_minutes,meeting_url,status').eq('teacher_id', teacherId).gte('scheduled_at', now).order('scheduled_at', { ascending: true }).limit(3),
-        supabase.from('assignments').select('id,title,due_date,course_id').in('course_id', courseIds).gte('due_date', now).order('due_date', { ascending: true }).limit(4),
-        supabase.from('assignment_submissions').select('id,submitted_at,grade,assignment:assignments!inner(title,course_id),student:profiles(full_name,email)').in('assignments.course_id', courseIds).order('submitted_at', { ascending: false }).limit(5),
-        supabase.from('assignment_submissions').select('id', { count: 'exact', head: true }).is('grade', null).in('assignments.course_id', courseIds),
-      ]);
-
-      setTotalStudents(studRes.count || 0);
-      if (sessRes.data) setLiveSessions(sessRes.data as LiveSession[]);
-      setLoadingStats(false);
-
-      if (assignRes.data) setAssignments(assignRes.data as Assignment[]);
-      if (subRes.data) setRecentSubmissions(subRes.data as RecentSubmission[]);
-      setPendingGrades(pendRes.count || 0);
-      setLoadingActivity(false);
-    };
-
-    fetchAll();
+        Promise.all([
+          supabase
+            .from('assignments')
+            .select('id, title, due_date, course_id')
+            .in('course_id', courseIds)
+            .gte('due_date', now)
+            .order('due_date', { ascending: true })
+            .limit(4),
+          supabase
+            .from('assignment_submissions')
+            .select('id, submitted_at, grade, assignment:assignments!inner(title, course_id), student:profiles(full_name, email)')
+            .in('assignments.course_id', courseIds)
+            .order('submitted_at', { ascending: false })
+            .limit(5),
+          supabase
+            .from('assignment_submissions')
+            .select('id', { count: 'exact', head: true })
+            .is('grade', null)
+            .in('assignments.course_id', courseIds),
+        ]).then(([assignRes, subRes, pendRes]) => {
+          if (assignRes.data) setAssignments(assignRes.data as Assignment[]);
+          if (subRes.data) setRecentSubmissions(subRes.data as RecentSubmission[]);
+          setPendingGrades(pendRes.count || 0);
+          setLoadingActivity(false);
+        });
+      });
   }, [profile]);
 
   const loading = loadingStats && loadingCourses;
@@ -251,8 +273,8 @@ export default function TeacherDashboard() {
                       </div>
                       <div className="flex items-center gap-2 mt-2">
                         <span className="text-xs text-gray-400">{session.duration_minutes}min</span>
-                        {session.meeting_url && (
-                          <a href={session.meeting_url} target="_blank" rel="noreferrer" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                        {session.meeting_link && (
+                          <a href={session.meeting_link} target="_blank" rel="noreferrer" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
                             Join link
                           </a>
                         )}

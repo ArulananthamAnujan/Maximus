@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Filter, Star, Clock, BookOpen, SlidersHorizontal, X } from 'lucide-react';
 import PublicHeader from '../../components/layout/PublicHeader';
@@ -11,61 +11,42 @@ const CATEGORIES = ['All', 'IELTS', 'PTE', 'Language', 'Business', 'Technology',
 const LEVELS = ['All', 'Beginner', 'Intermediate', 'Advanced'];
 const PRICE_FILTERS = ['All', 'Free', 'Paid'];
 
-// Module-level cache so navigating back doesn't refetch
-let cachedCourses: Course[] | null = null;
-
 export default function Courses() {
-  const [allCourses, setAllCourses] = useState<Course[]>(cachedCourses ?? []);
-  const [loading, setLoading] = useState(cachedCourses === null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [level, setLevel] = useState('All');
   const [priceFilter, setPriceFilter] = useState('All');
   const [sortBy, setSortBy] = useState('popular');
   const [showFilters, setShowFilters] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (cachedCourses !== null) return;
-    supabase
-      .from('courses')
-      .select('id,title,short_description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,created_at,teacher:profiles(full_name)')
-      .eq('is_published', true)
-      .eq('is_archived', false)
-      .then(({ data }) => {
-        const courses = (data as Course[]) ?? [];
-        cachedCourses = courses;
-        setAllCourses(courses);
-        setLoading(false);
-      });
-  }, []);
+    const fetchCourses = async () => {
+      setLoading(true);
+      let query = supabase
+        .from('courses')
+        .select('*, teacher:profiles(full_name)')
+        .eq('is_published', true)
+        .eq('is_archived', false);
 
-  // Debounce search input — only update filter after 250ms of no typing
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 250);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [search]);
+      if (category !== 'All') query = query.eq('category', category);
+      if (level !== 'All') query = query.eq('level', level.toLowerCase());
+      if (priceFilter === 'Free') query = query.eq('is_free', true);
+      if (priceFilter === 'Paid') query = query.eq('is_free', false);
+      if (search) query = query.ilike('title', `%${search}%`);
 
-  // All filtering and sorting is done in memory — zero extra DB calls
-  const courses = useMemo(() => {
-    let result = allCourses;
-    if (category !== 'All') result = result.filter(c => c.category === category);
-    if (level !== 'All') result = result.filter(c => c.level?.toLowerCase() === level.toLowerCase());
-    if (priceFilter === 'Free') result = result.filter(c => c.is_free);
-    if (priceFilter === 'Paid') result = result.filter(c => !c.is_free);
-    if (debouncedSearch) {
-      const q = debouncedSearch.toLowerCase();
-      result = result.filter(c => c.title.toLowerCase().includes(q) || (c.short_description || '').toLowerCase().includes(q));
-    }
-    switch (sortBy) {
-      case 'newest': return [...result].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      case 'price_low': return [...result].sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
-      case 'price_high': return [...result].sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
-      default: return [...result].sort((a, b) => (b.total_students ?? 0) - (a.total_students ?? 0));
-    }
-  }, [allCourses, category, level, priceFilter, debouncedSearch, sortBy]);
+      if (sortBy === 'newest') query = query.order('created_at', { ascending: false });
+      else if (sortBy === 'price_low') query = query.order('price', { ascending: true });
+      else if (sortBy === 'price_high') query = query.order('price', { ascending: false });
+      else query = query.order('total_students', { ascending: false });
+
+      const { data } = await query;
+      if (data) setCourses(data as Course[]);
+      setLoading(false);
+    };
+    fetchCourses();
+  }, [category, level, priceFilter, search, sortBy]);
 
   return (
     <div className="bg-white min-h-screen">
@@ -181,15 +162,7 @@ function CourseCard({ course }: { course: Course }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm group hover:shadow-xl transition-all duration-300 hover:-translate-y-1 overflow-hidden">
       <div className="relative h-44 overflow-hidden">
-        <img
-          src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'}
-          alt={course.title}
-          width={400}
-          height={176}
-          loading="lazy"
-          decoding="async"
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-        />
+        <img src={course.thumbnail_url || 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg'} alt={course.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
         <div className="absolute top-3 left-3">
           {course.is_free
