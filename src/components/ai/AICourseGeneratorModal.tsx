@@ -133,7 +133,7 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
             <h2 className="font-bold text-slate-900">Generate Course with AI</h2>
             <p className="text-xs text-slate-400">
               {step === 'form' && 'Fill in details to generate a complete course outline'}
-              {step === 'generating' && 'Claude is designing your course...'}
+              {step === 'generating' && 'AI is designing your course...'}
               {step === 'preview' && 'Review and edit before creating'}
               {step === 'saving' && 'Creating your course...'}
             </p>

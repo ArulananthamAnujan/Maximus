@@ -22,13 +22,22 @@ const AILessonToolbar = lazy(() => import('../../components/ai/AILessonToolbar')
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
 
-const LESSON_ICONS = { video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon };
-const LESSON_COLORS = {
+// Maps both UI type names and DB type names
+const LESSON_ICONS: Record<string, typeof Video> = {
+  video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon,
+  text: AlignLeft, file: FileText, quiz: HelpCircle,
+};
+const LESSON_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   video:   { bg: 'bg-sky-100',   text: 'text-sky-600',   border: 'border-sky-200' },
   pdf:     { bg: 'bg-red-100',   text: 'text-red-600',   border: 'border-red-200' },
+  file:    { bg: 'bg-red-100',   text: 'text-red-600',   border: 'border-red-200' },
   article: { bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-200' },
+  text:    { bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-200' },
   link:    { bg: 'bg-slate-100', text: 'text-slate-500',  border: 'border-slate-200' },
+  quiz:    { bg: 'bg-sky-100',   text: 'text-sky-600',   border: 'border-sky-200' },
 };
+const getLessonIcon = (type: string) => LESSON_ICONS[type] || FileText;
+const getLessonColors = (type: string) => LESSON_COLORS[type] || LESSON_COLORS.text;
 
 type Tab = 'details' | 'curriculum' | 'quizzes' | 'flashcards';
 
@@ -490,42 +499,49 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           .single();
         if (sectionErr || !sectionData) continue;
 
-        // Insert lessons
+        // Insert lessons — use 'text' for articles, 'file' for documents (matches DB constraint)
         const lessonRows = (sec.lessons || []).map((l, li) => ({
           section_id: sectionData.id,
           course_id: selectedCourse,
           title: l.title,
-          type: l.type === 'document' ? 'pdf' : 'article',
+          type: l.type === 'document' ? 'file' : 'text',
+          lesson_type: l.type === 'document' ? 'file' : 'text',
           content: '',
           duration_minutes: l.estimated_duration_minutes || 10,
           order_index: li,
           is_preview: false,
-          is_required: true,
         }));
         let insertedLessons: Array<{ id: string }> = [];
         if (lessonRows.length > 0) {
-          const { data: lessonData } = await supabase.from('lessons').insert(lessonRows).select('id');
-          insertedLessons = lessonData || [];
+          const { data: lessonData, error: lessonErr } = await supabase.from('lessons').insert(lessonRows).select('id');
+          if (!lessonErr) insertedLessons = lessonData || [];
         }
 
         // Insert quiz for this section
         if (sec.quiz?.questions?.length) {
-          const { data: quizData } = await supabase.from('quizzes').insert({
+          const { data: quizData, error: quizErr } = await supabase.from('quizzes').insert({
             course_id: selectedCourse,
             title: sec.quiz.title,
             pass_mark: 70,
+            pass_percentage: 70,
             max_attempts: 3,
           }).select('id').single();
-          if (quizData) {
-            const questionRows = sec.quiz.questions.map((q, qi) => ({
-              quiz_id: quizData.id,
-              question: q.question,
-              type: q.type,
-              options: q.options && q.options.length > 0 ? q.options : null,
-              correct_answer: q.correct_answer,
-              points: q.points,
-              order_index: qi,
-            }));
+          if (!quizErr && quizData) {
+            const questionRows = sec.quiz.questions.map((q, qi) => {
+              const opts: string[] = q.options && q.options.length > 0 ? q.options : ['True', 'False'];
+              const correctIdx = opts.findIndex(o => o === q.correct_answer);
+              return {
+                quiz_id: quizData.id,
+                question: q.question,
+                type: q.type,
+                options: opts,
+                correct_answer: correctIdx >= 0 ? correctIdx : 0,
+                correct_answer_text: q.correct_answer,
+                explanation: q.explanation || '',
+                points: q.points || 1,
+                order_index: qi,
+              };
+            });
             await supabase.from('quiz_questions').insert(questionRows);
           }
         }
@@ -549,8 +565,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       setAICurriculumStep('form');
       setAICurriculumPreview([]);
       setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3 });
-      fetchSections();
-      fetchQuizzes();
+      await fetchSections();
+      await fetchQuizzes();
+      setActiveTab('curriculum');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
     } finally {
@@ -565,7 +582,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { data, error } = await supabase
         .from('quizzes')
-        .insert({ course_id: selectedCourse, title: aiQuizNewName.trim(), pass_mark: 70, max_attempts: 3 })
+        .insert({ course_id: selectedCourse, title: aiQuizNewName.trim(), pass_mark: 70, pass_percentage: 70, max_attempts: 3 })
         .select('id')
         .single();
       if (error || !data) throw error || new Error('Failed to create quiz');
@@ -632,8 +649,19 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     e.preventDefault();
     if (!addingLessonTo) return;
     const section = sections.find(s => s.id === addingLessonTo);
+    // Map UI types to DB-allowed values
+    const typeMap: Record<string, string> = { article: 'text', pdf: 'file', link: 'text', video: 'video' };
+    const dbType = typeMap[lessonForm.type] || lessonForm.type;
     const { error } = await supabase.from('lessons').insert({
-      section_id: addingLessonTo, ...lessonForm,
+      section_id: addingLessonTo,
+      course_id: selectedCourse,
+      title: lessonForm.title,
+      type: dbType,
+      lesson_type: dbType,
+      content: lessonForm.content,
+      url: lessonForm.url,
+      duration_minutes: lessonForm.duration_minutes,
+      is_preview: lessonForm.is_preview,
       order_index: section?.lessons?.length || 0,
     });
     if (!error) {
@@ -656,11 +684,14 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
   const handleCreateQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
+    const timeLimitVal = quizForm.time_limit_minutes ? parseInt(quizForm.time_limit_minutes) : null;
     const { error } = await supabase.from('quizzes').insert({
       course_id: selectedCourse,
       title: quizForm.title,
       description: quizForm.description,
-      time_limit_minutes: quizForm.time_limit_minutes ? parseInt(quizForm.time_limit_minutes) : null,
+      time_limit: timeLimitVal || 0,
+      time_limit_minutes: timeLimitVal,
+      pass_percentage: quizForm.pass_mark,
       pass_mark: quizForm.pass_mark,
       max_attempts: quizForm.max_attempts,
     });
@@ -676,13 +707,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     e.preventDefault();
     if (!addingQuestionTo) return;
     const quiz = quizzes.find(q => q.id === addingQuestionTo);
-    const filteredOptions = questionForm.type === 'short_answer' ? null : questionForm.options.filter(o => o.trim());
+    const filteredOptions = questionForm.type === 'short_answer' ? [] : questionForm.options.filter(o => o.trim());
+    const correctIdx = filteredOptions.findIndex(o => o === questionForm.correct_answer);
     const { error } = await supabase.from('quiz_questions').insert({
       quiz_id: addingQuestionTo,
       question: questionForm.question,
       type: questionForm.type,
-      options: filteredOptions,
-      correct_answer: questionForm.correct_answer,
+      options: filteredOptions.length > 0 ? filteredOptions : null,
+      correct_answer: correctIdx >= 0 ? correctIdx : 0,
+      correct_answer_text: questionForm.correct_answer,
       points: questionForm.points,
       order_index: quiz?.questions?.length || 0,
     });
@@ -1040,7 +1073,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-sky-800">Generate Curriculum with AI</p>
-                        <p className="text-xs text-sky-600 mt-0.5">Claude creates sections, lessons, quizzes and activities</p>
+                        <p className="text-xs text-sky-600 mt-0.5">AI creates sections, lessons, quizzes and activities</p>
                       </div>
                     </div>
                     <button
@@ -1060,7 +1093,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-sky-800">
                           {aiCurriculumStep === 'form' && 'Generate Curriculum with AI'}
-                          {aiCurriculumStep === 'loading' && 'Claude is building your curriculum...'}
+                          {aiCurriculumStep === 'loading' && 'AI is building your curriculum...'}
                           {aiCurriculumStep === 'preview' && `Preview — ${aiCurriculumPreview.length} sections generated`}
                         </p>
                         <p className="text-xs text-sky-600 mt-0.5">
@@ -1147,7 +1180,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           <div className="absolute inset-0 rounded-full border-4 border-sky-300 border-t-transparent animate-spin" />
                         </div>
                         <div className="text-center">
-                          <p className="text-sm font-semibold text-slate-700">Claude is crafting your curriculum</p>
+                          <p className="text-sm font-semibold text-slate-700">AI is crafting your curriculum</p>
                           <p className="text-xs text-slate-400 mt-1">Building {aiCurriculumForm.num_sections} sections with lessons, quizzes and activities...</p>
                         </div>
                       </div>
@@ -1320,8 +1353,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     )}
 
                     {section.lessons?.map((lesson, lIdx) => {
-                      const Icon = LESSON_ICONS[lesson.type];
-                      const colors = LESSON_COLORS[lesson.type];
+                      const Icon = getLessonIcon(lesson.type);
+                      const colors = getLessonColors(lesson.type);
                       const isPreview = previewLesson?.id === lesson.id;
                       return (
                         <div key={lesson.id} className="border-b border-slate-100 last:border-0">
