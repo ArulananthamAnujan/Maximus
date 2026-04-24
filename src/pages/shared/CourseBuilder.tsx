@@ -454,6 +454,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [examForm, setExamForm] = useState({ title: '', description: '', instructions: 'Read the passage carefully and answer all questions in full sentences.', passage: '', time_limit_minutes: '60' });
   const [examQuestions, setExamQuestions] = useState<{ question: string; marks: number; sample_answer: string }[]>([{ question: '', marks: 5, sample_answer: '' }]);
   const [savingExam, setSavingExam] = useState(false);
+  const [showAIExamGenerator, setShowAIExamGenerator] = useState(false);
+  const [aiExamForm, setAIExamForm] = useState({ topic: '', exam_type: 'reading_comprehension' as 'reading_comprehension' | 'question_only', difficulty: 'intermediate', num_questions: 5, marks_per_question: 5, target_audience: '', extra_instructions: '' });
+  const [generatingExam, setGeneratingExam] = useState(false);
   const [previewLesson, setPreviewLesson] = useState<Lesson | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2094,9 +2097,14 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     <h2 className="font-bold text-slate-800">Exams</h2>
                     <p className="text-sm text-slate-500 mt-0.5">Reading comprehension and open-answer assessments — AI graded, teacher reviewed</p>
                   </div>
-                  <button onClick={() => { setShowExamCreate(true); setExamForm({ title: '', description: '', instructions: 'Read the passage carefully and answer all questions in full sentences.', passage: '', time_limit_minutes: '60' }); setExamQuestions([{ question: '', marks: 5, sample_answer: '' }]); }} className="btn-primary text-sm py-2 flex items-center gap-2">
-                    <Plus className="w-4 h-4" /> New Exam
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowAIExamGenerator(true)} className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors">
+                      <Sparkles className="w-4 h-4" /> Generate with AI
+                    </button>
+                    <button onClick={() => { setShowExamCreate(true); setExamForm({ title: '', description: '', instructions: 'Read the passage carefully and answer all questions in full sentences.', passage: '', time_limit_minutes: '60' }); setExamQuestions([{ question: '', marks: 5, sample_answer: '' }]); }} className="btn-primary text-sm py-2 flex items-center gap-2">
+                      <Plus className="w-4 h-4" /> New Exam
+                    </button>
+                  </div>
                 </div>
 
                 {exams.length === 0 ? (
@@ -2314,6 +2322,143 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                             className="flex-1 btn-primary text-sm py-2.5 flex items-center justify-center gap-2 disabled:opacity-60"
                           >
                             {savingExam ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving...</> : <><Plus className="w-4 h-4" /> Create Exam</>}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* AI Exam Generator modal */}
+                {showAIExamGenerator && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+                      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-sky-50 to-white">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-sky-500" />
+                          <h3 className="font-bold text-slate-900">Generate Exam with AI</h3>
+                        </div>
+                        <button onClick={() => setShowAIExamGenerator(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="p-6 space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="col-span-2">
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Topic / Subject <span className="text-red-500">*</span></label>
+                            <input
+                              type="text"
+                              value={aiExamForm.topic}
+                              onChange={e => setAIExamForm(f => ({ ...f, topic: e.target.value }))}
+                              placeholder="e.g. IELTS Academic Reading — Environmental Issues"
+                              className="input-field text-sm w-full"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Exam Type</label>
+                            <div className="grid grid-cols-2 gap-2">
+                              {(['reading_comprehension', 'question_only'] as const).map(t => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() => setAIExamForm(f => ({ ...f, exam_type: t }))}
+                                  className={`py-2.5 px-3 rounded-lg border text-sm font-medium transition-colors text-left ${aiExamForm.exam_type === t ? 'bg-sky-50 border-sky-400 text-sky-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                >
+                                  {t === 'reading_comprehension' ? '📖 Reading Comprehension' : '✍️ Question Only'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Difficulty / Level</label>
+                            <select value={aiExamForm.difficulty} onChange={e => setAIExamForm(f => ({ ...f, difficulty: e.target.value }))} className="input-field text-sm w-full">
+                              <option value="beginner">Beginner</option>
+                              <option value="intermediate">Intermediate</option>
+                              <option value="upper_intermediate">Upper Intermediate (Band 6-7)</option>
+                              <option value="advanced">Advanced (Band 7-8)</option>
+                              <option value="proficient">Proficient (Band 8-9)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Target Audience</label>
+                            <input type="text" value={aiExamForm.target_audience} onChange={e => setAIExamForm(f => ({ ...f, target_audience: e.target.value }))} placeholder="e.g. Adult IELTS candidates" className="input-field text-sm w-full" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Number of Questions</label>
+                            <select value={aiExamForm.num_questions} onChange={e => setAIExamForm(f => ({ ...f, num_questions: parseInt(e.target.value) }))} className="input-field text-sm w-full">
+                              {[3,4,5,6,7,8,10].map(n => <option key={n} value={n}>{n} questions</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Marks per Question</label>
+                            <select value={aiExamForm.marks_per_question} onChange={e => setAIExamForm(f => ({ ...f, marks_per_question: parseInt(e.target.value) }))} className="input-field text-sm w-full">
+                              {[2,3,4,5,8,10].map(n => <option key={n} value={n}>{n} marks</option>)}
+                            </select>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Extra Instructions <span className="text-slate-400 font-normal">(optional)</span></label>
+                            <input type="text" value={aiExamForm.extra_instructions} onChange={e => setAIExamForm(f => ({ ...f, extra_instructions: e.target.value }))} placeholder="e.g. Focus on inference questions, use formal register" className="input-field text-sm w-full" />
+                          </div>
+                        </div>
+                        <div className="bg-sky-50 rounded-xl p-3 text-xs text-sky-700">
+                          AI will generate a full exam: {aiExamForm.exam_type === 'reading_comprehension' ? 'reading passage + ' : ''}{aiExamForm.num_questions} questions with model answers · {aiExamForm.num_questions * aiExamForm.marks_per_question} total marks
+                        </div>
+                        <div className="flex gap-3 pt-1">
+                          <button type="button" onClick={() => setShowAIExamGenerator(false)} className="flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium transition-colors">Cancel</button>
+                          <button
+                            type="button"
+                            disabled={generatingExam || !aiExamForm.topic.trim() || !selectedCourse}
+                            onClick={async () => {
+                              if (!selectedCourse || !profile) return;
+                              setGeneratingExam(true);
+                              try {
+                                const { generateExam } = await import('../../lib/ai');
+                                const courseData = courses.find(c => c.id === selectedCourse);
+                                const result = await generateExam({
+                                  topic: aiExamForm.topic,
+                                  course_context: courseData?.title || '',
+                                  exam_type: aiExamForm.exam_type,
+                                  difficulty: aiExamForm.difficulty,
+                                  num_questions: aiExamForm.num_questions,
+                                  marks_per_question: aiExamForm.marks_per_question,
+                                  target_audience: aiExamForm.target_audience,
+                                  extra_instructions: aiExamForm.extra_instructions,
+                                });
+                                // Save to DB
+                                const totalMarks = result.questions.reduce((s, q) => s + q.marks, 0);
+                                const { data: exam, error } = await supabase.from('exams').insert({
+                                  course_id: selectedCourse,
+                                  teacher_id: profile.id,
+                                  title: result.title,
+                                  description: result.description,
+                                  instructions: result.instructions,
+                                  passage: result.passage,
+                                  time_limit_minutes: result.time_limit_minutes,
+                                  total_marks: totalMarks,
+                                  is_published: false,
+                                }).select().single();
+                                if (error) throw error;
+                                const qRows = result.questions.map((q, i) => ({
+                                  exam_id: exam.id,
+                                  question: q.question,
+                                  marks: q.marks,
+                                  sample_answer: q.sample_answer,
+                                  order_index: i,
+                                }));
+                                await supabase.from('exam_questions').insert(qRows);
+                                setShowAIExamGenerator(false);
+                                fetchExams();
+                              } catch {
+                                // silent retry available
+                              } finally {
+                                setGeneratingExam(false);
+                              }
+                            }}
+                            className="flex-1 btn-primary text-sm py-2.5 flex items-center justify-center gap-2 disabled:opacity-60"
+                          >
+                            {generatingExam
+                              ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generating...</>
+                              : <><Sparkles className="w-4 h-4" /> Generate Exam</>
+                            }
                           </button>
                         </div>
                       </div>
