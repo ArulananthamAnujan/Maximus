@@ -56,6 +56,7 @@ export interface FullCurriculumInput {
   difficulty: string;
   num_sections: number;
   lessons_per_section: number;
+  existing_sections_summary?: string;
 }
 
 // ─── Output types ───────────────────────────────────────────────────────────
@@ -169,26 +170,27 @@ export interface AIHealthOutput {
 
 // ─── Core wrapper ───────────────────────────────────────────────────────────
 
+const LONG_TASKS = new Set(['lesson_notes', 'presentation_slides', 'section_content', 'full_curriculum', 'lesson_content']);
+
 export async function callAI<T>(task: string, input: object): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const { data, error } = await supabase.functions.invoke('ai-generate', {
+    body: { task, input },
+    // Long-running tasks need more time; supabase-js default is no timeout
+  });
 
-  try {
-    const { data, error } = await supabase.functions.invoke('ai-generate', {
-      body: { task, input },
-    });
-
-    if (error) {
-      const msg = typeof error === 'object' && 'message' in error
-        ? (error as { message: string }).message
-        : 'AI request failed';
-      throw new Error(msg);
-    }
-
-    return data as T;
-  } finally {
-    clearTimeout(timeout);
+  if (error) {
+    // Supabase wraps network errors as FunctionsFetchError — surface a cleaner message
+    const raw = typeof error === 'object' && 'message' in error
+      ? (error as { message: string }).message
+      : String(error);
+    const msg = raw.includes('Failed to send')
+      ? 'Could not reach the AI service. Please check your connection and try again.'
+      : raw || 'AI request failed';
+    throw new Error(msg);
   }
+
+  if (!data) throw new Error('AI returned an empty response. Please try again.');
+  return data as T;
 }
 
 // ─── Typed helpers ───────────────────────────────────────────────────────────
@@ -260,6 +262,38 @@ export const generateLessonNotes = (input: LessonNotesInput) =>
 
 export const generatePresentationSlides = (input: PresentationSlidesInput) =>
   callAI<PresentationSlidesOutput>('presentation_slides', input);
+
+// ─── Batch section content (1 call generates all lesson notes + slides for a section) ──
+
+export interface SectionContentLesson {
+  title: string;
+  description: string;
+}
+
+export interface SectionContentInput {
+  section_title: string;
+  course_title: string;
+  lessons: SectionContentLesson[];
+  target_audience: string;
+  difficulty: string;
+  existing_sections_summary?: string;
+}
+
+export interface SectionContentLessonOutput {
+  lesson_title: string;
+  notes_html: string;
+  key_points: string[];
+}
+
+export interface SectionContentOutput {
+  section_title: string;
+  lessons: SectionContentLessonOutput[];
+  slides: PresentationSlide[];
+  slides_title: string;
+}
+
+export const generateSectionContent = (input: SectionContentInput) =>
+  callAI<SectionContentOutput>('section_content', input);
 
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
   const { data, error } = await supabase.functions.invoke('ai-health', {});

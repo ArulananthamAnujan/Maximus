@@ -64,6 +64,11 @@ function validatePresentationSlides(obj: unknown): boolean {
   return typeof o.title === 'string' && Array.isArray(o.slides);
 }
 
+function validateSectionContent(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
   course_outline: validateCourseOutline,
   lesson_content: validateLessonContent,
@@ -76,6 +81,7 @@ const validators: Record<string, (o: unknown) => boolean> = {
   full_curriculum: validateFullCurriculum,
   lesson_notes: validateLessonNotes,
   presentation_slides: validatePresentationSlides,
+  section_content: validateSectionContent,
 };
 
 // ─── Sanitize ────────────────────────────────────────────────────────────────
@@ -148,7 +154,8 @@ Output shape: {
 }
 Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
 For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
-For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".`,
+For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
+If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
 
     lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
@@ -159,6 +166,17 @@ Include: an introduction, 3-5 main concept sections with explanations and exampl
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
 Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
 Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
+
+    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+Output shape: {
+  "section_title": string,
+  "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
+  "slides_title": string,
+  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
+}
+For each lesson notes_html: 400-700 words of rich HTML using h2, h3, p, ul, ol, li, strong, em, blockquote only. Include intro, key concepts with examples, and summary.
+For slides: generate 8-14 slides covering the whole section. Use only h3, p, ul, li, strong tags per slide. Keep slides concise (40-100 words each).
+If prior section context is given, build on it — advance difficulty, reference earlier concepts, do NOT repeat covered material.`,
   };
 
   return prompts[task] || jsonRule;
@@ -217,7 +235,7 @@ Topic: ${input.topic}
 Target Audience: ${input.target_audience}
 Difficulty: ${input.difficulty}
 Number of Sections: ${input.num_sections}
-Lessons per Section: ${input.lessons_per_section}`;
+Lessons per Section: ${input.lessons_per_section}${input.existing_sections_summary ? `\n\nAlready covered in previous weeks (DO NOT repeat these topics — build on them):\n${input.existing_sections_summary}` : ''}`;
 
     case 'lesson_notes':
       return `Write comprehensive lesson notes for:
@@ -235,19 +253,36 @@ Lessons in this section: ${input.lesson_titles}
 Target Audience: ${input.target_audience}
 Difficulty: ${input.difficulty}`;
 
+    case 'section_content': {
+      const lessons = Array.isArray(input.lessons)
+        ? (input.lessons as Array<{ title: string; description: string }>)
+            .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
+            .join('\n')
+        : String(input.lessons);
+      return `Generate full lesson notes and presentation slides for this section:
+Course: ${input.course_title}
+Section: ${input.section_title}
+Target Audience: ${input.target_audience}
+Difficulty: ${input.difficulty}
+Lessons in this section:
+${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
+    }
+
     default:
       return JSON.stringify(input);
   }
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 
 function getMaxTokens(task: string): number {
-  const large = ['lesson_notes', 'presentation_slides', 'lesson_content'];
-  return large.includes(task) ? 8192 : 4096;
+  // section_content generates all lesson notes + slides in one call — needs maximum tokens
+  if (task === 'section_content') return 16000;
+  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
+  return 4096;
 }
 
 // ─── Anthropic call ──────────────────────────────────────────────────────────
