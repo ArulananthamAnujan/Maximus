@@ -328,7 +328,7 @@ function VideoHostingTips() {
   );
 }
 
-function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, children }: {
+function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, onGenerateDocs, generatingDocs, children }: {
   section: Section & { lessons: Lesson[] };
   sIdx: number;
   expanded: boolean;
@@ -336,6 +336,8 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
   onRename: () => void;
   onDelete: () => void;
   onAddLesson: () => void;
+  onGenerateDocs: () => void;
+  generatingDocs: boolean;
   children?: React.ReactNode;
 }) {
   return (
@@ -349,7 +351,17 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
           <span className="font-semibold text-slate-800 truncate">{section.title}</span>
           <span className="text-xs text-slate-400 shrink-0">{section.lessons?.length || 0} lesson{(section.lessons?.length || 0) !== 1 ? 's' : ''}</span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onGenerateDocs}
+            disabled={generatingDocs || section.lessons?.length === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all disabled:opacity-50 bg-white border-teal-300 text-teal-700 hover:bg-teal-50"
+            title="Generate PDF notes and PPT slides for this section"
+          >
+            {generatingDocs
+              ? <><div className="w-3 h-3 border-2 border-teal-300 border-t-teal-600 rounded-full animate-spin" /> Generating...</>
+              : <><Sparkles className="w-3 h-3" /> PDF &amp; PPT</>}
+          </button>
           <button onClick={onRename} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-colors" title="Rename section">
             <Pencil className="w-3.5 h-3.5" />
           </button>
@@ -425,6 +437,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
   // Lesson document panel (notes/slides visible without edit mode)
   const [expandedDocsLessonId, setExpandedDocsLessonId] = useState<string | null>(null);
+  // Per-section PDF & PPT generation
+  const [generatingSectionDocsId, setGeneratingSectionDocsId] = useState<string | null>(null);
 
   // Inline lesson editing
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
@@ -683,6 +697,80 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       setAICurriculumInsertStatus('');
     } finally {
       setAICurriculumInserting(false);
+    }
+  };
+
+  const handleGenerateSectionDocs = async (section: Section & { lessons: Lesson[] }) => {
+    if (!selectedCourse || generatingSectionDocsId) return;
+    if (!section.lessons?.length) { toast.error('Add lessons to this section before generating.'); return; }
+    setGeneratingSectionDocsId(section.id);
+    try {
+      const { generateSectionContent } = await import('../../lib/ai');
+      const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
+
+      // Build context from ALL other sections
+      const otherSections = sections.filter(s => s.id !== section.id);
+      const existingSummary = otherSections.length > 0
+        ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
+        : undefined;
+
+      const result = await generateSectionContent({
+        section_title: section.title,
+        course_title: courseName,
+        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+        target_audience: 'general',
+        difficulty: 'beginner',
+        existing_sections_summary: existingSummary,
+      });
+
+      // Delete old docs for lessons in this section then re-insert
+      const lessonIds = section.lessons.map(l => l.id);
+      await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
+
+      const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+
+      for (let li = 0; li < section.lessons.length; li++) {
+        const lessonDb = section.lessons[li];
+        const lessonContent = result.lessons?.[li];
+        if (!lessonDb || !lessonContent?.notes_html) continue;
+        await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+        docRows.push({
+          lesson_id: lessonDb.id,
+          course_id: selectedCourse,
+          type: 'notes',
+          title: `${lessonDb.title} — Notes`,
+          content_html: lessonContent.notes_html,
+          order_index: 0,
+        });
+      }
+
+      if (result.slides?.length && section.lessons.length > 0) {
+        const slidesHtml = result.slides.map(s =>
+          `<section class="slide" data-slide="${s.slide_number}">
+            <h2>${s.heading}</h2>
+            ${s.content_html}
+            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+          </section>`
+        ).join('\n');
+        docRows.push({
+          lesson_id: section.lessons[0].id,
+          course_id: selectedCourse,
+          type: 'slides',
+          title: result.slides_title || `${section.title} — Slides`,
+          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+          order_index: 1,
+        });
+      }
+
+      if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
+
+      toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
+      // Re-open the first lesson's docs panel so the user can immediately see them
+      if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Generation failed');
+    } finally {
+      setGeneratingSectionDocsId(null);
     }
   };
 
@@ -1511,6 +1599,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     onRename={() => { setEditingSectionId(section.id); setEditingSectionTitle(section.title); }}
                     onDelete={() => setDeleteTarget({ type: 'section', id: section.id, name: section.title })}
                     onAddLesson={() => { setAddingLessonTo(section.id); setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true }); }}
+                    onGenerateDocs={() => handleGenerateSectionDocs(section)}
+                    generatingDocs={generatingSectionDocsId === section.id}
                   >
                     {editingSectionId === section.id && (
                       <div className="px-4 py-3 bg-sky-50 border-b border-sky-100 flex items-center gap-2">
