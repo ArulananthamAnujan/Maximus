@@ -196,11 +196,13 @@ async function generatePdf(title: string, contentHtml: string) {
   doc.save(`${title.replace(/[^a-z0-9]/gi, '_')}.pdf`);
 }
 
-// ─── PPTX generation (pptxgenjs) ────────────────────────────────────────────
+// ─── PPTX generation — pure browser, zero dependencies ──────────────────────
+// Builds a valid .pptx (Office Open XML ZIP) without any npm package.
+
 interface ParsedSlide {
   slideNumber: number;
   heading: string;
-  contentHtml: string;
+  bullets: string[];
   speakerNotes: string;
 }
 
@@ -210,175 +212,408 @@ function parseSlidesFromHtml(slidesHtml: string): ParsedSlide[] {
   const slideEls = div.querySelectorAll('.slide');
   return Array.from(slideEls).map((el, idx) => {
     const h2 = el.querySelector('h2');
-    const notes = el.querySelector('.speaker-notes');
+    const notesEl = el.querySelector('.speaker-notes');
     const heading = h2?.textContent?.trim() || `Slide ${idx + 1}`;
-    if (notes) notes.remove();
-    if (h2) h2.remove();
-    return {
-      slideNumber: idx + 1,
-      heading,
-      contentHtml: el.innerHTML,
-      speakerNotes: notes?.textContent?.trim().replace(/^Speaker notes:/, '').trim() || '',
+    const notes = notesEl?.textContent?.trim().replace(/^Speaker notes:?/i, '').trim() || '';
+    notesEl?.remove();
+    h2?.remove();
+    // Collect visible text lines as bullets
+    const bullets: string[] = [];
+    const gather = (node: Element) => {
+      const tag = node.tagName?.toLowerCase();
+      const text = node.textContent?.trim() || '';
+      if (!text) return;
+      if (['li', 'p', 'h3'].includes(tag)) { bullets.push(text); return; }
+      Array.from(node.children).forEach(c => gather(c as Element));
     };
+    Array.from(el.children).forEach(c => gather(c as Element));
+    return { slideNumber: idx + 1, heading, bullets, speakerNotes: notes };
   });
 }
 
+function xmlEscape(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// EMU conversion: 1 inch = 914400 EMU, slide is 12192000 x 6858000 EMU (widescreen 16:9)
+const W = 12192000;
+const H = 6858000;
+const emu = (inch: number) => Math.round(inch * 914400);
+
+function makeSlideXml(s: ParsedSlide, isTitle: boolean, courseTitle: string): string {
+  const BG = isTitle ? '0F172A' : 'FFFFFF';
+  const headingColor = isTitle ? 'FFFFFF' : '0F172A';
+  const subColor = isTitle ? '0EA5E9' : '334155';
+  const barColor = '0E7490';
+
+  // Top accent bar shape (800 EMU tall)
+  const accentBar = `
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="2" name="Bar"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="0" y="0"/><a:ext cx="${W}" cy="${emu(0.1)}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="${barColor}"/></a:solidFill>
+        <a:ln><a:noFill/></a:ln>
+      </p:spPr>
+      <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+    </p:sp>`;
+
+  // Heading text box
+  const headingY = isTitle ? emu(1.5) : emu(0.18);
+  const headingH = isTitle ? emu(1.4) : emu(0.65);
+  const headingSize = isTitle ? 3600 : 2400;
+  const headingTx = `
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="3" name="Heading"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="${emu(0.4)}" y="${headingY}"/><a:ext cx="${W - emu(0.8)}" cy="${headingH}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
+      </p:spPr>
+      <p:txBody>
+        <a:bodyPr wrap="square" lIns="${emu(0.05)}" rIns="${emu(0.05)}" tIns="${emu(0.05)}" bIns="${emu(0.05)}"/>
+        <a:lstStyle/>
+        <a:p>
+          <a:pPr algn="${isTitle ? 'ctr' : 'l'}"/>
+          <a:r><a:rPr lang="en-AU" sz="${headingSize}" b="1" dirty="0">
+            <a:solidFill><a:srgbClr val="${headingColor}"/></a:solidFill>
+            <a:latin typeface="Calibri"/>
+          </a:rPr><a:t>${xmlEscape(s.heading)}</a:t></a:r>
+        </a:p>
+      </p:txBody>
+    </p:sp>`;
+
+  // Title slide subtitle (course name + date)
+  const subtitleTx = isTitle ? `
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="5" name="Sub"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="${emu(0.4)}" y="${emu(3.1)}"/><a:ext cx="${W - emu(0.8)}" cy="${emu(0.6)}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
+      </p:spPr>
+      <p:txBody>
+        <a:bodyPr wrap="square"/>
+        <a:lstStyle/>
+        <a:p><a:pPr algn="ctr"/>
+          <a:r><a:rPr lang="en-AU" sz="1800" dirty="0">
+            <a:solidFill><a:srgbClr val="${subColor}"/></a:solidFill>
+            <a:latin typeface="Calibri"/>
+          </a:rPr><a:t>${xmlEscape(courseTitle)}</a:t></a:r>
+        </a:p>
+      </p:txBody>
+    </p:sp>
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="6" name="Date"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="${emu(0.4)}" y="${emu(3.85)}"/><a:ext cx="${W - emu(0.8)}" cy="${emu(0.4)}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
+      </p:spPr>
+      <p:txBody>
+        <a:bodyPr wrap="square"/>
+        <a:lstStyle/>
+        <a:p><a:pPr algn="ctr"/>
+          <a:r><a:rPr lang="en-AU" sz="1300" dirty="0">
+            <a:solidFill><a:srgbClr val="94A3B8"/></a:solidFill>
+            <a:latin typeface="Calibri"/>
+          </a:rPr><a:t>${xmlEscape(new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long' }))}</a:t></a:r>
+        </a:p>
+      </p:txBody>
+    </p:sp>` : '';
+
+  // Content bullets
+  const bulletsXml = !isTitle && s.bullets.length > 0 ? `
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="4" name="Body"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="${emu(0.4)}" y="${emu(1.05)}"/><a:ext cx="${W - emu(0.8)}" cy="${H - emu(1.55)}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
+      </p:spPr>
+      <p:txBody>
+        <a:bodyPr wrap="square" lIns="${emu(0.05)}" rIns="${emu(0.05)}" tIns="${emu(0.08)}" bIns="${emu(0.05)}"/>
+        <a:lstStyle/>
+        ${s.bullets.map(b => `
+        <a:p>
+          <a:pPr marL="${emu(0.2)}" indent="${emu(-0.2)}">
+            <a:buChar char="•"/>
+          </a:pPr>
+          <a:r><a:rPr lang="en-AU" sz="1400" dirty="0">
+            <a:solidFill><a:srgbClr val="334155"/></a:solidFill>
+            <a:latin typeface="Calibri"/>
+          </a:rPr><a:t>${xmlEscape(b)}</a:t></a:r>
+        </a:p>`).join('')}
+      </p:txBody>
+    </p:sp>` : '';
+
+  // Bottom footer bar
+  const footerBar = !isTitle ? `
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="7" name="Footer"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="0" y="${H - emu(0.08)}"/><a:ext cx="${W}" cy="${emu(0.08)}"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="E2E8F0"/></a:solidFill>
+        <a:ln><a:noFill/></a:ln>
+      </p:spPr>
+      <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
+    </p:sp>` : '';
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:bg><p:bgPr>
+      <a:solidFill><a:srgbClr val="${BG}"/></a:solidFill>
+      <a:effectLst/>
+    </p:bgPr></p:bg>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
+        <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      ${accentBar}${headingTx}${subtitleTx}${bulletsXml}${footerBar}
+    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>`;
+}
+
+function makeNotesXml(notes: string): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+         xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+         xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
+      <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+    <p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>
+      <p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+      <p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-AU" dirty="0"/><a:t>${xmlEscape(notes)}</a:t></a:r></a:p>
+      </p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:notes>`;
+}
+
+// Minimal ZIP builder — no external library needed
+function uint8(str: string): Uint8Array {
+  return new TextEncoder().encode(str);
+}
+
+function crc32(buf: Uint8Array): number {
+  const table = (crc32 as unknown as { t?: Uint32Array }).t ??
+    (() => {
+      const t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        t[i] = c;
+      }
+      return ((crc32 as unknown as { t?: Uint32Array }).t = t);
+    })();
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = table[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function le16(n: number) { return [(n & 0xFF), (n >> 8) & 0xFF]; }
+function le32(n: number) { return [(n & 0xFF), (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF]; }
+
+interface ZipEntry { name: string; data: Uint8Array; }
+
+function buildZip(entries: ZipEntry[]): Uint8Array {
+  const parts: Uint8Array[] = [];
+  const centralDir: Uint8Array[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBytes = uint8(entry.name);
+    const crc = crc32(entry.data);
+    const size = entry.data.length;
+    const localHeader = new Uint8Array([
+      0x50,0x4B,0x03,0x04, // sig
+      0x14,0x00,           // version needed
+      0x00,0x00,           // flags
+      0x00,0x00,           // compression (stored)
+      0x00,0x00,0x00,0x00, // mod time/date
+      ...le32(crc),
+      ...le32(size),
+      ...le32(size),
+      ...le16(nameBytes.length),
+      0x00,0x00,           // extra length
+      ...nameBytes,
+    ]);
+    parts.push(localHeader, entry.data);
+    centralDir.push(new Uint8Array([
+      0x50,0x4B,0x01,0x02, // sig
+      0x14,0x00,           // version made by
+      0x14,0x00,           // version needed
+      0x00,0x00,           // flags
+      0x00,0x00,           // compression
+      0x00,0x00,0x00,0x00, // mod time/date
+      ...le32(crc),
+      ...le32(size),
+      ...le32(size),
+      ...le16(nameBytes.length),
+      0x00,0x00,           // extra length
+      0x00,0x00,           // comment length
+      0x00,0x00,           // disk start
+      0x00,0x00,           // int attr
+      0x20,0x00,0x00,0x00, // ext attr
+      ...le32(offset),
+      ...nameBytes,
+    ]));
+    offset += localHeader.length + size;
+  }
+
+  const cdSize = centralDir.reduce((s, b) => s + b.length, 0);
+  const eocd = new Uint8Array([
+    0x50,0x4B,0x05,0x06, // sig
+    0x00,0x00,0x00,0x00, // disk numbers
+    ...le16(entries.length),
+    ...le16(entries.length),
+    ...le32(cdSize),
+    ...le32(offset),
+    0x00,0x00,           // comment length
+  ]);
+
+  const all = [...parts, ...centralDir, eocd];
+  const total = all.reduce((s, b) => s + b.length, 0);
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const b of all) { out.set(b, pos); pos += b.length; }
+  return out;
+}
+
 async function generatePptx(title: string, slidesHtml: string) {
-  const PptxGenJS = (await import('pptxgenjs')).default;
-  const pptx = new PptxGenJS();
-
-  pptx.layout = 'LAYOUT_WIDE';
-  pptx.author = 'Maximus Academy';
-  pptx.title = title;
-
-  // Brand colours
-  const BRAND = '0E7490';     // teal-600
-  const DARK  = '0F172A';     // slate-900
-  const BODY  = '334155';     // slate-700
-  const LIGHT = 'F0F9FF';     // sky-50
-  const WHITE = 'FFFFFF';
-  const ACCENT = '0EA5E9';    // sky-500
-
   const slides = parseSlidesFromHtml(slidesHtml);
+  if (slides.length === 0) return;
 
-  slides.forEach((s, idx) => {
-    const slide = pptx.addSlide();
+  const entries: ZipEntry[] = [];
 
-    // Background
-    slide.background = { color: idx === 0 ? DARK : WHITE };
+  const add = (name: string, content: string) =>
+    entries.push({ name, data: uint8(content) });
 
-    if (idx === 0) {
-      // ── Title slide ──────────────────────────────────────────────────────
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 0, w: '100%', h: 0.12,
-        fill: { color: BRAND },
-        line: { color: BRAND },
-      });
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 4.88, w: '100%', h: 0.12,
-        fill: { color: BRAND },
-        line: { color: BRAND },
-      });
-      slide.addText(s.heading, {
-        x: 0.6, y: 1.2, w: 11.8, h: 1.6,
-        fontSize: 36,
-        bold: true,
-        color: WHITE,
-        align: 'center',
-        fontFace: 'Calibri',
-      });
-      slide.addText(title, {
-        x: 0.6, y: 2.9, w: 11.8, h: 0.6,
-        fontSize: 18,
-        color: ACCENT,
-        align: 'center',
-        fontFace: 'Calibri',
-      });
-      slide.addText(new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long' }), {
-        x: 0.6, y: 3.7, w: 11.8, h: 0.4,
-        fontSize: 13,
-        color: '94A3B8',
-        align: 'center',
-        fontFace: 'Calibri',
-      });
-    } else {
-      // ── Content slide ────────────────────────────────────────────────────
-      // Top accent bar
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 0, w: '100%', h: 0.08,
-        fill: { color: BRAND },
-        line: { color: BRAND },
-      });
-      // Slide number badge
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 11.8, y: 0.18, w: 0.6, h: 0.4,
-        fill: { color: LIGHT },
-        line: { color: ACCENT },
-        rounding: true,
-      });
-      slide.addText(`${idx + 1}`, {
-        x: 11.8, y: 0.18, w: 0.6, h: 0.4,
-        fontSize: 9, bold: true, color: ACCENT, align: 'center',
-      });
+  // [Content_Types].xml
+  const slideTypes = slides.map((_, i) =>
+    `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`
+  ).join('');
+  const noteTypes = slides.filter(s => s.speakerNotes).map((_, i) =>
+    `<Override PartName="/ppt/notesSlides/notesSlide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`
+  ).join('');
 
-      // Heading
-      slide.addText(s.heading, {
-        x: 0.5, y: 0.2, w: 11.0, h: 0.7,
-        fontSize: 22,
-        bold: true,
-        color: DARK,
-        fontFace: 'Calibri',
-      });
-      // Underline accent
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0.5, y: 0.95, w: 2.5, h: 0.04,
-        fill: { color: ACCENT },
-        line: { color: ACCENT },
-      });
+  add('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
+  <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
+  ${slideTypes}${noteTypes}
+</Types>`);
 
-      // Parse content into bullet points
-      const contentDiv = document.createElement('div');
-      contentDiv.innerHTML = s.contentHtml;
-      const bullets: { text: string; level: number; bold: boolean }[] = [];
+  // _rels/.rels
+  add('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>`);
 
-      const processEl = (el: Element, level = 0) => {
-        const tag = el.tagName?.toLowerCase();
-        const text = el.textContent?.trim() || '';
-        if (!text) return;
-        if (tag === 'h3') bullets.push({ text, level: 0, bold: true });
-        else if (tag === 'li') bullets.push({ text: `• ${text}`, level: level > 0 ? 1 : 0, bold: false });
-        else if (tag === 'p') bullets.push({ text, level: 0, bold: false });
-        else if (tag === 'ul' || tag === 'ol') {
-          Array.from(el.children).forEach(c => processEl(c as Element, level + 1));
-          return;
-        } else if (el.children.length) {
-          Array.from(el.children).forEach(c => processEl(c as Element, level));
-          return;
-        }
-      };
-      Array.from(contentDiv.children).forEach(c => processEl(c as Element));
+  // ppt/_rels/presentation.xml.rels
+  const presRels = slides.map((_, i) =>
+    `<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`
+  ).join('');
+  add('ppt/_rels/presentation.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>
+  ${presRels}
+</Relationships>`);
 
-      if (bullets.length > 0) {
-        const textItems = bullets.map(b => ({
-          text: b.text,
-          options: {
-            fontSize: b.bold ? 14 : 13,
-            bold: b.bold,
-            color: b.bold ? DARK : BODY,
-            breakLine: true,
-            indentLevel: b.level,
-          },
-        }));
-        slide.addText(textItems, {
-          x: 0.5, y: 1.1, w: 11.5, h: 3.5,
-          fontFace: 'Calibri',
-          valign: 'top',
-        });
-      }
+  // ppt/presentation.xml
+  const slideIdList = slides.map((_, i) =>
+    `<p:sldId id="${256 + i}" r:id="rId${i + 2}"/>`
+  ).join('');
+  add('ppt/presentation.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                saveSubsetFonts="1">
+  <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
+  <p:sldIdLst>${slideIdList}</p:sldIdLst>
+  <p:sldSz cx="${W}" cy="${H}" type="screen16x9"/>
+  <p:notesSz cx="6858000" cy="9144000"/>
+</p:presentation>`);
 
-      // Speaker notes
-      if (s.speakerNotes) {
-        slide.addText(`Notes: ${s.speakerNotes}`, {
-          x: 0.5, y: 4.6, w: 11.5, h: 0.3,
-          fontSize: 8,
-          color: '94A3B8',
-          italic: true,
-          fontFace: 'Calibri',
-        });
-      }
+  // Minimal slide master + layout (required by spec)
+  const masterXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+             xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
+      <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+  </p:spTree></p:cSld>
+  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+  <p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>
+</p:sldMaster>`;
+  add('ppt/slideMasters/slideMaster1.xml', masterXml);
+  add('ppt/slideMasters/_rels/slideMaster1.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+</Relationships>`);
 
-      // Footer line
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 4.9, w: '100%', h: 0.06,
-        fill: { color: 'E2E8F0' },
-        line: { color: 'E2E8F0' },
-      });
+  add('ppt/slideLayouts/slideLayout1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+             xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">
+  <p:cSld name="Blank"><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
+      <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+  </p:spTree></p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sldLayout>`);
+  add('ppt/slideLayouts/_rels/slideLayout1.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>
+</Relationships>`);
+
+  // Individual slides
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    add(`ppt/slides/slide${i + 1}.xml`, makeSlideXml(s, i === 0, title));
+
+    // Slide rels (points to layout)
+    const slideRels: string[] = [
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>`,
+    ];
+    if (s.speakerNotes) {
+      slideRels.push(`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide${i + 1}.xml"/>`);
     }
+    add(`ppt/slides/_rels/slide${i + 1}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${slideRels.join('')}
+</Relationships>`);
 
-    if (s.speakerNotes) slide.addNotes(s.speakerNotes);
-  });
+    if (s.speakerNotes) {
+      add(`ppt/notesSlides/notesSlide${i + 1}.xml`, makeNotesXml(s.speakerNotes));
+      add(`ppt/notesSlides/_rels/notesSlide${i + 1}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide${i + 1}.xml"/>
+</Relationships>`);
+    }
+  }
 
-  await pptx.writeFile({ fileName: `${title.replace(/[^a-z0-9]/gi, '_')}.pptx` });
+  const zip = buildZip(entries);
+  const blob = new Blob([zip], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${title.replace(/[^a-z0-9]/gi, '_')}.pptx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Slides Viewer ───────────────────────────────────────────────────────────
