@@ -420,6 +420,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true,
   });
 
+  // Inline lesson editing
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
+  const [editLessonForm, setEditLessonForm] = useState({
+    title: '', type: 'video' as 'video' | 'pdf' | 'article' | 'link' | 'text' | 'file',
+    content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true,
+  });
+
   const [showQuizCreate, setShowQuizCreate] = useState(false);
   const [quizForm, setQuizForm] = useState({ title: '', description: '', time_limit_minutes: '', pass_mark: 70, max_attempts: 3 });
   const [addingQuestionTo, setAddingQuestionTo] = useState<string | null>(null);
@@ -670,6 +677,47 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true });
       fetchSections();
     } else toast.error('Failed to add lesson');
+  };
+
+  const openEditLesson = (lesson: Lesson) => {
+    // Map DB types back to UI types for display
+    const uiTypeMap: Record<string, 'video' | 'pdf' | 'article' | 'link' | 'text' | 'file'> = {
+      text: 'article', file: 'pdf', video: 'video', quiz: 'article',
+    };
+    const uiType = uiTypeMap[lesson.type] || lesson.type as 'video' | 'pdf' | 'article' | 'link';
+    setEditLessonForm({
+      title: lesson.title,
+      type: uiType,
+      content: lesson.content || '',
+      url: (lesson as Lesson & { url?: string }).url || lesson.video_url || '',
+      duration_minutes: lesson.duration_minutes || 10,
+      is_preview: lesson.is_preview || false,
+      is_required: (lesson as Lesson & { is_required?: boolean }).is_required !== false,
+    });
+    setEditingLessonId(lesson.id);
+  };
+
+  const handleUpdateLesson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLessonId) return;
+    const typeMap: Record<string, string> = { article: 'text', pdf: 'file', link: 'text', video: 'video', text: 'text', file: 'file' };
+    const dbType = typeMap[editLessonForm.type] || editLessonForm.type;
+    const { error } = await supabase.from('lessons').update({
+      title: editLessonForm.title,
+      type: dbType,
+      lesson_type: dbType,
+      content: editLessonForm.content,
+      url: editLessonForm.url,
+      duration_minutes: editLessonForm.duration_minutes,
+      is_preview: editLessonForm.is_preview,
+    }).eq('id', editingLessonId);
+    if (!error) {
+      toast.success('Lesson updated');
+      setEditingLessonId(null);
+      fetchSections();
+    } else {
+      toast.error('Failed to update lesson');
+    }
   };
 
   const handleDelete = async () => {
@@ -1374,15 +1422,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                               </div>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
-                              {lesson.url && (
+                              {(lesson.url || (lesson as Lesson & { url?: string }).url) && (
                                 <button onClick={() => setPreviewLesson(isPreview ? null : lesson)} className={`p-1.5 rounded-lg transition-colors text-xs font-medium flex items-center gap-1 ${isPreview ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`} title="Preview lesson">
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              {lesson.type === 'article' && lesson.content && (
+                              {(lesson.type === 'article' || lesson.type === 'text') && lesson.content && (
                                 <button
                                   onClick={async () => {
-                                    const { generateFlashcards: _gf, summarizeLesson } = await import('../../lib/ai');
+                                    const { summarizeLesson } = await import('../../lib/ai');
                                     const result = await summarizeLesson({ lesson_content: lesson.content }).catch(() => null);
                                     if (!result) { toast.error('Failed to generate summary'); return; }
                                     await supabase.from('lessons').update({
@@ -1397,11 +1445,123 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                   <Sparkles className="w-3.5 h-3.5" />
                                 </button>
                               )}
+                              <button
+                                onClick={() => editingLessonId === lesson.id ? setEditingLessonId(null) : openEditLesson(lesson)}
+                                className={`p-1.5 rounded-lg transition-colors ${editingLessonId === lesson.id ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:text-sky-500 hover:bg-sky-50'}`}
+                                title="Edit lesson"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
                               <button onClick={() => setDeleteTarget({ type: 'lesson', id: lesson.id, name: lesson.title })} className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </div>
+
+                          {/* Inline lesson edit form */}
+                          {editingLessonId === lesson.id && (
+                            <form onSubmit={handleUpdateLesson} className="border-t border-sky-100 bg-sky-50/40">
+                              <div className="px-4 py-3 flex items-center gap-2 border-b border-sky-100 bg-sky-50">
+                                <div className="w-5 h-5 bg-sky-500 rounded-full flex items-center justify-center shrink-0">
+                                  <Pencil className="w-3 h-3 text-white" />
+                                </div>
+                                <span className="text-sm font-bold text-sky-700">Edit Lesson</span>
+                                <button type="button" onClick={() => setEditingLessonId(null)} className="ml-auto p-1 rounded text-slate-400 hover:text-slate-600">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="p-4 space-y-4">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Lesson Title <span className="text-red-500">*</span></label>
+                                    <input type="text" value={editLessonForm.title} onChange={e => setEditLessonForm(f => ({ ...f, title: e.target.value }))} className="input-field text-sm" required />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Content Type</label>
+                                    <div className="grid grid-cols-4 gap-1.5">
+                                      {(['video', 'pdf', 'article', 'link'] as const).map(t => {
+                                        const TIcon = getLessonIcon(t);
+                                        const tColors = getLessonColors(t);
+                                        const labels = { video: 'Video', pdf: 'PDF', article: 'Article', link: 'Link' };
+                                        const isActive = editLessonForm.type === t || (t === 'article' && editLessonForm.type === 'text') || (t === 'pdf' && editLessonForm.type === 'file');
+                                        return (
+                                          <button key={t} type="button" onClick={() => setEditLessonForm(f => ({ ...f, type: t, url: '', content: '' }))}
+                                            className={`flex flex-col items-center gap-1 p-2 rounded-lg border text-xs font-medium transition-all ${isActive ? `${tColors.bg} ${tColors.text} border-current` : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                                            <TIcon className="w-3.5 h-3.5" />{labels[t]}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {(editLessonForm.type === 'video') && (
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Video URL</label>
+                                    <input type="url" value={editLessonForm.url} onChange={e => setEditLessonForm(f => ({ ...f, url: e.target.value }))} className="input-field text-sm" placeholder="YouTube / Vimeo / direct video URL" />
+                                  </div>
+                                )}
+
+                                {(editLessonForm.type === 'pdf' || editLessonForm.type === 'file') && (
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Document URL</label>
+                                    <input type="url" value={editLessonForm.url} onChange={e => setEditLessonForm(f => ({ ...f, url: e.target.value }))} className="input-field text-sm" placeholder="Direct PDF or document URL" />
+                                  </div>
+                                )}
+
+                                {(editLessonForm.type === 'article' || editLessonForm.type === 'text') && (
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                      <label className="block text-xs font-semibold text-slate-500">Article Content</label>
+                                    </div>
+                                    <Suspense fallback={null}>
+                                      <AILessonToolbar
+                                        lessonTitle={editLessonForm.title}
+                                        courseContext={courses.find(c => c.id === selectedCourse)?.title || ''}
+                                        currentContent={editLessonForm.content}
+                                        onContentChange={html => setEditLessonForm(f => ({ ...f, content: html }))}
+                                      />
+                                    </Suspense>
+                                    <textarea value={editLessonForm.content} onChange={e => setEditLessonForm(f => ({ ...f, content: e.target.value }))} className="input-field resize-none text-sm leading-relaxed" rows={6} placeholder="Write your lesson content here..." />
+                                  </div>
+                                )}
+
+                                {editLessonForm.type === 'link' && (
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">External URL</label>
+                                    <div className="relative">
+                                      <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                      <input type="url" value={editLessonForm.url} onChange={e => setEditLessonForm(f => ({ ...f, url: e.target.value }))} className="input-field pl-9 text-sm" placeholder="https://..." />
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center gap-4 pt-1 flex-wrap">
+                                  <div className="flex items-center gap-2">
+                                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    <label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Duration</label>
+                                    <input type="number" min="1" value={editLessonForm.duration_minutes} onChange={e => setEditLessonForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 1 }))} className="input-field text-sm py-1.5 w-16" />
+                                    <span className="text-xs text-slate-400">min</span>
+                                  </div>
+                                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                                    <div className={`w-8 h-5 rounded-full transition-colors flex items-center ${editLessonForm.is_preview ? 'bg-green-500' : 'bg-slate-200'}`} onClick={() => setEditLessonForm(f => ({ ...f, is_preview: !f.is_preview }))}>
+                                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${editLessonForm.is_preview ? 'translate-x-3' : 'translate-x-0'}`} />
+                                    </div>
+                                    <span className="text-xs font-semibold text-slate-600">Free preview</span>
+                                  </label>
+                                </div>
+
+                                <div className="flex gap-2 pt-1">
+                                  <button type="submit" className="btn-primary text-sm py-2 flex items-center gap-2">
+                                    <Save className="w-4 h-4" /> Save Changes
+                                  </button>
+                                  <button type="button" onClick={() => setEditingLessonId(null)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-white transition-colors">
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </form>
+                          )}
 
                           {isPreview && lesson.url && (
                             <div className="mx-4 mb-4 mt-1 rounded-xl overflow-hidden border border-sky-200">
