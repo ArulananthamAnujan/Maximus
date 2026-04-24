@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Video, FileText,
@@ -6,7 +6,7 @@ import {
   Clock, CheckCircle, AlertCircle, Pencil, Upload, X, Eye,
   PlayCircle, ExternalLink, XCircle, ChevronRight, Image, DollarSign,
   Globe, Lock, Award, BarChart2, AlignLeft, Info, Check, Sparkles,
-  LayoutList,
+  LayoutList, ClipboardList,
 } from 'lucide-react';
 import { resumableUpload } from '../../lib/resumableUpload';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -328,6 +328,50 @@ function VideoHostingTips() {
   );
 }
 
+function LessonActivitiesPanel({ lessonId }: { lessonId: string }) {
+  const [items, setItems] = React.useState<Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>>([]);
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    supabase
+      .from('lesson_activities')
+      .select('id, title, type, instructions, estimated_minutes')
+      .eq('lesson_id', lessonId)
+      .order('order_index')
+      .then(({ data }) => { setItems((data || []) as typeof items); setLoaded(true); });
+  }, [lessonId]);
+
+  if (!loaded || items.length === 0) return null;
+
+  const typeColor: Record<string, string> = {
+    practice: 'bg-blue-50 text-blue-700 border-blue-200',
+    reflection: 'bg-violet-50 text-violet-700 border-violet-200',
+    discussion: 'bg-amber-50 text-amber-700 border-amber-200',
+    project: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    research: 'bg-sky-50 text-sky-700 border-sky-200',
+  };
+
+  return (
+    <div className="mx-4 mb-4 mt-1 space-y-2">
+      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+        <ClipboardList className="w-3.5 h-3.5" /> Activities ({items.length})
+      </p>
+      {items.map(a => (
+        <div key={a.id} className={`rounded-lg border p-3 text-xs ${typeColor[a.type] || typeColor.practice}`}>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="font-semibold">{a.title}</span>
+            <span className="flex items-center gap-1 opacity-70 shrink-0">
+              <span className="capitalize font-medium">{a.type}</span>
+              {a.estimated_minutes > 0 && <span>· {a.estimated_minutes}m</span>}
+            </span>
+          </div>
+          {a.instructions && <p className="leading-relaxed opacity-90">{a.instructions}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, onGenerateDocs, generatingDocs, children }: {
   section: Section & { lessons: Lesson[] };
   sIdx: number;
@@ -579,6 +623,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             pass_mark: 70,
             pass_percentage: 70,
             max_attempts: 3,
+            is_published: true,
           }).select('id').single();
           if (!quizErr && quizData) {
             const questionRows = sec.quiz.questions.map((q, qi) => {
@@ -781,7 +826,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { data, error } = await supabase
         .from('quizzes')
-        .insert({ course_id: selectedCourse, title: aiQuizNewName.trim(), pass_mark: 70, pass_percentage: 70, max_attempts: 3 })
+        .insert({ course_id: selectedCourse, title: aiQuizNewName.trim(), pass_mark: 70, pass_percentage: 70, max_attempts: 3, is_published: true })
         .select('id')
         .single();
       if (error || !data) throw error || new Error('Failed to create quiz');
@@ -934,6 +979,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       pass_percentage: quizForm.pass_mark,
       pass_mark: quizForm.pass_mark,
       max_attempts: quizForm.max_attempts,
+      is_published: true,
     });
     if (!error) {
       toast.success('Quiz created');
@@ -1821,6 +1867,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                               </Suspense>
                             </div>
                           )}
+
+                          {/* Activities for this lesson */}
+                          <LessonActivitiesPanel lessonId={lesson.id} />
                         </div>
                       );
                     })}
