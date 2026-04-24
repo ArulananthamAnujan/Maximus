@@ -220,6 +220,47 @@ export const generateActivityIdeas = (input: ActivityIdeasInput) =>
 export const generateFullCurriculum = (input: FullCurriculumInput) =>
   callAI<FullCurriculumOutput>('full_curriculum', input);
 
+export interface LessonNotesInput {
+  lesson_title: string;
+  section_title: string;
+  course_title: string;
+  target_audience: string;
+  difficulty: string;
+}
+
+export interface LessonNotesOutput {
+  title: string;
+  content_html: string;
+  key_points: string[];
+  estimated_read_time_minutes: number;
+}
+
+export interface PresentationSlidesInput {
+  section_title: string;
+  course_title: string;
+  lesson_titles: string;
+  target_audience: string;
+  difficulty: string;
+}
+
+export interface PresentationSlide {
+  slide_number: number;
+  heading: string;
+  content_html: string;
+  speaker_notes: string;
+}
+
+export interface PresentationSlidesOutput {
+  title: string;
+  slides: PresentationSlide[];
+}
+
+export const generateLessonNotes = (input: LessonNotesInput) =>
+  callAI<LessonNotesOutput>('lesson_notes', input);
+
+export const generatePresentationSlides = (input: PresentationSlidesInput) =>
+  callAI<PresentationSlidesOutput>('presentation_slides', input);
+
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
   const { data, error } = await supabase.functions.invoke('ai-health', {});
   if (error) throw new Error('Health check failed');

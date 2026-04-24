@@ -17,6 +17,7 @@ import { toast as sonnerToast } from 'sonner';
 import type { Course, Section, Lesson } from '../../types';
 
 const FlashcardStudyModal = lazy(() => import('../../components/ai/FlashcardStudyModal'));
+const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocumentViewer').then(m => ({ default: m.default })));
 
 interface SectionWithLessons extends Section {
   lessons: Lesson[];
@@ -472,10 +473,10 @@ export default function StudentCoursePlayer() {
                     </div>
                   </div>
                 )}
-                {activeLesson.type === 'article' && (
-                  <div className="prose dark:prose-invert max-w-none bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6">
-                    <p className="text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">{activeLesson.content}</p>
-                  </div>
+                {(activeLesson.type === 'article' || activeLesson.type === 'text') && (
+                  activeLesson.content
+                    ? <div className="prose dark:prose-invert prose-sm max-w-none bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6 leading-relaxed" dangerouslySetInnerHTML={{ __html: activeLesson.content }} />
+                    : <div className="bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6"><p className="text-gray-500 dark:text-gray-400 text-sm">No content available for this lesson yet.</p></div>
                 )}
                 {activeLesson.type === 'link' && activeLesson.url && (
                   <div className="bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6">
@@ -516,6 +517,15 @@ export default function StudentCoursePlayer() {
                         <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to open the PDF in a new tab</p>
                       </div>
                     </a>
+                  </div>
+                )}
+
+                {/* AI-generated lesson notes and presentation slides */}
+                {courseId && (
+                  <div className="mb-6">
+                    <Suspense fallback={null}>
+                      <LessonDocumentViewer lessonId={activeLesson.id} courseId={courseId} />
+                    </Suspense>
                   </div>
                 )}
 

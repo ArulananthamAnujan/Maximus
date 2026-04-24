@@ -54,6 +54,16 @@ function validateFullCurriculum(obj: unknown): boolean {
   return Array.isArray(o.sections);
 }
 
+function validateLessonNotes(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.content_html === 'string' && typeof o.title === 'string';
+}
+
+function validatePresentationSlides(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.title === 'string' && Array.isArray(o.slides);
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
   course_outline: validateCourseOutline,
   lesson_content: validateLessonContent,
@@ -64,6 +74,8 @@ const validators: Record<string, (o: unknown) => boolean> = {
   translate_content: validateTranslate,
   activity_ideas: validateActivityIdeas,
   full_curriculum: validateFullCurriculum,
+  lesson_notes: validateLessonNotes,
+  presentation_slides: validatePresentationSlides,
 };
 
 // ─── Sanitize ────────────────────────────────────────────────────────────────
@@ -137,6 +149,16 @@ Output shape: {
 Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
 For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
 For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".`,
+
+    lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
+Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
+For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
+Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
+
+    presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
+Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
+Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
+Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
   };
 
   return prompts[task] || jsonRule;
@@ -197,14 +219,35 @@ Difficulty: ${input.difficulty}
 Number of Sections: ${input.num_sections}
 Lessons per Section: ${input.lessons_per_section}`;
 
+    case 'lesson_notes':
+      return `Write comprehensive lesson notes for:
+Lesson Title: ${input.lesson_title}
+Section: ${input.section_title}
+Course: ${input.course_title}
+Target Audience: ${input.target_audience}
+Difficulty: ${input.difficulty}`;
+
+    case 'presentation_slides':
+      return `Create presentation slides for:
+Section Title: ${input.section_title}
+Course: ${input.course_title}
+Lessons in this section: ${input.lesson_titles}
+Target Audience: ${input.target_audience}
+Difficulty: ${input.difficulty}`;
+
     default:
       return JSON.stringify(input);
   }
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides'];
   return creative.includes(task) ? 0.7 : 0.3;
+}
+
+function getMaxTokens(task: string): number {
+  const large = ['lesson_notes', 'presentation_slides', 'lesson_content'];
+  return large.includes(task) ? 8192 : 4096;
 }
 
 // ─── Anthropic call ──────────────────────────────────────────────────────────
@@ -227,12 +270,12 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: 4096,
+      max_tokens: getMaxTokens(task),
       temperature: getTemperature(task),
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(60000),
   });
 
   if (!response.ok) {
