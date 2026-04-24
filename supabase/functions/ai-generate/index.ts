@@ -44,6 +44,16 @@ function validateTranslate(obj: unknown): boolean {
   return typeof o.translated_content === 'string';
 }
 
+function validateActivityIdeas(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return Array.isArray(o.activities);
+}
+
+function validateFullCurriculum(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return Array.isArray(o.sections);
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
   course_outline: validateCourseOutline,
   lesson_content: validateLessonContent,
@@ -52,6 +62,8 @@ const validators: Record<string, (o: unknown) => boolean> = {
   summarize_lesson: validateSummarize,
   rewrite_content: validateRewrite,
   translate_content: validateTranslate,
+  activity_ideas: validateActivityIdeas,
+  full_curriculum: validateFullCurriculum,
 };
 
 // ─── Sanitize ────────────────────────────────────────────────────────────────
@@ -108,6 +120,23 @@ Output shape: {"rewritten_content": string}`,
 
     translate_content: `You are an expert translator for educational content. Translate accurately while preserving formatting and educational clarity. ${jsonRule}
 Output shape: {"translated_content": string}`,
+
+    activity_ideas: `You are an expert instructional designer creating practical learning activities. ${jsonRule}
+Output shape: {"activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]}
+Instructions should be 2-4 sentences, actionable, and clearly describe what the student must do.`,
+
+    full_curriculum: `You are an expert curriculum designer creating a complete, structured course. ${jsonRule}
+Output shape: {
+  "sections": [{
+    "title": string,
+    "lessons": [{"title": string, "type": "article"|"document", "estimated_duration_minutes": number, "description": string}],
+    "quiz": {"title": string, "questions": [{"type": "mcq"|"true_false", "question": string, "options": string[], "correct_answer": string, "explanation": string, "points": number}]},
+    "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
+  }]
+}
+Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
+For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
+For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".`,
   };
 
   return prompts[task] || jsonRule;
@@ -154,13 +183,27 @@ ${input.content}`;
       return `Translate the following educational content to ${input.target_language}:
 ${input.content}`;
 
+    case 'activity_ideas':
+      return `Create ${input.num_activities} learning activities for:
+Lesson: ${input.lesson_title}
+Course Context: ${input.course_context}
+Target Audience: ${input.target_audience}`;
+
+    case 'full_curriculum':
+      return `Create a complete course curriculum for:
+Topic: ${input.topic}
+Target Audience: ${input.target_audience}
+Difficulty: ${input.difficulty}
+Number of Sections: ${input.num_sections}
+Lessons per Section: ${input.lessons_per_section}`;
+
     default:
       return JSON.stringify(input);
   }
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 

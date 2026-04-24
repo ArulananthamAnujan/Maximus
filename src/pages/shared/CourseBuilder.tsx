@@ -387,6 +387,19 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [flashcardsList, setFlashcardsList] = useState<Array<{ id: string; front: string; back: string; order_index: number }>>([]);
   const [aiQuizTarget, setAiQuizTarget] = useState<string | null>(null);
 
+  // AI Curriculum Generator
+  const [showAICurriculumPanel, setShowAICurriculumPanel] = useState(false);
+  const [aiCurriculumStep, setAICurriculumStep] = useState<'form' | 'loading' | 'preview'>('form');
+  const [aiCurriculumForm, setAICurriculumForm] = useState({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3 });
+  const [aiCurriculumPreview, setAICurriculumPreview] = useState<import('../../lib/ai').AICurriculumSection[]>([]);
+  const [aiCurriculumInserting, setAICurriculumInserting] = useState(false);
+  const [aiCurriculumExpanded, setAICurriculumExpanded] = useState<number | null>(0);
+
+  // AI Quiz from Curriculum
+  const [showAIQuizFromCurriculum, setShowAIQuizFromCurriculum] = useState(false);
+  const [aiQuizNewName, setAIQuizNewName] = useState('');
+  const [aiQuizCreating, setAIQuizCreating] = useState(false);
+
   const [addingSection, setAddingSection] = useState(false);
   const [sectionTitle, setSectionTitle] = useState('');
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -439,6 +452,132 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const fetchFlashcards = async (lessonId: string) => {
     const { data } = await supabase.from('flashcards').select('*').eq('lesson_id', lessonId).order('order_index');
     setFlashcardsList((data || []) as Array<{ id: string; front: string; back: string; order_index: number }>);
+  };
+
+  const handleAIGenerateCurriculum = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCourse) return;
+    setAICurriculumStep('loading');
+    try {
+      const { generateFullCurriculum } = await import('../../lib/ai');
+      const result = await generateFullCurriculum({
+        topic: aiCurriculumForm.topic,
+        target_audience: aiCurriculumForm.target_audience,
+        difficulty: aiCurriculumForm.difficulty,
+        num_sections: aiCurriculumForm.num_sections,
+        lessons_per_section: aiCurriculumForm.lessons_per_section,
+      });
+      setAICurriculumPreview(result.sections);
+      setAICurriculumExpanded(0);
+      setAICurriculumStep('preview');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI generation failed');
+      setAICurriculumStep('form');
+    }
+  };
+
+  const handleAICurriculumInsert = async () => {
+    if (!selectedCourse || !profile) return;
+    setAICurriculumInserting(true);
+    try {
+      const startIdx = sections.length;
+      for (let i = 0; i < aiCurriculumPreview.length; i++) {
+        const sec = aiCurriculumPreview[i];
+        const { data: sectionData, error: sectionErr } = await supabase
+          .from('sections')
+          .insert({ course_id: selectedCourse, title: sec.title, order_index: startIdx + i })
+          .select('id')
+          .single();
+        if (sectionErr || !sectionData) continue;
+
+        // Insert lessons
+        const lessonRows = (sec.lessons || []).map((l, li) => ({
+          section_id: sectionData.id,
+          course_id: selectedCourse,
+          title: l.title,
+          type: l.type === 'document' ? 'pdf' : 'article',
+          content: '',
+          duration_minutes: l.estimated_duration_minutes || 10,
+          order_index: li,
+          is_preview: false,
+          is_required: true,
+        }));
+        let insertedLessons: Array<{ id: string }> = [];
+        if (lessonRows.length > 0) {
+          const { data: lessonData } = await supabase.from('lessons').insert(lessonRows).select('id');
+          insertedLessons = lessonData || [];
+        }
+
+        // Insert quiz for this section
+        if (sec.quiz?.questions?.length) {
+          const { data: quizData } = await supabase.from('quizzes').insert({
+            course_id: selectedCourse,
+            title: sec.quiz.title,
+            pass_mark: 70,
+            max_attempts: 3,
+          }).select('id').single();
+          if (quizData) {
+            const questionRows = sec.quiz.questions.map((q, qi) => ({
+              quiz_id: quizData.id,
+              question: q.question,
+              type: q.type,
+              options: q.options && q.options.length > 0 ? q.options : null,
+              correct_answer: q.correct_answer,
+              points: q.points,
+              order_index: qi,
+            }));
+            await supabase.from('quiz_questions').insert(questionRows);
+          }
+        }
+
+        // Insert activities linked to first lesson of section
+        if (sec.activities?.length && insertedLessons.length > 0) {
+          const activityRows = sec.activities.map((a, ai) => ({
+            lesson_id: insertedLessons[0].id,
+            course_id: selectedCourse,
+            title: a.title,
+            type: a.type,
+            instructions: a.instructions,
+            estimated_minutes: a.estimated_minutes,
+            order_index: ai,
+          }));
+          await supabase.from('lesson_activities').insert(activityRows);
+        }
+      }
+      toast.success(`Added ${aiCurriculumPreview.length} sections with lessons, quizzes and activities`);
+      setShowAICurriculumPanel(false);
+      setAICurriculumStep('form');
+      setAICurriculumPreview([]);
+      setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3 });
+      fetchSections();
+      fetchQuizzes();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
+    } finally {
+      setAICurriculumInserting(false);
+    }
+  };
+
+  const handleAIQuizFromCurriculum = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiQuizNewName.trim() || !selectedCourse) return;
+    setAIQuizCreating(true);
+    try {
+      const { data, error } = await supabase
+        .from('quizzes')
+        .insert({ course_id: selectedCourse, title: aiQuizNewName.trim(), pass_mark: 70, max_attempts: 3 })
+        .select('id')
+        .single();
+      if (error || !data) throw error || new Error('Failed to create quiz');
+      await fetchQuizzes();
+      setAiQuizTarget(data.id);
+      setShowAIQuizFromCurriculum(false);
+      setAIQuizNewName('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create quiz');
+    } finally {
+      setAIQuizCreating(false);
+    }
   };
 
   const loadCourseData = () => {
@@ -891,6 +1030,261 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
             {activeTab === 'curriculum' && (
               <div className="space-y-4">
+
+                {/* ─── AI Curriculum Generator ─────────────────────────────── */}
+                {!showAICurriculumPanel ? (
+                  <div className="flex items-center justify-between px-5 py-3.5 bg-gradient-to-r from-sky-50 to-blue-50 border border-sky-200 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-sky-100 rounded-lg flex items-center justify-center shrink-0">
+                        <Sparkles className="w-4 h-4 text-sky-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-sky-800">Generate Curriculum with AI</p>
+                        <p className="text-xs text-sky-600 mt-0.5">Claude creates sections, lessons, quizzes and activities</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setShowAICurriculumPanel(true); setAICurriculumStep('form'); }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-sky-700 bg-white hover:bg-sky-50 border border-sky-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" /> Generate
+                    </button>
+                  </div>
+                ) : (
+                  <div className="lms-panel overflow-hidden">
+                    {/* Panel header */}
+                    <div className="flex items-center gap-3 px-5 py-4 border-b border-sky-100 bg-gradient-to-r from-sky-50 to-blue-50">
+                      <div className="w-8 h-8 bg-sky-100 rounded-lg flex items-center justify-center shrink-0">
+                        <Sparkles className="w-4 h-4 text-sky-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-sky-800">
+                          {aiCurriculumStep === 'form' && 'Generate Curriculum with AI'}
+                          {aiCurriculumStep === 'loading' && 'Claude is building your curriculum...'}
+                          {aiCurriculumStep === 'preview' && `Preview — ${aiCurriculumPreview.length} sections generated`}
+                        </p>
+                        <p className="text-xs text-sky-600 mt-0.5">
+                          {aiCurriculumStep === 'form' && 'Generates sections, lessons, quizzes & activities'}
+                          {aiCurriculumStep === 'loading' && 'This may take up to 30 seconds...'}
+                          {aiCurriculumStep === 'preview' && 'Review the curriculum below then click Insert to add it'}
+                        </p>
+                      </div>
+                      {aiCurriculumStep !== 'loading' && !aiCurriculumInserting && (
+                        <button onClick={() => { setShowAICurriculumPanel(false); setAICurriculumStep('form'); setAICurriculumPreview([]); }} className="p-1.5 rounded-lg text-sky-400 hover:bg-sky-100 transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Step: Form */}
+                    {aiCurriculumStep === 'form' && (
+                      <form onSubmit={handleAIGenerateCurriculum} className="p-5 space-y-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Course Topic <span className="text-red-500">*</span></label>
+                          <input
+                            type="text"
+                            value={aiCurriculumForm.topic}
+                            onChange={e => setAICurriculumForm(f => ({ ...f, topic: e.target.value }))}
+                            className="input-field text-sm"
+                            placeholder={courses.find(c => c.id === selectedCourse)?.title || 'e.g. IELTS Academic Writing Skills'}
+                            required
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Target Audience</label>
+                            <select value={aiCurriculumForm.target_audience} onChange={e => setAICurriculumForm(f => ({ ...f, target_audience: e.target.value }))} className="input-field text-sm">
+                              <option value="general">General learners</option>
+                              <option value="beginners">Complete beginners</option>
+                              <option value="intermediate">Intermediate students</option>
+                              <option value="advanced">Advanced students</option>
+                              <option value="professionals">Working professionals</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Difficulty</label>
+                            <select value={aiCurriculumForm.difficulty} onChange={e => setAICurriculumForm(f => ({ ...f, difficulty: e.target.value }))} className="input-field text-sm">
+                              <option value="beginner">Beginner</option>
+                              <option value="intermediate">Intermediate</option>
+                              <option value="advanced">Advanced</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sections <span className="text-sky-600 font-bold">{aiCurriculumForm.num_sections}</span></label>
+                            <input type="range" min={1} max={8} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>8</span></div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>
+                            <input type="range" min={2} max={6} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>6</span></div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs text-slate-500">
+                          <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          Generates {aiCurriculumForm.num_sections} sections · {aiCurriculumForm.num_sections * aiCurriculumForm.lessons_per_section} lessons (articles + documents) · {aiCurriculumForm.num_sections} quizzes · activities per section
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="submit" className="btn-primary text-sm py-2 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4" /> Generate Curriculum
+                          </button>
+                          <button type="button" onClick={() => setShowAICurriculumPanel(false)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Step: Loading */}
+                    {aiCurriculumStep === 'loading' && (
+                      <div className="p-12 flex flex-col items-center justify-center gap-5">
+                        <div className="relative">
+                          <div className="w-14 h-14 rounded-full bg-sky-100 flex items-center justify-center">
+                            <Sparkles className="w-7 h-7 text-sky-500 animate-pulse" />
+                          </div>
+                          <div className="absolute inset-0 rounded-full border-4 border-sky-300 border-t-transparent animate-spin" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-semibold text-slate-700">Claude is crafting your curriculum</p>
+                          <p className="text-xs text-slate-400 mt-1">Building {aiCurriculumForm.num_sections} sections with lessons, quizzes and activities...</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Step: Preview */}
+                    {aiCurriculumStep === 'preview' && (
+                      <div className="divide-y divide-slate-100">
+                        {aiCurriculumPreview.map((sec, si) => (
+                          <div key={si} className="overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setAICurriculumExpanded(aiCurriculumExpanded === si ? null : si)}
+                              className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50 transition-colors text-left"
+                            >
+                              <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
+                                <Layers className="w-3.5 h-3.5 text-sky-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-slate-800 truncate">{sec.title}</p>
+                                <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-400">
+                                  <span>{sec.lessons?.length || 0} lessons</span>
+                                  <span>{sec.quiz?.questions?.length || 0} quiz questions</span>
+                                  <span>{sec.activities?.length || 0} activities</span>
+                                </div>
+                              </div>
+                              {aiCurriculumExpanded === si ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+                            </button>
+
+                            {aiCurriculumExpanded === si && (
+                              <div className="px-5 pb-4 space-y-3 bg-slate-50 border-t border-slate-100">
+                                {/* Lessons */}
+                                <div className="pt-3">
+                                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Lessons</p>
+                                  <div className="space-y-1.5">
+                                    {sec.lessons?.map((lesson, li) => {
+                                      const isDoc = lesson.type === 'document';
+                                      return (
+                                        <div key={li} className="flex items-center gap-2.5 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                          <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${isDoc ? 'bg-red-100' : 'bg-green-100'}`}>
+                                            {isDoc ? <FileText className="w-3.5 h-3.5 text-red-500" /> : <AlignLeft className="w-3.5 h-3.5 text-green-600" />}
+                                          </div>
+                                          <span className="text-sm text-slate-700 flex-1 min-w-0 truncate">{lesson.title}</span>
+                                          <span className={`text-xs px-2 py-0.5 rounded font-medium shrink-0 ${isDoc ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                                            {isDoc ? 'Document' : 'Article'}
+                                          </span>
+                                          <span className="text-xs text-slate-400 shrink-0">{lesson.estimated_duration_minutes}m</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Quiz */}
+                                {sec.quiz?.questions?.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Quiz — {sec.quiz.title}</p>
+                                    <div className="space-y-1.5">
+                                      {sec.quiz.questions.map((q, qi) => (
+                                        <div key={qi} className="flex items-start gap-2.5 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                          <div className="w-6 h-6 rounded bg-sky-100 flex items-center justify-center shrink-0 mt-0.5">
+                                            <HelpCircle className="w-3.5 h-3.5 text-sky-600" />
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-sm text-slate-700 truncate">{q.question}</p>
+                                            <span className={`text-xs font-medium ${q.type === 'mcq' ? 'text-sky-600' : 'text-amber-600'}`}>{q.type === 'mcq' ? 'Multiple Choice' : 'True/False'}</span>
+                                          </div>
+                                          <span className="text-xs text-slate-400 shrink-0">{q.points}pt</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Activities */}
+                                {sec.activities?.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Activities</p>
+                                    <div className="space-y-1.5">
+                                      {sec.activities.map((a, ai2) => {
+                                        const typeColors: Record<string, string> = {
+                                          practice: 'bg-blue-100 text-blue-700',
+                                          reflection: 'bg-amber-100 text-amber-700',
+                                          discussion: 'bg-green-100 text-green-700',
+                                          project: 'bg-rose-100 text-rose-700',
+                                          research: 'bg-slate-100 text-slate-700',
+                                        };
+                                        return (
+                                          <div key={ai2} className="flex items-start gap-2.5 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                            <div className="w-6 h-6 rounded bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
+                                              <BarChart2 className="w-3.5 h-3.5 text-amber-600" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-sm text-slate-700 truncate">{a.title}</p>
+                                              <p className="text-xs text-slate-400 truncate mt-0.5">{a.instructions}</p>
+                                            </div>
+                                            <span className={`text-xs px-2 py-0.5 rounded font-medium capitalize shrink-0 ${typeColors[a.type] || 'bg-slate-100 text-slate-600'}`}>{a.type}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {/* Footer actions */}
+                        <div className="flex items-center justify-between px-5 py-4 bg-white">
+                          <button
+                            type="button"
+                            onClick={() => setAICurriculumStep('form')}
+                            disabled={aiCurriculumInserting}
+                            className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                          >
+                            Regenerate
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleAICurriculumInsert}
+                            disabled={aiCurriculumInserting}
+                            className="btn-primary text-sm py-2 px-6 flex items-center gap-2 disabled:opacity-60"
+                          >
+                            {aiCurriculumInserting ? (
+                              <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Inserting...</>
+                            ) : (
+                              <><Check className="w-4 h-4" /> Insert {aiCurriculumPreview.length} Sections</>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* ─────────────────────────────────────────────────────────── */}
+
                 {sections.map((section, sIdx) => (
                   <SectionCard
                     key={section.id}
@@ -1243,6 +1637,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     <p className="text-sm text-slate-500 mt-0.5">Test student knowledge and track progress</p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowAIQuizFromCurriculum(true)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors"
+                    >
+                      <Sparkles className="w-4 h-4" /> Generate with AI
+                    </button>
                     <button onClick={() => setShowQuizCreate(true)} className="btn-primary text-sm py-2 flex items-center gap-2">
                       <Plus className="w-4 h-4" /> New Quiz
                     </button>
@@ -1257,6 +1657,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                       </div>
                       <h3 className="font-bold text-slate-800 mb-1">No quizzes yet</h3>
                       <p className="text-sm text-slate-500 max-w-xs mb-4">Create quizzes to assess student understanding and provide feedback.</p>
+                      <button onClick={() => setShowAIQuizFromCurriculum(true)} className="flex items-center gap-2 px-4 py-2.5 mb-2 text-sm font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors">
+                        <Sparkles className="w-4 h-4" /> Generate Quiz with AI
+                      </button>
                       <button onClick={() => setShowQuizCreate(true)} className="btn-primary text-sm py-2 flex items-center gap-2">
                         <Plus className="w-4 h-4" /> Create First Quiz
                       </button>
@@ -1425,6 +1828,59 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           </div>
         )}
       </div>
+
+      {/* AI Quiz from Curriculum modal */}
+      {showAIQuizFromCurriculum && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!aiQuizCreating) setShowAIQuizFromCurriculum(false); }} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm animate-slide-up">
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+              <div className="w-9 h-9 bg-sky-100 rounded-xl flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5 text-sky-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-slate-900">Generate Quiz with AI</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Name your quiz, then pick a lesson to generate from</p>
+              </div>
+              {!aiQuizCreating && (
+                <button onClick={() => setShowAIQuizFromCurriculum(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <form onSubmit={handleAIQuizFromCurriculum} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Quiz Title <span className="text-red-500">*</span></label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={aiQuizNewName}
+                  onChange={e => setAIQuizNewName(e.target.value)}
+                  className="input-field"
+                  placeholder="e.g. Reading Skills Assessment"
+                  required
+                />
+              </div>
+              <div className="flex items-start gap-2.5 bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-xs text-sky-700">
+                <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5 text-sky-500" />
+                The quiz will be created and the AI generator will open so you can pick a lesson from your curriculum and configure question types.
+              </div>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setShowAIQuizFromCurriculum(false)} disabled={aiQuizCreating} className="flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium transition-colors disabled:opacity-50">
+                  Cancel
+                </button>
+                <button type="submit" disabled={aiQuizCreating || !aiQuizNewName.trim()} className="flex-1 btn-primary text-sm py-2.5 flex items-center justify-center gap-2 disabled:opacity-60">
+                  {aiQuizCreating ? (
+                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Creating...</>
+                  ) : (
+                    <><Sparkles className="w-4 h-4" /> Continue</>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showQuizCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

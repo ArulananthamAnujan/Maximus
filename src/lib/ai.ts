@@ -43,6 +43,21 @@ export interface TranslateContentInput {
   target_language: string;
 }
 
+export interface ActivityIdeasInput {
+  lesson_title: string;
+  course_context: string;
+  target_audience: string;
+  num_activities: number;
+}
+
+export interface FullCurriculumInput {
+  topic: string;
+  target_audience: string;
+  difficulty: string;
+  num_sections: number;
+  lessons_per_section: number;
+}
+
 // ─── Output types ───────────────────────────────────────────────────────────
 
 export interface AILessonItem {
@@ -104,6 +119,47 @@ export interface TranslateContentOutput {
   translated_content: string;
 }
 
+export interface AIActivity {
+  title: string;
+  type: 'practice' | 'reflection' | 'discussion' | 'project' | 'research';
+  instructions: string;
+  estimated_minutes: number;
+}
+
+export interface ActivityIdeasOutput {
+  activities: AIActivity[];
+}
+
+export interface AICurriculumLesson {
+  title: string;
+  type: 'article' | 'document';
+  estimated_duration_minutes: number;
+  description: string;
+}
+
+export interface AICurriculumQuizQuestion {
+  type: 'mcq' | 'true_false';
+  question: string;
+  options: string[];
+  correct_answer: string;
+  explanation: string;
+  points: number;
+}
+
+export interface AICurriculumSection {
+  title: string;
+  lessons: AICurriculumLesson[];
+  quiz: {
+    title: string;
+    questions: AICurriculumQuizQuestion[];
+  };
+  activities: AIActivity[];
+}
+
+export interface FullCurriculumOutput {
+  sections: AICurriculumSection[];
+}
+
 export interface AIHealthOutput {
   key_present: boolean;
   key_works: boolean;
@@ -157,6 +213,12 @@ export const rewriteContent = (input: RewriteContentInput) =>
 
 export const translateContent = (input: TranslateContentInput) =>
   callAI<TranslateContentOutput>('translate_content', input);
+
+export const generateActivityIdeas = (input: ActivityIdeasInput) =>
+  callAI<ActivityIdeasOutput>('activity_ideas', input);
+
+export const generateFullCurriculum = (input: FullCurriculumInput) =>
+  callAI<FullCurriculumOutput>('full_curriculum', input);
 
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
   const { data, error } = await supabase.functions.invoke('ai-health', {});
