@@ -53,6 +53,7 @@ const TeacherStudents = lazy(() => import('./pages/teacher/TeacherStudents'));
 const TeacherDiscussions = lazy(() => import('./pages/teacher/TeacherDiscussions'));
 const TeacherLiveSessions = lazy(() => import('./pages/teacher/TeacherLiveSessions'));
 const TeacherCertificates = lazy(() => import('./pages/teacher/TeacherCertificates'));
+const TeacherExams = lazy(() => import('./pages/teacher/TeacherExams'));
 
 const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard'));
 const StudentCourses = lazy(() => import('./pages/student/StudentCourses'));
@@ -61,6 +62,7 @@ const StudentQuizzes = lazy(() => import('./pages/student/StudentQuizzes'));
 const StudentAssignments = lazy(() => import('./pages/student/StudentAssignments'));
 const StudentCertificates = lazy(() => import('./pages/student/StudentCertificates'));
 const StudentProfile = lazy(() => import('./pages/student/StudentProfile'));
+const StudentExams = lazy(() => import('./pages/student/StudentExams'));
 
 function LoadingScreen() {
   return (
@@ -165,6 +167,7 @@ export default function App() {
                 <Route path="/teacher/discussions" element={<ProtectedRoute role="teacher"><TeacherDiscussions /></ProtectedRoute>} />
                 <Route path="/teacher/live-sessions" element={<ProtectedRoute role="teacher"><TeacherLiveSessions /></ProtectedRoute>} />
                 <Route path="/teacher/certificates" element={<ProtectedRoute role="teacher"><TeacherCertificates /></ProtectedRoute>} />
+                <Route path="/teacher/exams" element={<ProtectedRoute role="teacher"><TeacherExams /></ProtectedRoute>} />
 
                 <Route path="/student" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
                 <Route path="/student/courses" element={<ProtectedRoute role="student"><StudentCourses /></ProtectedRoute>} />
@@ -173,6 +176,7 @@ export default function App() {
                 <Route path="/student/assignments" element={<ProtectedRoute role="student"><StudentAssignments /></ProtectedRoute>} />
                 <Route path="/student/certificates" element={<ProtectedRoute role="student"><StudentCertificates /></ProtectedRoute>} />
                 <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentProfile /></ProtectedRoute>} />
+                <Route path="/student/exams" element={<ProtectedRoute role="student"><StudentExams /></ProtectedRoute>} />
 
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
