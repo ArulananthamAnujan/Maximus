@@ -167,16 +167,17 @@ Output shape: {"title": string, "slides": [{"slide_number": number, "heading": s
 Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
 Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
 
-    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
   "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-For each lesson notes_html: 400-700 words of rich HTML using h2, h3, p, ul, ol, li, strong, em, blockquote only. Include intro, key concepts with examples, and summary.
-For slides: generate 8-14 slides covering the whole section. Use only h3, p, ul, li, strong tags per slide. Keep slides concise (40-100 words each).
-If prior section context is given, build on it — advance difficulty, reference earlier concepts, do NOT repeat covered material.`,
+STRICT LENGTH LIMITS (required to avoid timeout):
+- Each lesson notes_html: 200-300 words MAX. Use h3, p, ul, li, strong only. Cover: 1 intro paragraph, 2-3 key concept bullets, 1 summary line.
+- Slides: exactly 6 slides total for the section. Use only h3, p, ul, li per slide. Max 60 words per slide.
+If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
   return prompts[task] || jsonRule;
@@ -279,8 +280,8 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  // section_content generates all lesson notes + slides in one call — needs maximum tokens
-  if (task === 'section_content') return 16000;
+  // section_content is kept intentionally small to stay under edge function timeout
+  if (task === 'section_content') return 4096;
   if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
