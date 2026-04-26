@@ -181,46 +181,33 @@ export default function CoursePreview() {
 
     return (
       <div>
-        {/* Price display */}
-        <div className="mb-5">
-          <div className="flex items-baseline gap-3">
-            <span className="text-4xl font-bold text-slate-900 font-playfair tracking-tight">
-              A${finalPrice.toFixed(2)}
-            </span>
-            {discount > 0 && (
-              <span className="text-lg text-slate-400 line-through font-normal">A${price.toFixed(2)}</span>
-            )}
-          </div>
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-3xl font-bold text-slate-900 font-playfair">
+            A${finalPrice.toFixed(2)}
+          </span>
           {discount > 0 && (
-            <span className="inline-block mt-1 text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-              {discount}% off
-            </span>
+            <span className="text-lg text-slate-400 line-through">A${price.toFixed(2)}</span>
           )}
         </div>
-
-        {/* Buy Now button */}
-        <button
-          onClick={handleBuyNow}
-          className="w-full py-4 bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-base rounded-xl transition-all duration-150 flex items-center justify-center gap-2.5 shadow-lg shadow-sky-600/30 hover:shadow-sky-600/40 mb-4"
-        >
-          <ShoppingCart className="w-5 h-5 shrink-0" />
-          <span>Enrol Now</span>
-        </button>
-
-        {/* Promo code */}
         <div className="flex gap-2 mb-3">
           <input
             type="text"
-            placeholder="Have a promo code?"
+            placeholder="Promo code"
             value={promoCode}
             onChange={e => setPromoCode(e.target.value.toUpperCase())}
             className="input-field flex-1 text-sm py-2"
           />
-          <button onClick={applyPromo} className="px-4 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors font-semibold whitespace-nowrap">Apply</button>
+          <button onClick={applyPromo} className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors font-semibold">Apply</button>
         </div>
-
+        <button
+          onClick={handleBuyNow}
+          className="w-full px-4 py-3.5 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 mb-3 shadow-lg shadow-sky-600/25"
+        >
+          <ShoppingCart className="w-4 h-4" />
+          {enrollButtonContent()}
+        </button>
         {!course.stripe_payment_link && (
-          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 text-center">
+          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 text-center mb-3">
             Payment not yet configured. Contact us to enrol.
           </p>
         )}

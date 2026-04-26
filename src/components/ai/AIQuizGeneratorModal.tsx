@@ -94,21 +94,15 @@ export default function AIQuizGeneratorModal({ quizId, courseId, lessons, onClos
 
       const startIdx = (existing?.[0]?.order_index ?? -1) + 1;
 
-      const rows = questions.map((q, i) => {
-        const opts = q.options && q.options.length > 0 ? q.options : null;
-        const correctIdx = opts ? opts.findIndex(o => o === q.correct_answer) : 0;
-        return {
-          quiz_id: quizId,
-          question: q.question,
-          type: q.type,
-          options: opts,
-          correct_answer: correctIdx >= 0 ? correctIdx : 0,
-          correct_answer_text: q.correct_answer,
-          explanation: q.explanation || '',
-          points: q.points,
-          order_index: startIdx + i,
-        };
-      });
+      const rows = questions.map((q, i) => ({
+        quiz_id: quizId,
+        question: q.question,
+        type: q.type,
+        options: q.options && q.options.length > 0 ? q.options : null,
+        correct_answer: q.correct_answer,
+        points: q.points,
+        order_index: startIdx + i,
+      }));
 
       const { error: insertErr } = await supabase.from('quiz_questions').insert(rows);
       if (insertErr) throw insertErr;
@@ -135,7 +129,7 @@ export default function AIQuizGeneratorModal({ quizId, courseId, lessons, onClos
             <h3 className="font-bold text-slate-900">Generate Quiz from Lesson</h3>
             <p className="text-xs text-slate-400">
               {step === 'form' && 'Select a lesson and configure your quiz'}
-              {step === 'generating' && 'AI is crafting your questions...'}
+              {step === 'generating' && 'Claude is crafting your questions...'}
               {step === 'preview' && `${questions.length} questions generated — review before adding`}
             </p>
           </div>

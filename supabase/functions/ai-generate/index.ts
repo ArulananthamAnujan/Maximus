@@ -44,36 +44,6 @@ function validateTranslate(obj: unknown): boolean {
   return typeof o.translated_content === 'string';
 }
 
-function validateActivityIdeas(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return Array.isArray(o.activities);
-}
-
-function validateFullCurriculum(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return Array.isArray(o.sections);
-}
-
-function validateLessonNotes(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.content_html === 'string' && typeof o.title === 'string';
-}
-
-function validatePresentationSlides(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.title === 'string' && Array.isArray(o.slides);
-}
-
-function validateSectionContent(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
-}
-
-function validateGenerateExam(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
-}
-
 const validators: Record<string, (o: unknown) => boolean> = {
   course_outline: validateCourseOutline,
   lesson_content: validateLessonContent,
@@ -82,12 +52,6 @@ const validators: Record<string, (o: unknown) => boolean> = {
   summarize_lesson: validateSummarize,
   rewrite_content: validateRewrite,
   translate_content: validateTranslate,
-  activity_ideas: validateActivityIdeas,
-  full_curriculum: validateFullCurriculum,
-  lesson_notes: validateLessonNotes,
-  presentation_slides: validatePresentationSlides,
-  section_content: validateSectionContent,
-  generate_exam: validateGenerateExam,
 };
 
 // ─── Sanitize ────────────────────────────────────────────────────────────────
@@ -144,63 +108,6 @@ Output shape: {"rewritten_content": string}`,
 
     translate_content: `You are an expert translator for educational content. Translate accurately while preserving formatting and educational clarity. ${jsonRule}
 Output shape: {"translated_content": string}`,
-
-    activity_ideas: `You are an expert instructional designer creating practical learning activities. ${jsonRule}
-Output shape: {"activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]}
-Instructions should be 2-4 sentences, actionable, and clearly describe what the student must do.`,
-
-    full_curriculum: `You are an expert curriculum designer creating a complete, structured course. ${jsonRule}
-Output shape: {
-  "sections": [{
-    "title": string,
-    "lessons": [{"title": string, "type": "article"|"document", "estimated_duration_minutes": number, "description": string}],
-    "quiz": {"title": string, "questions": [{"type": "mcq"|"true_false", "question": string, "options": string[], "correct_answer": string, "explanation": string, "points": number}]},
-    "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
-  }]
-}
-Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
-For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
-For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
-If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
-
-    lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
-Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
-Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
-
-    presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
-Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
-Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
-Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
-
-    generate_exam: `You are an expert exam writer for language and academic preparation (IELTS, PTE, academic English, etc.). ${jsonRule}
-Output shape: {
-  "title": string,
-  "description": string,
-  "instructions": string,
-  "passage": string,
-  "time_limit_minutes": number,
-  "questions": [{"question": string, "marks": number, "sample_answer": string}]
-}
-Guidelines:
-- passage: Write a well-structured reading text of 250-400 words appropriate to the subject and level. Use formal academic style for IELTS/PTE. Leave empty string if exam_type is "question_only".
-- questions: Generate the number of questions requested. Each question should test reading comprehension, critical thinking, or language skills.
-- sample_answer: Write a concise model answer (2-5 sentences) that would earn full marks. Be specific — this is used by AI to grade students.
-- instructions: Clear, concise instructions for students (e.g. "Read the passage and answer all questions in complete sentences.").
-- time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
-- Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
-
-    section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
-Output shape: {
-  "section_title": string,
-  "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
-  "slides_title": string,
-  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
-}
-STRICT LENGTH LIMITS (required to avoid timeout):
-- Each lesson notes_html: 200-300 words MAX. Use h3, p, ul, li, strong only. Cover: 1 intro paragraph, 2-3 key concept bullets, 1 summary line.
-- Slides: exactly 6 slides total for the section. Use only h3, p, ul, li per slide. Max 60 words per slide.
-If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
   return prompts[task] || jsonRule;
@@ -247,77 +154,14 @@ ${input.content}`;
       return `Translate the following educational content to ${input.target_language}:
 ${input.content}`;
 
-    case 'activity_ideas':
-      return `Create ${input.num_activities} learning activities for:
-Lesson: ${input.lesson_title}
-Course Context: ${input.course_context}
-Target Audience: ${input.target_audience}`;
-
-    case 'full_curriculum':
-      return `Create a complete course curriculum for:
-Topic: ${input.topic}
-Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
-Number of Sections: ${input.num_sections}
-Lessons per Section: ${input.lessons_per_section}${input.existing_sections_summary ? `\n\nAlready covered in previous weeks (DO NOT repeat these topics — build on them):\n${input.existing_sections_summary}` : ''}`;
-
-    case 'lesson_notes':
-      return `Write comprehensive lesson notes for:
-Lesson Title: ${input.lesson_title}
-Section: ${input.section_title}
-Course: ${input.course_title}
-Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}`;
-
-    case 'presentation_slides':
-      return `Create presentation slides for:
-Section Title: ${input.section_title}
-Course: ${input.course_title}
-Lessons in this section: ${input.lesson_titles}
-Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}`;
-
-    case 'section_content': {
-      const lessons = Array.isArray(input.lessons)
-        ? (input.lessons as Array<{ title: string; description: string }>)
-            .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
-            .join('\n')
-        : String(input.lessons);
-      return `Generate full lesson notes and presentation slides for this section:
-Course: ${input.course_title}
-Section: ${input.section_title}
-Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
-Lessons in this section:
-${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
-    }
-
-    case 'generate_exam':
-      return `Generate an exam for:
-Subject / Topic: ${input.topic}
-Course context: ${input.course_context || 'General'}
-Exam type: ${input.exam_type || 'reading_comprehension'} (reading_comprehension = include a passage; question_only = no passage)
-Difficulty / Band level: ${input.difficulty || 'intermediate'}
-Number of questions: ${input.num_questions || 5}
-Marks per question: ${input.marks_per_question || 5}
-Target audience: ${input.target_audience || 'Adult learners'}
-${input.extra_instructions ? `Additional instructions: ${input.extra_instructions}` : ''}`;
-
     default:
       return JSON.stringify(input);
   }
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'generate_exam'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards'];
   return creative.includes(task) ? 0.7 : 0.3;
-}
-
-function getMaxTokens(task: string): number {
-  // section_content is kept intentionally small to stay under edge function timeout
-  if (task === 'section_content') return 4096;
-  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
-  return 4096;
 }
 
 // ─── Anthropic call ──────────────────────────────────────────────────────────
@@ -340,12 +184,12 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: getMaxTokens(task),
+      max_tokens: 4096,
       temperature: getTemperature(task),
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!response.ok) {

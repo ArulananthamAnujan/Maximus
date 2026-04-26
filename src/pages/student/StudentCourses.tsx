@@ -204,25 +204,22 @@ export default function StudentCourses() {
                     {course.enrolled ? (
                       <div>
                         {isPending ? (
-                          <div className="text-center py-2 text-sm text-amber-600 bg-amber-50 rounded-lg font-medium">
+                          <div className="text-center py-2 text-sm text-amber-600 bg-amber-50 rounded-lg mb-2 font-medium">
                             Payment processing...
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-lg font-bold text-slate-900 dark:text-white leading-tight">
-                                {isFree ? 'Free' : `A$${price.toFixed(2)}`}
-                              </p>
-                              <p className="text-xs text-slate-400">{course.progress}% complete</p>
+                          <div className="mb-2">
+                            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                              <span>Progress</span>
+                              <span>{course.progress}%</span>
                             </div>
-                            <Link
-                              to={`/student/courses/${course.id}`}
-                              className="flex items-center gap-1.5 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors shadow-md shadow-sky-600/20 shrink-0"
-                            >
-                              <Lock className="w-3.5 h-3.5" />
-                              {course.progress === 100 ? 'Review' : 'Continue'}
-                            </Link>
+                            <ProgressBar value={course.progress || 0} size="sm" />
                           </div>
+                        )}
+                        {!isPending && (
+                          <Link to={`/student/courses/${course.id}`} className="w-full btn-primary text-sm text-center block">
+                            {course.progress === 100 ? 'Review Course' : 'Continue Learning'}
+                          </Link>
                         )}
                       </div>
                     ) : (
