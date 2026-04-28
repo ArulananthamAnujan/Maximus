@@ -22,12 +22,13 @@ const AILessonToolbar = lazy(() => import('../../components/ai/AILessonToolbar')
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
 
-const LESSON_ICONS = { video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon };
-const LESSON_COLORS = {
-  video:   { bg: 'bg-sky-100',   text: 'text-sky-600',   border: 'border-sky-200' },
-  pdf:     { bg: 'bg-red-100',   text: 'text-red-600',   border: 'border-red-200' },
-  article: { bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-200' },
-  link:    { bg: 'bg-slate-100', text: 'text-slate-500',  border: 'border-slate-200' },
+const LESSON_ICONS: Record<string, typeof Video> = { video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon, document: FileText };
+const LESSON_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  video:    { bg: 'bg-sky-100',    text: 'text-sky-600',    border: 'border-sky-200' },
+  pdf:      { bg: 'bg-red-100',    text: 'text-red-600',    border: 'border-red-200' },
+  article:  { bg: 'bg-green-100',  text: 'text-green-600',  border: 'border-green-200' },
+  link:     { bg: 'bg-slate-100',  text: 'text-slate-500',  border: 'border-slate-200' },
+  document: { bg: 'bg-amber-100',  text: 'text-amber-600',  border: 'border-amber-200' },
 };
 
 type Tab = 'details' | 'curriculum' | 'quizzes' | 'flashcards';
@@ -926,8 +927,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     )}
 
                     {section.lessons?.map((lesson, lIdx) => {
-                      const Icon = LESSON_ICONS[lesson.type];
-                      const colors = LESSON_COLORS[lesson.type];
+                      const Icon = LESSON_ICONS[lesson.type] ?? FileText;
+                      const colors = LESSON_COLORS[lesson.type] ?? LESSON_COLORS.article;
                       const isPreview = previewLesson?.id === lesson.id;
                       return (
                         <div key={lesson.id} className="border-b border-slate-100 last:border-0">

@@ -24,7 +24,7 @@ interface SectionWithLessons extends Section {
 
 export default function StudentCoursePlayer() {
   const { courseId } = useParams<{ courseId: string }>();
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
   const [course, setCourse] = useState<Course | null>(null);
@@ -200,7 +200,7 @@ export default function StudentCoursePlayer() {
     return icons[type];
   };
 
-  if (loading || accessLoading) {
+  if (authLoading || loading || accessLoading) {
     return (
       <DashboardLayout navItems={studentNavItems} title="Loading..." subtitle="">
         <div className="flex items-center justify-center h-64">
