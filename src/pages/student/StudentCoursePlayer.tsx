@@ -472,9 +472,39 @@ export default function StudentCoursePlayer() {
                     </div>
                   </div>
                 )}
-                {activeLesson.type === 'article' && (
-                  <div className="prose dark:prose-invert max-w-none bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6">
-                    <p className="text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">{activeLesson.content}</p>
+                {(activeLesson.type === 'article' || activeLesson.type === 'document') && (
+                  <div className="bg-white dark:bg-navy-800 rounded-xl border border-gray-100 dark:border-navy-700 mb-6 overflow-hidden">
+                    {activeLesson.content ? (
+                      <div
+                        className="prose prose-slate dark:prose-invert max-w-none p-6 sm:p-8 text-gray-800 dark:text-gray-200 leading-relaxed
+                          prose-headings:font-bold prose-headings:text-gray-900 dark:prose-headings:text-white
+                          prose-h2:text-xl prose-h3:text-lg
+                          prose-p:text-gray-700 dark:prose-p:text-gray-300
+                          prose-ul:list-disc prose-ol:list-decimal
+                          prose-li:text-gray-700 dark:prose-li:text-gray-300
+                          prose-strong:text-gray-900 dark:prose-strong:text-white
+                          prose-blockquote:border-l-4 prose-blockquote:border-sky-400 prose-blockquote:bg-sky-50 dark:prose-blockquote:bg-sky-900/20 prose-blockquote:pl-4 prose-blockquote:py-1 prose-blockquote:rounded-r-lg prose-blockquote:not-italic
+                          prose-code:bg-gray-100 dark:prose-code:bg-navy-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm"
+                        dangerouslySetInnerHTML={{ __html: activeLesson.content }}
+                      />
+                    ) : activeLesson.url ? (
+                      <div>
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/50">
+                          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                            <FileText className="w-4 h-4 text-amber-500" />
+                            <span className="font-medium">{activeLesson.title}</span>
+                          </div>
+                          <a href={activeLesson.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors shrink-0 ml-3">
+                            <LinkIcon className="w-3.5 h-3.5" /> Open in New Tab
+                          </a>
+                        </div>
+                        <iframe src={activeLesson.url} className="w-full" style={{ height: '70vh', minHeight: 480 }} title={activeLesson.title} />
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center py-16 text-gray-400">
+                        <p className="text-sm">No content available for this lesson.</p>
+                      </div>
+                    )}
                   </div>
                 )}
                 {activeLesson.type === 'link' && activeLesson.url && (
@@ -490,32 +520,23 @@ export default function StudentCoursePlayer() {
                     <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/50">
                       <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                         <FileText className="w-4 h-4 text-red-500" />
-                        <span className="font-medium truncate max-w-xs">{activeLesson.url.split('/').pop()?.split('?')[0] || 'Document'}</span>
+                        <span className="font-medium truncate max-w-xs">{activeLesson.title}</span>
                       </div>
                       <a
                         href={activeLesson.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors shrink-0 ml-3"
+                        className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 transition-colors shrink-0 ml-3"
                       >
                         <LinkIcon className="w-3.5 h-3.5" /> Open in New Tab
                       </a>
                     </div>
-                    <a
-                      href={activeLesson.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex flex-col items-center justify-center gap-4 py-14 px-6 hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors cursor-pointer group"
-                    >
-                      <div className="w-20 h-24 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-lg flex flex-col items-center justify-center gap-1 group-hover:border-red-400 transition-colors">
-                        <FileText className="w-8 h-8 text-red-500" />
-                        <span className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">PDF</span>
-                      </div>
-                      <div className="text-center">
-                        <p className="font-semibold text-gray-800 dark:text-white text-sm">{activeLesson.title}</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Click to open the PDF in a new tab</p>
-                      </div>
-                    </a>
+                    <iframe
+                      src={activeLesson.url}
+                      className="w-full"
+                      style={{ height: '70vh', minHeight: 480 }}
+                      title={activeLesson.title}
+                    />
                   </div>
                 )}
 
