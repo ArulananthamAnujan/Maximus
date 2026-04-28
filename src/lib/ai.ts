@@ -222,6 +222,35 @@ export const generateActivityIdeas = (input: ActivityIdeasInput) =>
 export const generateFullCurriculum = (input: FullCurriculumInput) =>
   callAI<FullCurriculumOutput>('full_curriculum', input);
 
+export interface GenerateExamInput {
+  topic: string;
+  course_context?: string;
+  exam_type: 'reading_comprehension' | 'question_only';
+  difficulty: string;
+  num_questions: number;
+  marks_per_question: number;
+  target_audience?: string;
+  extra_instructions?: string;
+}
+
+export interface GenerateExamQuestion {
+  question: string;
+  marks: number;
+  sample_answer: string;
+}
+
+export interface GenerateExamOutput {
+  title: string;
+  description: string;
+  instructions: string;
+  passage: string;
+  time_limit_minutes: number;
+  questions: GenerateExamQuestion[];
+}
+
+export const generateExam = (input: GenerateExamInput) =>
+  callAI<GenerateExamOutput>('generate_exam', input);
+
 export interface LessonNotesInput {
   lesson_title: string;
   section_title: string;

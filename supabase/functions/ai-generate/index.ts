@@ -69,6 +69,11 @@ function validateSectionContent(obj: unknown): boolean {
   return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
 }
 
+function validateGenerateExam(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
   course_outline: validateCourseOutline,
   lesson_content: validateLessonContent,
@@ -82,6 +87,7 @@ const validators: Record<string, (o: unknown) => boolean> = {
   lesson_notes: validateLessonNotes,
   presentation_slides: validatePresentationSlides,
   section_content: validateSectionContent,
+  generate_exam: validateGenerateExam,
 };
 
 // ─── Sanitize ────────────────────────────────────────────────────────────────
@@ -166,6 +172,23 @@ Include: an introduction, 3-5 main concept sections with explanations and exampl
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
 Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
 Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
+
+    generate_exam: `You are an expert exam writer for language and academic preparation (IELTS, PTE, academic English, etc.). ${jsonRule}
+Output shape: {
+  "title": string,
+  "description": string,
+  "instructions": string,
+  "passage": string,
+  "time_limit_minutes": number,
+  "questions": [{"question": string, "marks": number, "sample_answer": string}]
+}
+Guidelines:
+- passage: Write a well-structured reading text of 250-400 words appropriate to the subject and level. Use formal academic style for IELTS/PTE. Leave empty string if exam_type is "question_only".
+- questions: Generate the number of questions requested. Each question should test reading comprehension, critical thinking, or language skills.
+- sample_answer: Write a concise model answer (2-5 sentences) that would earn full marks. Be specific — this is used by AI to grade students.
+- instructions: Clear, concise instructions for students (e.g. "Read the passage and answer all questions in complete sentences.").
+- time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
+- Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
     section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
 Output shape: {
@@ -269,13 +292,24 @@ Lessons in this section:
 ${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
     }
 
+    case 'generate_exam':
+      return `Generate an exam for:
+Subject / Topic: ${input.topic}
+Course context: ${input.course_context || 'General'}
+Exam type: ${input.exam_type || 'reading_comprehension'} (reading_comprehension = include a passage; question_only = no passage)
+Difficulty / Band level: ${input.difficulty || 'intermediate'}
+Number of questions: ${input.num_questions || 5}
+Marks per question: ${input.marks_per_question || 5}
+Target audience: ${input.target_audience || 'Adult learners'}
+${input.extra_instructions ? `Additional instructions: ${input.extra_instructions}` : ''}`;
+
     default:
       return JSON.stringify(input);
   }
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'generate_exam'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 

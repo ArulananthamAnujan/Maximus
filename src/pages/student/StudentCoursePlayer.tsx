@@ -541,47 +541,6 @@ export default function StudentCoursePlayer() {
                   </div>
                 )}
 
-                {/* Activities */}
-                {activities.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center gap-2 mb-3">
-                      <ClipboardList className="w-4 h-4 text-teal-600" />
-                      <h3 className="text-sm font-bold text-slate-800 dark:text-white">Activities</h3>
-                      <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-medium">{activities.length}</span>
-                    </div>
-                    <div className="space-y-3">
-                      {activities.map(activity => {
-                        const typeColors: Record<string, string> = {
-                          practice: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
-                          reflection: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800',
-                          discussion: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
-                          project: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
-                          research: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/20 dark:text-sky-300 dark:border-sky-800',
-                        };
-                        const colors = typeColors[activity.type] || typeColors.practice;
-                        return (
-                          <div key={activity.id} className={`rounded-xl border p-4 ${colors}`}>
-                            <div className="flex items-start justify-between gap-3 mb-2">
-                              <h4 className="text-sm font-semibold leading-snug">{activity.title}</h4>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-xs font-semibold capitalize px-2 py-0.5 rounded-md bg-white/60 dark:bg-black/20">{activity.type}</span>
-                                {activity.estimated_minutes > 0 && (
-                                  <span className="flex items-center gap-1 text-xs opacity-75">
-                                    <Clock className="w-3 h-3" />{activity.estimated_minutes}m
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            {activity.instructions && (
-                              <p className="text-sm leading-relaxed opacity-90">{activity.instructions}</p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex items-center justify-between">
                   <button
                     onClick={() => {
@@ -611,6 +570,47 @@ export default function StudentCoursePlayer() {
                     Next Lesson
                   </button>
                 </div>
+
+                {/* Activities — shown after navigation */}
+                {activities.length > 0 && (
+                  <div className="mt-8">
+                    <div className="flex items-center gap-2 mb-3">
+                      <ClipboardList className="w-4 h-4 text-teal-600" />
+                      <h3 className="text-sm font-bold text-slate-800 dark:text-white">Activities</h3>
+                      <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-medium">{activities.length}</span>
+                    </div>
+                    <div className="space-y-3">
+                      {activities.map(activity => {
+                        const typeColors: Record<string, string> = {
+                          practice: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
+                          reflection: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
+                          discussion: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
+                          project: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/20 dark:text-sky-300 dark:border-sky-800',
+                          research: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+                        };
+                        const colors = typeColors[activity.type] || typeColors.practice;
+                        return (
+                          <div key={activity.id} className={`rounded-xl border p-4 ${colors}`}>
+                            <div className="flex items-start justify-between gap-3 mb-2">
+                              <h4 className="text-sm font-semibold leading-snug">{activity.title}</h4>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-xs font-semibold capitalize px-2 py-0.5 rounded-md bg-white/60 dark:bg-black/20">{activity.type}</span>
+                                {activity.estimated_minutes > 0 && (
+                                  <span className="flex items-center gap-1 text-xs opacity-75">
+                                    <Clock className="w-3 h-3" />{activity.estimated_minutes}m
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {activity.instructions && (
+                              <p className="text-sm leading-relaxed opacity-90">{activity.instructions}</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center py-20 text-gray-400">
