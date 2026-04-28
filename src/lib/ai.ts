@@ -172,8 +172,11 @@ export interface AIHealthOutput {
 
 const LONG_TASKS = new Set(['lesson_notes', 'presentation_slides', 'section_content', 'full_curriculum', 'lesson_content']);
 
+const FUNCTIONS_BASE = import.meta.env.DEV
+  ? '/functions/v1'
+  : `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1`;
+
 export async function callAI<T>(task: string, input: object): Promise<T> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -181,7 +184,7 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
 
   let response: Response;
   try {
-    response = await fetch(`${supabaseUrl}/functions/v1/ai-generate`, {
+    response = await fetch(`${FUNCTIONS_BASE}/ai-generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -340,12 +343,11 @@ export const generateSectionContent = (input: SectionContentInput) =>
   callAI<SectionContentOutput>('section_content', input);
 
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token ?? supabaseAnonKey;
 
-  const response = await fetch(`${supabaseUrl}/functions/v1/ai-health`, {
+  const response = await fetch(`${FUNCTIONS_BASE}/ai-health`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -3,6 +3,15 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/functions': {
+        target: 'https://pwnlfbbssvywynffkksd.supabase.co',
+        changeOrigin: true,
+        secure: true,
+      },
+    },
+  },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-router-dom', '@supabase/supabase-js', 'lucide-react'],
   },
