@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Video, FileText,
@@ -6,7 +6,7 @@ import {
   Clock, CheckCircle, AlertCircle, Pencil, Upload, X, Eye,
   PlayCircle, ExternalLink, XCircle, ChevronRight, Image, DollarSign,
   Globe, Lock, Award, BarChart2, AlignLeft, Info, Check, Sparkles,
-  LayoutList,
+  LayoutList, ClipboardList,
 } from 'lucide-react';
 import { resumableUpload } from '../../lib/resumableUpload';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -19,17 +19,27 @@ import type { Course, Section, Lesson, Quiz, QuizQuestion } from '../../types';
 
 const AICourseGeneratorModal = lazy(() => import('../../components/ai/AICourseGeneratorModal'));
 const AILessonToolbar = lazy(() => import('../../components/ai/AILessonToolbar'));
+const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocumentViewer').then(m => ({ default: m.default })));
+import { LessonDocumentBadges } from '../../components/ui/LessonDocumentViewer';
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
 
-const LESSON_ICONS: Record<string, typeof Video> = { video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon, document: FileText };
-const LESSON_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  video:    { bg: 'bg-sky-100',    text: 'text-sky-600',    border: 'border-sky-200' },
-  pdf:      { bg: 'bg-red-100',    text: 'text-red-600',    border: 'border-red-200' },
-  article:  { bg: 'bg-green-100',  text: 'text-green-600',  border: 'border-green-200' },
-  link:     { bg: 'bg-slate-100',  text: 'text-slate-500',  border: 'border-slate-200' },
-  document: { bg: 'bg-amber-100',  text: 'text-amber-600',  border: 'border-amber-200' },
+// Maps both UI type names and DB type names
+const LESSON_ICONS: Record<string, typeof Video> = {
+  video: Video, pdf: FileText, article: AlignLeft, link: LinkIcon,
+  text: AlignLeft, file: FileText, quiz: HelpCircle,
 };
+const LESSON_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  video:   { bg: 'bg-sky-100',   text: 'text-sky-600',   border: 'border-sky-200' },
+  pdf:     { bg: 'bg-red-100',   text: 'text-red-600',   border: 'border-red-200' },
+  file:    { bg: 'bg-red-100',   text: 'text-red-600',   border: 'border-red-200' },
+  article: { bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-200' },
+  text:    { bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-200' },
+  link:    { bg: 'bg-slate-100', text: 'text-slate-500',  border: 'border-slate-200' },
+  quiz:    { bg: 'bg-sky-100',   text: 'text-sky-600',   border: 'border-sky-200' },
+};
+const getLessonIcon = (type: string) => LESSON_ICONS[type] || FileText;
+const getLessonColors = (type: string) => LESSON_COLORS[type] || LESSON_COLORS.text;
 
 type Tab = 'details' | 'curriculum' | 'quizzes' | 'flashcards';
 
@@ -318,7 +328,51 @@ function VideoHostingTips() {
   );
 }
 
-function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, children }: {
+function LessonActivitiesPanel({ lessonId }: { lessonId: string }) {
+  const [items, setItems] = React.useState<Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>>([]);
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    supabase
+      .from('lesson_activities')
+      .select('id, title, type, instructions, estimated_minutes')
+      .eq('lesson_id', lessonId)
+      .order('order_index')
+      .then(({ data }) => { setItems((data || []) as typeof items); setLoaded(true); });
+  }, [lessonId]);
+
+  if (!loaded || items.length === 0) return null;
+
+  const typeColor: Record<string, string> = {
+    practice: 'bg-blue-50 text-blue-700 border-blue-200',
+    reflection: 'bg-violet-50 text-violet-700 border-violet-200',
+    discussion: 'bg-amber-50 text-amber-700 border-amber-200',
+    project: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    research: 'bg-sky-50 text-sky-700 border-sky-200',
+  };
+
+  return (
+    <div className="mx-4 mb-4 mt-1 space-y-2">
+      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+        <ClipboardList className="w-3.5 h-3.5" /> Activities ({items.length})
+      </p>
+      {items.map(a => (
+        <div key={a.id} className={`rounded-lg border p-3 text-xs ${typeColor[a.type] || typeColor.practice}`}>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="font-semibold">{a.title}</span>
+            <span className="flex items-center gap-1 opacity-70 shrink-0">
+              <span className="capitalize font-medium">{a.type}</span>
+              {a.estimated_minutes > 0 && <span>· {a.estimated_minutes}m</span>}
+            </span>
+          </div>
+          {a.instructions && <p className="leading-relaxed opacity-90">{a.instructions}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, onGenerateDocs, generatingDocs, children }: {
   section: Section & { lessons: Lesson[] };
   sIdx: number;
   expanded: boolean;
@@ -326,6 +380,8 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
   onRename: () => void;
   onDelete: () => void;
   onAddLesson: () => void;
+  onGenerateDocs: () => void;
+  generatingDocs: boolean;
   children?: React.ReactNode;
 }) {
   return (
@@ -339,7 +395,17 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
           <span className="font-semibold text-slate-800 truncate">{section.title}</span>
           <span className="text-xs text-slate-400 shrink-0">{section.lessons?.length || 0} lesson{(section.lessons?.length || 0) !== 1 ? 's' : ''}</span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onGenerateDocs}
+            disabled={generatingDocs || section.lessons?.length === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all disabled:opacity-50 bg-white border-teal-300 text-teal-700 hover:bg-teal-50"
+            title="Generate PDF notes and PPT slides for this section"
+          >
+            {generatingDocs
+              ? <><div className="w-3 h-3 border-2 border-teal-300 border-t-teal-600 rounded-full animate-spin" /> Generating...</>
+              : <><Sparkles className="w-3 h-3" /> PDF &amp; PPT</>}
+          </button>
           <button onClick={onRename} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-colors" title="Rename section">
             <Pencil className="w-3.5 h-3.5" />
           </button>
@@ -388,6 +454,20 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [flashcardsList, setFlashcardsList] = useState<Array<{ id: string; front: string; back: string; order_index: number }>>([]);
   const [aiQuizTarget, setAiQuizTarget] = useState<string | null>(null);
 
+  // AI Curriculum Generator
+  const [showAICurriculumPanel, setShowAICurriculumPanel] = useState(false);
+  const [aiCurriculumStep, setAICurriculumStep] = useState<'form' | 'loading' | 'preview'>('form');
+  const [aiCurriculumForm, setAICurriculumForm] = useState({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
+  const [aiCurriculumPreview, setAICurriculumPreview] = useState<import('../../lib/ai').AICurriculumSection[]>([]);
+  const [aiCurriculumInserting, setAICurriculumInserting] = useState(false);
+  const [aiCurriculumInsertStatus, setAICurriculumInsertStatus] = useState('');
+  const [aiCurriculumExpanded, setAICurriculumExpanded] = useState<number | null>(0);
+
+  // AI Quiz from Curriculum
+  const [showAIQuizFromCurriculum, setShowAIQuizFromCurriculum] = useState(false);
+  const [aiQuizNewName, setAIQuizNewName] = useState('');
+  const [aiQuizCreating, setAIQuizCreating] = useState(false);
+
   const [addingSection, setAddingSection] = useState(false);
   const [sectionTitle, setSectionTitle] = useState('');
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -396,6 +476,18 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [addingLessonTo, setAddingLessonTo] = useState<string | null>(null);
   const [lessonForm, setLessonForm] = useState({
     title: '', type: 'video' as 'video' | 'pdf' | 'article' | 'link',
+    content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true,
+  });
+
+  // Lesson document panel (notes/slides visible without edit mode)
+  const [expandedDocsLessonId, setExpandedDocsLessonId] = useState<string | null>(null);
+  // Per-section PDF & PPT generation
+  const [generatingSectionDocsId, setGeneratingSectionDocsId] = useState<string | null>(null);
+
+  // Inline lesson editing
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
+  const [editLessonForm, setEditLessonForm] = useState({
+    title: '', type: 'video' as 'video' | 'pdf' | 'article' | 'link' | 'text' | 'file',
     content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true,
   });
 
@@ -440,6 +532,313 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const fetchFlashcards = async (lessonId: string) => {
     const { data } = await supabase.from('flashcards').select('*').eq('lesson_id', lessonId).order('order_index');
     setFlashcardsList((data || []) as Array<{ id: string; front: string; back: string; order_index: number }>);
+  };
+
+  const handleAIGenerateCurriculum = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCourse) return;
+    setAICurriculumStep('loading');
+    try {
+      const { generateFullCurriculum } = await import('../../lib/ai');
+
+      // Build a summary of already-existing sections so the AI builds on them
+      const existingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
+        ? sections.map((s, i) => {
+            const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
+            return `Week/Section ${i + 1}: "${s.title}"${lessonTitles ? ` — Lessons: ${lessonTitles}` : ''}`;
+          }).join('\n')
+        : undefined;
+
+      const result = await generateFullCurriculum({
+        topic: aiCurriculumForm.topic,
+        target_audience: aiCurriculumForm.target_audience,
+        difficulty: aiCurriculumForm.difficulty,
+        num_sections: aiCurriculumForm.num_sections,
+        lessons_per_section: aiCurriculumForm.lessons_per_section,
+        existing_sections_summary: existingSummary,
+      });
+      setAICurriculumPreview(result.sections);
+      setAICurriculumExpanded(0);
+      setAICurriculumStep('preview');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI generation failed');
+      setAICurriculumStep('form');
+    }
+  };
+
+  const handleAICurriculumInsert = async () => {
+    if (!selectedCourse || !profile) return;
+    setAICurriculumInserting(true);
+    setAICurriculumInsertStatus('Setting up sections...');
+    try {
+      const { generateSectionContent } = await import('../../lib/ai');
+      const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
+      const startIdx = sections.length;
+
+      // Build existing sections summary for context continuity
+      const existingSummary = sections.length > 0
+        ? sections.map((s, i) => {
+            const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
+            return `Section ${i + 1}: "${s.title}"${lessonTitles ? ` (${lessonTitles})` : ''}`;
+          }).join('\n')
+        : undefined;
+
+      // Track newly inserted sections for rolling context
+      const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
+
+      for (let i = 0; i < aiCurriculumPreview.length; i++) {
+        const sec = aiCurriculumPreview[i];
+        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: creating "${sec.title}"...`);
+
+        const { data: sectionData, error: sectionErr } = await supabase
+          .from('sections')
+          .insert({ course_id: selectedCourse, title: sec.title, order_index: startIdx + i })
+          .select('id')
+          .single();
+        if (sectionErr || !sectionData) continue;
+
+        // Insert lessons
+        const lessonRows = (sec.lessons || []).map((l, li) => ({
+          section_id: sectionData.id,
+          course_id: selectedCourse,
+          title: l.title,
+          type: l.type === 'document' ? 'file' : 'text',
+          lesson_type: l.type === 'document' ? 'file' : 'text',
+          content: '',
+          duration_minutes: l.estimated_duration_minutes || 10,
+          order_index: li,
+          is_preview: false,
+        }));
+        let insertedLessons: Array<{ id: string; title: string }> = [];
+        if (lessonRows.length > 0) {
+          const { data: lessonData, error: lessonErr } = await supabase.from('lessons').insert(lessonRows).select('id, title');
+          if (!lessonErr) insertedLessons = lessonData || [];
+        }
+
+        // Insert quiz
+        if (sec.quiz?.questions?.length) {
+          const { data: quizData, error: quizErr } = await supabase.from('quizzes').insert({
+            course_id: selectedCourse,
+            title: sec.quiz.title,
+            pass_mark: 70,
+            pass_percentage: 70,
+            max_attempts: 3,
+            is_published: true,
+          }).select('id').single();
+          if (!quizErr && quizData) {
+            const questionRows = sec.quiz.questions.map((q, qi) => {
+              const opts: string[] = q.options && q.options.length > 0 ? q.options : ['True', 'False'];
+              const correctIdx = opts.findIndex(o => o === q.correct_answer);
+              return {
+                quiz_id: quizData.id,
+                question: q.question,
+                type: q.type,
+                options: opts,
+                correct_answer: correctIdx >= 0 ? correctIdx : 0,
+                correct_answer_text: q.correct_answer,
+                explanation: q.explanation || '',
+                points: q.points || 1,
+                order_index: qi,
+              };
+            });
+            await supabase.from('quiz_questions').insert(questionRows);
+          }
+        }
+
+        // Insert activities
+        if (sec.activities?.length && insertedLessons.length > 0) {
+          const activityRows = sec.activities.map((a, ai) => ({
+            lesson_id: insertedLessons[0].id,
+            course_id: selectedCourse,
+            title: a.title,
+            type: a.type,
+            instructions: a.instructions,
+            estimated_minutes: a.estimated_minutes,
+            order_index: ai,
+          }));
+          await supabase.from('lesson_activities').insert(activityRows);
+        }
+
+        // ONE batch AI call per section — generates all lesson notes + slides together
+        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating notes & slides for "${sec.title}"...`);
+        try {
+          const sectionContent = await generateSectionContent({
+            section_title: sec.title,
+            course_title: courseName,
+            lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
+            target_audience: aiCurriculumForm.target_audience,
+            difficulty: aiCurriculumForm.difficulty,
+            existing_sections_summary: insertedSectionSummaries.length > 0
+              ? insertedSectionSummaries.join('\n')
+              : undefined,
+          });
+
+          const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+
+          // Store each lesson's notes
+          for (let li = 0; li < insertedLessons.length; li++) {
+            const lessonDb = insertedLessons[li];
+            const lessonContent = sectionContent.lessons?.[li];
+            if (!lessonDb || !lessonContent) continue;
+
+            const notesHtml = lessonContent.notes_html || '';
+            if (notesHtml) {
+              await supabase.from('lessons').update({ content: notesHtml }).eq('id', lessonDb.id);
+              docRows.push({
+                lesson_id: lessonDb.id,
+                course_id: selectedCourse,
+                type: 'notes',
+                title: `${lessonDb.title} — Notes`,
+                content_html: notesHtml,
+                order_index: 0,
+              });
+            }
+          }
+
+          // Store section slides linked to the first lesson
+          if (sectionContent.slides?.length && insertedLessons.length > 0) {
+            const slidesHtml = sectionContent.slides.map(s =>
+              `<section class="slide" data-slide="${s.slide_number}">
+                <h2>${s.heading}</h2>
+                ${s.content_html}
+                ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+              </section>`
+            ).join('\n');
+            docRows.push({
+              lesson_id: insertedLessons[0].id,
+              course_id: selectedCourse,
+              type: 'slides',
+              title: sectionContent.slides_title || `${sec.title} — Slides`,
+              content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+              order_index: 1,
+            });
+          }
+
+          if (docRows.length > 0) {
+            await supabase.from('lesson_documents').insert(docRows);
+          }
+
+          // Add this section to rolling context for the next section
+          insertedSectionSummaries.push(
+            `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
+          );
+        } catch (contentErr) {
+          // Content generation failed — sections/lessons are already saved, just skip docs
+          toast.error(`Notes/slides for "${sec.title}" could not be generated: ${contentErr instanceof Error ? contentErr.message : 'Unknown error'}`);
+        }
+      }
+
+      toast.success(`Curriculum built — ${aiCurriculumPreview.length} sections with lessons, notes, slides, quizzes and activities`);
+      setShowAICurriculumPanel(false);
+      setAICurriculumStep('form');
+      setAICurriculumPreview([]);
+      setAICurriculumInsertStatus('');
+      setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
+      await fetchSections();
+      await fetchQuizzes();
+      setActiveTab('curriculum');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
+      setAICurriculumInsertStatus('');
+    } finally {
+      setAICurriculumInserting(false);
+    }
+  };
+
+  const handleGenerateSectionDocs = async (section: Section & { lessons: Lesson[] }) => {
+    if (!selectedCourse || generatingSectionDocsId) return;
+    if (!section.lessons?.length) { toast.error('Add lessons to this section before generating.'); return; }
+    setGeneratingSectionDocsId(section.id);
+    try {
+      const { generateSectionContent } = await import('../../lib/ai');
+      const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
+
+      // Build context from ALL other sections
+      const otherSections = sections.filter(s => s.id !== section.id);
+      const existingSummary = otherSections.length > 0
+        ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
+        : undefined;
+
+      const result = await generateSectionContent({
+        section_title: section.title,
+        course_title: courseName,
+        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+        target_audience: 'general',
+        difficulty: 'beginner',
+        existing_sections_summary: existingSummary,
+      });
+
+      // Delete old docs for lessons in this section then re-insert
+      const lessonIds = section.lessons.map(l => l.id);
+      await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
+
+      const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+
+      for (let li = 0; li < section.lessons.length; li++) {
+        const lessonDb = section.lessons[li];
+        const lessonContent = result.lessons?.[li];
+        if (!lessonDb || !lessonContent?.notes_html) continue;
+        await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+        docRows.push({
+          lesson_id: lessonDb.id,
+          course_id: selectedCourse,
+          type: 'notes',
+          title: `${lessonDb.title} — Notes`,
+          content_html: lessonContent.notes_html,
+          order_index: 0,
+        });
+      }
+
+      if (result.slides?.length && section.lessons.length > 0) {
+        const slidesHtml = result.slides.map(s =>
+          `<section class="slide" data-slide="${s.slide_number}">
+            <h2>${s.heading}</h2>
+            ${s.content_html}
+            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+          </section>`
+        ).join('\n');
+        docRows.push({
+          lesson_id: section.lessons[0].id,
+          course_id: selectedCourse,
+          type: 'slides',
+          title: result.slides_title || `${section.title} — Slides`,
+          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+          order_index: 1,
+        });
+      }
+
+      if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
+
+      toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
+      // Re-open the first lesson's docs panel so the user can immediately see them
+      if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Generation failed');
+    } finally {
+      setGeneratingSectionDocsId(null);
+    }
+  };
+
+  const handleAIQuizFromCurriculum = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiQuizNewName.trim() || !selectedCourse) return;
+    setAIQuizCreating(true);
+    try {
+      const { data, error } = await supabase
+        .from('quizzes')
+        .insert({ course_id: selectedCourse, title: aiQuizNewName.trim(), pass_mark: 70, pass_percentage: 70, max_attempts: 3, is_published: true })
+        .select('id')
+        .single();
+      if (error || !data) throw error || new Error('Failed to create quiz');
+      await fetchQuizzes();
+      setAiQuizTarget(data.id);
+      setShowAIQuizFromCurriculum(false);
+      setAIQuizNewName('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create quiz');
+    } finally {
+      setAIQuizCreating(false);
+    }
   };
 
   const loadCourseData = () => {
@@ -494,8 +893,19 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     e.preventDefault();
     if (!addingLessonTo) return;
     const section = sections.find(s => s.id === addingLessonTo);
+    // Map UI types to DB-allowed values
+    const typeMap: Record<string, string> = { article: 'text', pdf: 'file', link: 'text', video: 'video' };
+    const dbType = typeMap[lessonForm.type] || lessonForm.type;
     const { error } = await supabase.from('lessons').insert({
-      section_id: addingLessonTo, ...lessonForm,
+      section_id: addingLessonTo,
+      course_id: selectedCourse,
+      title: lessonForm.title,
+      type: dbType,
+      lesson_type: dbType,
+      content: lessonForm.content,
+      url: lessonForm.url,
+      duration_minutes: lessonForm.duration_minutes,
+      is_preview: lessonForm.is_preview,
       order_index: section?.lessons?.length || 0,
     });
     if (!error) {
@@ -504,6 +914,47 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true });
       fetchSections();
     } else toast.error('Failed to add lesson');
+  };
+
+  const openEditLesson = (lesson: Lesson) => {
+    // Map DB types back to UI types for display
+    const uiTypeMap: Record<string, 'video' | 'pdf' | 'article' | 'link' | 'text' | 'file'> = {
+      text: 'article', file: 'pdf', video: 'video', quiz: 'article',
+    };
+    const uiType = uiTypeMap[lesson.type] || lesson.type as 'video' | 'pdf' | 'article' | 'link';
+    setEditLessonForm({
+      title: lesson.title,
+      type: uiType,
+      content: lesson.content || '',
+      url: (lesson as Lesson & { url?: string }).url || lesson.video_url || '',
+      duration_minutes: lesson.duration_minutes || 10,
+      is_preview: lesson.is_preview || false,
+      is_required: (lesson as Lesson & { is_required?: boolean }).is_required !== false,
+    });
+    setEditingLessonId(lesson.id);
+  };
+
+  const handleUpdateLesson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLessonId) return;
+    const typeMap: Record<string, string> = { article: 'text', pdf: 'file', link: 'text', video: 'video', text: 'text', file: 'file' };
+    const dbType = typeMap[editLessonForm.type] || editLessonForm.type;
+    const { error } = await supabase.from('lessons').update({
+      title: editLessonForm.title,
+      type: dbType,
+      lesson_type: dbType,
+      content: editLessonForm.content,
+      url: editLessonForm.url,
+      duration_minutes: editLessonForm.duration_minutes,
+      is_preview: editLessonForm.is_preview,
+    }).eq('id', editingLessonId);
+    if (!error) {
+      toast.success('Lesson updated');
+      setEditingLessonId(null);
+      fetchSections();
+    } else {
+      toast.error('Failed to update lesson');
+    }
   };
 
   const handleDelete = async () => {
@@ -518,13 +969,17 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
   const handleCreateQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
+    const timeLimitVal = quizForm.time_limit_minutes ? parseInt(quizForm.time_limit_minutes) : null;
     const { error } = await supabase.from('quizzes').insert({
       course_id: selectedCourse,
       title: quizForm.title,
       description: quizForm.description,
-      time_limit_minutes: quizForm.time_limit_minutes ? parseInt(quizForm.time_limit_minutes) : null,
+      time_limit: timeLimitVal || 0,
+      time_limit_minutes: timeLimitVal,
+      pass_percentage: quizForm.pass_mark,
       pass_mark: quizForm.pass_mark,
       max_attempts: quizForm.max_attempts,
+      is_published: true,
     });
     if (!error) {
       toast.success('Quiz created');
@@ -538,13 +993,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     e.preventDefault();
     if (!addingQuestionTo) return;
     const quiz = quizzes.find(q => q.id === addingQuestionTo);
-    const filteredOptions = questionForm.type === 'short_answer' ? null : questionForm.options.filter(o => o.trim());
+    const filteredOptions = questionForm.type === 'short_answer' ? [] : questionForm.options.filter(o => o.trim());
+    const correctIdx = filteredOptions.findIndex(o => o === questionForm.correct_answer);
     const { error } = await supabase.from('quiz_questions').insert({
       quiz_id: addingQuestionTo,
       question: questionForm.question,
       type: questionForm.type,
-      options: filteredOptions,
-      correct_answer: questionForm.correct_answer,
+      options: filteredOptions.length > 0 ? filteredOptions : null,
+      correct_answer: correctIdx >= 0 ? correctIdx : 0,
+      correct_answer_text: questionForm.correct_answer,
       points: questionForm.points,
       order_index: quiz?.questions?.length || 0,
     });
@@ -892,6 +1349,292 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
             {activeTab === 'curriculum' && (
               <div className="space-y-4">
+
+                {/* ─── AI Curriculum Generator ─────────────────────────────── */}
+                {!showAICurriculumPanel ? (
+                  <div className="flex items-center justify-between px-5 py-3.5 bg-gradient-to-r from-sky-50 to-blue-50 border border-sky-200 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-sky-100 rounded-lg flex items-center justify-center shrink-0">
+                        <Sparkles className="w-4 h-4 text-sky-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-sky-800">Generate Curriculum with AI</p>
+                        <p className="text-xs text-sky-600 mt-0.5">AI creates sections, lessons, quizzes and activities</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setShowAICurriculumPanel(true); setAICurriculumStep('form'); }}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-sky-700 bg-white hover:bg-sky-50 border border-sky-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" /> Generate
+                    </button>
+                  </div>
+                ) : (
+                  <div className="lms-panel overflow-hidden">
+                    {/* Panel header */}
+                    <div className="flex items-center gap-3 px-5 py-4 border-b border-sky-100 bg-gradient-to-r from-sky-50 to-blue-50">
+                      <div className="w-8 h-8 bg-sky-100 rounded-lg flex items-center justify-center shrink-0">
+                        <Sparkles className="w-4 h-4 text-sky-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-sky-800">
+                          {aiCurriculumStep === 'form' && 'Generate Curriculum with AI'}
+                          {aiCurriculumStep === 'loading' && 'AI is building your curriculum...'}
+                          {aiCurriculumStep === 'preview' && `Preview — ${aiCurriculumPreview.length} sections generated`}
+                        </p>
+                        <p className="text-xs text-sky-600 mt-0.5">
+                          {aiCurriculumStep === 'form' && 'Generates sections, lessons, quizzes & activities'}
+                          {aiCurriculumStep === 'loading' && 'This may take up to 30 seconds...'}
+                          {aiCurriculumStep === 'preview' && 'Review the curriculum below then click Insert to add it'}
+                        </p>
+                      </div>
+                      {aiCurriculumStep !== 'loading' && !aiCurriculumInserting && (
+                        <button onClick={() => { setShowAICurriculumPanel(false); setAICurriculumStep('form'); setAICurriculumPreview([]); }} className="p-1.5 rounded-lg text-sky-400 hover:bg-sky-100 transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Step: Form */}
+                    {aiCurriculumStep === 'form' && (
+                      <form onSubmit={handleAIGenerateCurriculum} className="p-5 space-y-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Course Topic <span className="text-red-500">*</span></label>
+                          <input
+                            type="text"
+                            value={aiCurriculumForm.topic}
+                            onChange={e => setAICurriculumForm(f => ({ ...f, topic: e.target.value }))}
+                            className="input-field text-sm"
+                            placeholder={courses.find(c => c.id === selectedCourse)?.title || 'e.g. IELTS Academic Writing Skills'}
+                            required
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Target Audience</label>
+                            <select value={aiCurriculumForm.target_audience} onChange={e => setAICurriculumForm(f => ({ ...f, target_audience: e.target.value }))} className="input-field text-sm">
+                              <option value="general">General learners</option>
+                              <option value="beginners">Complete beginners</option>
+                              <option value="intermediate">Intermediate students</option>
+                              <option value="advanced">Advanced students</option>
+                              <option value="professionals">Working professionals</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Difficulty</label>
+                            <select value={aiCurriculumForm.difficulty} onChange={e => setAICurriculumForm(f => ({ ...f, difficulty: e.target.value }))} className="input-field text-sm">
+                              <option value="beginner">Beginner</option>
+                              <option value="intermediate">Intermediate</option>
+                              <option value="advanced">Advanced</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sections <span className="text-sky-600 font-bold">{aiCurriculumForm.num_sections}</span></label>
+                            <input type="range" min={1} max={8} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>8</span></div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>
+                            <input type="range" min={2} max={6} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>6</span></div>
+                          </div>
+                        </div>
+                        {sections.length > 0 && (
+                          <div className={`flex items-start gap-3 rounded-xl px-4 py-3 border ${aiCurriculumForm.use_existing_context ? 'bg-sky-50 border-sky-200' : 'bg-slate-50 border-slate-200'}`}>
+                            <div
+                              className={`w-8 h-5 rounded-full transition-colors flex items-center shrink-0 mt-0.5 cursor-pointer ${aiCurriculumForm.use_existing_context ? 'bg-sky-500' : 'bg-slate-300'}`}
+                              onClick={() => setAICurriculumForm(f => ({ ...f, use_existing_context: !f.use_existing_context }))}
+                            >
+                              <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${aiCurriculumForm.use_existing_context ? 'translate-x-3' : 'translate-x-0'}`} />
+                            </div>
+                            <div>
+                              <p className={`text-xs font-semibold ${aiCurriculumForm.use_existing_context ? 'text-sky-700' : 'text-slate-600'}`}>
+                                Build on existing {sections.length} section{sections.length !== 1 ? 's' : ''}
+                              </p>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                {aiCurriculumForm.use_existing_context
+                                  ? 'AI will see previous weeks and continue from where they left off — no repeated topics'
+                                  : 'AI will generate independently without awareness of prior content'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs text-slate-500">
+                          <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          Generates {aiCurriculumForm.num_sections} sections · {aiCurriculumForm.num_sections * aiCurriculumForm.lessons_per_section} lessons · {aiCurriculumForm.num_sections} quizzes · notes &amp; slides per section
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="submit" className="btn-primary text-sm py-2 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4" /> Generate Curriculum
+                          </button>
+                          <button type="button" onClick={() => setShowAICurriculumPanel(false)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Step: Loading */}
+                    {aiCurriculumStep === 'loading' && (
+                      <div className="p-12 flex flex-col items-center justify-center gap-5">
+                        <div className="relative">
+                          <div className="w-14 h-14 rounded-full bg-sky-100 flex items-center justify-center">
+                            <Sparkles className="w-7 h-7 text-sky-500 animate-pulse" />
+                          </div>
+                          <div className="absolute inset-0 rounded-full border-4 border-sky-300 border-t-transparent animate-spin" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-semibold text-slate-700">AI is crafting your curriculum</p>
+                          <p className="text-xs text-slate-400 mt-1">Building {aiCurriculumForm.num_sections} sections with lessons, quizzes and activities...</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Step: Preview */}
+                    {aiCurriculumStep === 'preview' && (
+                      <div className="divide-y divide-slate-100">
+                        {aiCurriculumPreview.map((sec, si) => (
+                          <div key={si} className="overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setAICurriculumExpanded(aiCurriculumExpanded === si ? null : si)}
+                              className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50 transition-colors text-left"
+                            >
+                              <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
+                                <Layers className="w-3.5 h-3.5 text-sky-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-slate-800 truncate">{sec.title}</p>
+                                <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-400">
+                                  <span>{sec.lessons?.length || 0} lessons</span>
+                                  <span>{sec.quiz?.questions?.length || 0} quiz questions</span>
+                                  <span>{sec.activities?.length || 0} activities</span>
+                                </div>
+                              </div>
+                              {aiCurriculumExpanded === si ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+                            </button>
+
+                            {aiCurriculumExpanded === si && (
+                              <div className="px-5 pb-4 space-y-3 bg-slate-50 border-t border-slate-100">
+                                {/* Lessons */}
+                                <div className="pt-3">
+                                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Lessons</p>
+                                  <div className="space-y-1.5">
+                                    {sec.lessons?.map((lesson, li) => {
+                                      const isDoc = lesson.type === 'document';
+                                      return (
+                                        <div key={li} className="flex items-center gap-2.5 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                          <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${isDoc ? 'bg-red-100' : 'bg-green-100'}`}>
+                                            {isDoc ? <FileText className="w-3.5 h-3.5 text-red-500" /> : <AlignLeft className="w-3.5 h-3.5 text-green-600" />}
+                                          </div>
+                                          <span className="text-sm text-slate-700 flex-1 min-w-0 truncate">{lesson.title}</span>
+                                          <span className={`text-xs px-2 py-0.5 rounded font-medium shrink-0 ${isDoc ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                                            {isDoc ? 'Document' : 'Article'}
+                                          </span>
+                                          <span className="text-xs text-slate-400 shrink-0">{lesson.estimated_duration_minutes}m</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Quiz */}
+                                {sec.quiz?.questions?.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Quiz — {sec.quiz.title}</p>
+                                    <div className="space-y-1.5">
+                                      {sec.quiz.questions.map((q, qi) => (
+                                        <div key={qi} className="flex items-start gap-2.5 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                          <div className="w-6 h-6 rounded bg-sky-100 flex items-center justify-center shrink-0 mt-0.5">
+                                            <HelpCircle className="w-3.5 h-3.5 text-sky-600" />
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-sm text-slate-700 truncate">{q.question}</p>
+                                            <span className={`text-xs font-medium ${q.type === 'mcq' ? 'text-sky-600' : 'text-amber-600'}`}>{q.type === 'mcq' ? 'Multiple Choice' : 'True/False'}</span>
+                                          </div>
+                                          <span className="text-xs text-slate-400 shrink-0">{q.points}pt</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Activities */}
+                                {sec.activities?.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Activities</p>
+                                    <div className="space-y-1.5">
+                                      {sec.activities.map((a, ai2) => {
+                                        const typeColors: Record<string, string> = {
+                                          practice: 'bg-blue-100 text-blue-700',
+                                          reflection: 'bg-amber-100 text-amber-700',
+                                          discussion: 'bg-green-100 text-green-700',
+                                          project: 'bg-rose-100 text-rose-700',
+                                          research: 'bg-slate-100 text-slate-700',
+                                        };
+                                        return (
+                                          <div key={ai2} className="flex items-start gap-2.5 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                            <div className="w-6 h-6 rounded bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
+                                              <BarChart2 className="w-3.5 h-3.5 text-amber-600" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-sm text-slate-700 truncate">{a.title}</p>
+                                              <p className="text-xs text-slate-400 truncate mt-0.5">{a.instructions}</p>
+                                            </div>
+                                            <span className={`text-xs px-2 py-0.5 rounded font-medium capitalize shrink-0 ${typeColors[a.type] || 'bg-slate-100 text-slate-600'}`}>{a.type}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {/* Footer actions */}
+                        <div className="border-t border-slate-100 bg-white">
+                          {aiCurriculumInserting && aiCurriculumInsertStatus && (
+                            <div className="flex items-center gap-2.5 px-5 py-3 bg-sky-50 border-b border-sky-100">
+                              <div className="w-3.5 h-3.5 border-2 border-sky-400/40 border-t-sky-500 rounded-full animate-spin shrink-0" />
+                              <p className="text-xs text-sky-700 font-medium">{aiCurriculumInsertStatus}</p>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between px-5 py-4">
+                            <button
+                              type="button"
+                              onClick={() => setAICurriculumStep('form')}
+                              disabled={aiCurriculumInserting}
+                              className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                            >
+                              Regenerate
+                            </button>
+                            <div className="flex items-center gap-3">
+                              <p className="text-xs text-slate-400 hidden sm:block">Includes lesson notes, slides, quizzes &amp; activities</p>
+                              <button
+                                type="button"
+                                onClick={handleAICurriculumInsert}
+                                disabled={aiCurriculumInserting}
+                                className="btn-primary text-sm py-2 px-6 flex items-center gap-2 disabled:opacity-60"
+                              >
+                                {aiCurriculumInserting ? (
+                                  <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Building...</>
+                                ) : (
+                                  <><Sparkles className="w-4 h-4" /> Build Full Curriculum</>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* ─────────────────────────────────────────────────────────── */}
+
                 {sections.map((section, sIdx) => (
                   <SectionCard
                     key={section.id}
@@ -902,6 +1645,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     onRename={() => { setEditingSectionId(section.id); setEditingSectionTitle(section.title); }}
                     onDelete={() => setDeleteTarget({ type: 'section', id: section.id, name: section.title })}
                     onAddLesson={() => { setAddingLessonTo(section.id); setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true }); }}
+                    onGenerateDocs={() => handleGenerateSectionDocs(section)}
+                    generatingDocs={generatingSectionDocsId === section.id}
                   >
                     {editingSectionId === section.id && (
                       <div className="px-4 py-3 bg-sky-50 border-b border-sky-100 flex items-center gap-2">
@@ -927,8 +1672,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     )}
 
                     {section.lessons?.map((lesson, lIdx) => {
-                      const Icon = LESSON_ICONS[lesson.type] ?? FileText;
-                      const colors = LESSON_COLORS[lesson.type] ?? LESSON_COLORS.article;
+                      const Icon = getLessonIcon(lesson.type);
+                      const colors = getLessonColors(lesson.type);
                       const isPreview = previewLesson?.id === lesson.id;
                       return (
                         <div key={lesson.id} className="border-b border-slate-100 last:border-0">
@@ -945,18 +1690,19 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                 <span className="text-xs text-slate-400 flex items-center gap-1"><Clock className="w-3 h-3" />{lesson.duration_minutes}m</span>
                                 {lesson.is_required && <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-md font-medium flex items-center gap-1"><Lock className="w-2.5 h-2.5" />Required</span>}
                                 {lesson.is_preview && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-md font-medium flex items-center gap-1"><Globe className="w-2.5 h-2.5" />Free preview</span>}
+                                <LessonDocumentBadges lessonId={lesson.id} />
                               </div>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
-                              {lesson.url && (
+                              {(lesson.url || (lesson as Lesson & { url?: string }).url) && (
                                 <button onClick={() => setPreviewLesson(isPreview ? null : lesson)} className={`p-1.5 rounded-lg transition-colors text-xs font-medium flex items-center gap-1 ${isPreview ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`} title="Preview lesson">
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              {lesson.type === 'article' && lesson.content && (
+                              {(lesson.type === 'article' || lesson.type === 'text') && lesson.content && (
                                 <button
                                   onClick={async () => {
-                                    const { generateFlashcards: _gf, summarizeLesson } = await import('../../lib/ai');
+                                    const { summarizeLesson } = await import('../../lib/ai');
                                     const result = await summarizeLesson({ lesson_content: lesson.content }).catch(() => null);
                                     if (!result) { toast.error('Failed to generate summary'); return; }
                                     await supabase.from('lessons').update({
@@ -971,11 +1717,130 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                   <Sparkles className="w-3.5 h-3.5" />
                                 </button>
                               )}
+                              <button
+                                onClick={() => setExpandedDocsLessonId(expandedDocsLessonId === lesson.id ? null : lesson.id)}
+                                className={`p-1.5 rounded-lg transition-colors ${expandedDocsLessonId === lesson.id ? 'bg-emerald-100 text-emerald-600' : 'text-slate-400 hover:text-emerald-500 hover:bg-emerald-50'}`}
+                                title="View notes & slides"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => editingLessonId === lesson.id ? setEditingLessonId(null) : openEditLesson(lesson)}
+                                className={`p-1.5 rounded-lg transition-colors ${editingLessonId === lesson.id ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:text-sky-500 hover:bg-sky-50'}`}
+                                title="Edit lesson"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
                               <button onClick={() => setDeleteTarget({ type: 'lesson', id: lesson.id, name: lesson.title })} className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </div>
+
+                          {/* Inline lesson edit form */}
+                          {editingLessonId === lesson.id && (
+                            <form onSubmit={handleUpdateLesson} className="border-t border-sky-100 bg-sky-50/40">
+                              <div className="px-4 py-3 flex items-center gap-2 border-b border-sky-100 bg-sky-50">
+                                <div className="w-5 h-5 bg-sky-500 rounded-full flex items-center justify-center shrink-0">
+                                  <Pencil className="w-3 h-3 text-white" />
+                                </div>
+                                <span className="text-sm font-bold text-sky-700">Edit Lesson</span>
+                                <button type="button" onClick={() => setEditingLessonId(null)} className="ml-auto p-1 rounded text-slate-400 hover:text-slate-600">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="p-4 space-y-4">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Lesson Title <span className="text-red-500">*</span></label>
+                                    <input type="text" value={editLessonForm.title} onChange={e => setEditLessonForm(f => ({ ...f, title: e.target.value }))} className="input-field text-sm" required />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Content Type</label>
+                                    <div className="grid grid-cols-4 gap-1.5">
+                                      {(['video', 'pdf', 'article', 'link'] as const).map(t => {
+                                        const TIcon = getLessonIcon(t);
+                                        const tColors = getLessonColors(t);
+                                        const labels = { video: 'Video', pdf: 'PDF', article: 'Article', link: 'Link' };
+                                        const isActive = editLessonForm.type === t || (t === 'article' && editLessonForm.type === 'text') || (t === 'pdf' && editLessonForm.type === 'file');
+                                        return (
+                                          <button key={t} type="button" onClick={() => setEditLessonForm(f => ({ ...f, type: t, url: '', content: '' }))}
+                                            className={`flex flex-col items-center gap-1 p-2 rounded-lg border text-xs font-medium transition-all ${isActive ? `${tColors.bg} ${tColors.text} border-current` : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                                            <TIcon className="w-3.5 h-3.5" />{labels[t]}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {(editLessonForm.type === 'video') && (
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Video URL</label>
+                                    <input type="url" value={editLessonForm.url} onChange={e => setEditLessonForm(f => ({ ...f, url: e.target.value }))} className="input-field text-sm" placeholder="YouTube / Vimeo / direct video URL" />
+                                  </div>
+                                )}
+
+                                {(editLessonForm.type === 'pdf' || editLessonForm.type === 'file') && (
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Document URL</label>
+                                    <input type="url" value={editLessonForm.url} onChange={e => setEditLessonForm(f => ({ ...f, url: e.target.value }))} className="input-field text-sm" placeholder="Direct PDF or document URL" />
+                                  </div>
+                                )}
+
+                                {(editLessonForm.type === 'article' || editLessonForm.type === 'text') && (
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                      <label className="block text-xs font-semibold text-slate-500">Article Content</label>
+                                    </div>
+                                    <Suspense fallback={null}>
+                                      <AILessonToolbar
+                                        lessonTitle={editLessonForm.title}
+                                        courseContext={courses.find(c => c.id === selectedCourse)?.title || ''}
+                                        currentContent={editLessonForm.content}
+                                        onContentChange={html => setEditLessonForm(f => ({ ...f, content: html }))}
+                                      />
+                                    </Suspense>
+                                    <textarea value={editLessonForm.content} onChange={e => setEditLessonForm(f => ({ ...f, content: e.target.value }))} className="input-field resize-none text-sm leading-relaxed" rows={6} placeholder="Write your lesson content here..." />
+                                  </div>
+                                )}
+
+                                {editLessonForm.type === 'link' && (
+                                  <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">External URL</label>
+                                    <div className="relative">
+                                      <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                      <input type="url" value={editLessonForm.url} onChange={e => setEditLessonForm(f => ({ ...f, url: e.target.value }))} className="input-field pl-9 text-sm" placeholder="https://..." />
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center gap-4 pt-1 flex-wrap">
+                                  <div className="flex items-center gap-2">
+                                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    <label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Duration</label>
+                                    <input type="number" min="1" value={editLessonForm.duration_minutes} onChange={e => setEditLessonForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 1 }))} className="input-field text-sm py-1.5 w-16" />
+                                    <span className="text-xs text-slate-400">min</span>
+                                  </div>
+                                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                                    <div className={`w-8 h-5 rounded-full transition-colors flex items-center ${editLessonForm.is_preview ? 'bg-green-500' : 'bg-slate-200'}`} onClick={() => setEditLessonForm(f => ({ ...f, is_preview: !f.is_preview }))}>
+                                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${editLessonForm.is_preview ? 'translate-x-3' : 'translate-x-0'}`} />
+                                    </div>
+                                    <span className="text-xs font-semibold text-slate-600">Free preview</span>
+                                  </label>
+                                </div>
+
+                                <div className="flex gap-2 pt-1">
+                                  <button type="submit" className="btn-primary text-sm py-2 flex items-center gap-2">
+                                    <Save className="w-4 h-4" /> Save Changes
+                                  </button>
+                                  <button type="button" onClick={() => setEditingLessonId(null)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-white transition-colors">
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </form>
+                          )}
 
                           {isPreview && lesson.url && (
                             <div className="mx-4 mb-4 mt-1 rounded-xl overflow-hidden border border-sky-200">
@@ -988,6 +1853,23 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                               )}
                             </div>
                           )}
+
+                          {/* AI-generated documents (notes + slides) — toggle with the doc button */}
+                          {expandedDocsLessonId === lesson.id && selectedCourse && (
+                            <div className="mx-4 mb-4 mt-1">
+                              <Suspense fallback={
+                                <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
+                                  <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />
+                                  Loading documents...
+                                </div>
+                              }>
+                                <LessonDocumentViewer lessonId={lesson.id} courseId={selectedCourse} />
+                              </Suspense>
+                            </div>
+                          )}
+
+                          {/* Activities for this lesson */}
+                          <LessonActivitiesPanel lessonId={lesson.id} />
                         </div>
                       );
                     })}
@@ -1244,6 +2126,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     <p className="text-sm text-slate-500 mt-0.5">Test student knowledge and track progress</p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowAIQuizFromCurriculum(true)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors"
+                    >
+                      <Sparkles className="w-4 h-4" /> Generate with AI
+                    </button>
                     <button onClick={() => setShowQuizCreate(true)} className="btn-primary text-sm py-2 flex items-center gap-2">
                       <Plus className="w-4 h-4" /> New Quiz
                     </button>
@@ -1258,6 +2146,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                       </div>
                       <h3 className="font-bold text-slate-800 mb-1">No quizzes yet</h3>
                       <p className="text-sm text-slate-500 max-w-xs mb-4">Create quizzes to assess student understanding and provide feedback.</p>
+                      <button onClick={() => setShowAIQuizFromCurriculum(true)} className="flex items-center gap-2 px-4 py-2.5 mb-2 text-sm font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition-colors">
+                        <Sparkles className="w-4 h-4" /> Generate Quiz with AI
+                      </button>
                       <button onClick={() => setShowQuizCreate(true)} className="btn-primary text-sm py-2 flex items-center gap-2">
                         <Plus className="w-4 h-4" /> Create First Quiz
                       </button>
@@ -1426,6 +2317,59 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           </div>
         )}
       </div>
+
+      {/* AI Quiz from Curriculum modal */}
+      {showAIQuizFromCurriculum && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!aiQuizCreating) setShowAIQuizFromCurriculum(false); }} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm animate-slide-up">
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
+              <div className="w-9 h-9 bg-sky-100 rounded-xl flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5 text-sky-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-slate-900">Generate Quiz with AI</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Name your quiz, then pick a lesson to generate from</p>
+              </div>
+              {!aiQuizCreating && (
+                <button onClick={() => setShowAIQuizFromCurriculum(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <form onSubmit={handleAIQuizFromCurriculum} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Quiz Title <span className="text-red-500">*</span></label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={aiQuizNewName}
+                  onChange={e => setAIQuizNewName(e.target.value)}
+                  className="input-field"
+                  placeholder="e.g. Reading Skills Assessment"
+                  required
+                />
+              </div>
+              <div className="flex items-start gap-2.5 bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-xs text-sky-700">
+                <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5 text-sky-500" />
+                The quiz will be created and the AI generator will open so you can pick a lesson from your curriculum and configure question types.
+              </div>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setShowAIQuizFromCurriculum(false)} disabled={aiQuizCreating} className="flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium transition-colors disabled:opacity-50">
+                  Cancel
+                </button>
+                <button type="submit" disabled={aiQuizCreating || !aiQuizNewName.trim()} className="flex-1 btn-primary text-sm py-2.5 flex items-center justify-center gap-2 disabled:opacity-60">
+                  {aiQuizCreating ? (
+                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Creating...</>
+                  ) : (
+                    <><Sparkles className="w-4 h-4" /> Continue</>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showQuizCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

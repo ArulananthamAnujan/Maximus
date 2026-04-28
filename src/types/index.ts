@@ -59,7 +59,7 @@ export interface Lesson {
   id: string;
   section_id: string;
   title: string;
-  type: 'video' | 'pdf' | 'article' | 'link' | 'document';
+  type: 'video' | 'pdf' | 'article' | 'link';
   content: string;
   url: string;
   duration_minutes: number;

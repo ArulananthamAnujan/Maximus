@@ -27,11 +27,11 @@ interface PricingResult {
 }
 
 export function useHasCourseAccess(courseId: string | undefined): AccessResult {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile } = useAuth();
 
   const { data, isLoading } = useQuery({
     queryKey: ['course-access', courseId, user?.id],
-    enabled: !!courseId && !authLoading,
+    enabled: !!courseId && !!user,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       if (!courseId || !user) return null;
