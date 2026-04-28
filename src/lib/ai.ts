@@ -173,24 +173,39 @@ export interface AIHealthOutput {
 const LONG_TASKS = new Set(['lesson_notes', 'presentation_slides', 'section_content', 'full_curriculum', 'lesson_content']);
 
 export async function callAI<T>(task: string, input: object): Promise<T> {
-  const { data, error } = await supabase.functions.invoke('ai-generate', {
-    body: { task, input },
-    // Long-running tasks need more time; supabase-js default is no timeout
-  });
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
-  if (error) {
-    // Supabase wraps network errors as FunctionsFetchError — surface a cleaner message
-    const raw = typeof error === 'object' && 'message' in error
-      ? (error as { message: string }).message
-      : String(error);
-    const msg = raw.includes('Failed to send')
-      ? 'Could not reach the AI service. Please check your connection and try again.'
-      : raw || 'AI request failed';
-    throw new Error(msg);
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? supabaseAnonKey;
+
+  let response: Response;
+  try {
+    response = await fetch(`${supabaseUrl}/functions/v1/ai-generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ task, input }),
+    });
+  } catch {
+    throw new Error('Could not reach the AI service. Please check your connection and try again.');
   }
 
+  if (!response.ok) {
+    let errMsg = 'AI request failed';
+    try {
+      const errBody = await response.json() as { error?: string };
+      if (errBody.error) errMsg = errBody.error;
+    } catch { /* ignore */ }
+    throw new Error(errMsg);
+  }
+
+  const data = await response.json() as T;
   if (!data) throw new Error('AI returned an empty response. Please try again.');
-  return data as T;
+  return data;
 }
 
 // ─── Typed helpers ───────────────────────────────────────────────────────────
@@ -325,7 +340,19 @@ export const generateSectionContent = (input: SectionContentInput) =>
   callAI<SectionContentOutput>('section_content', input);
 
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
-  const { data, error } = await supabase.functions.invoke('ai-health', {});
-  if (error) throw new Error('Health check failed');
-  return data as AIHealthOutput;
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? supabaseAnonKey;
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/ai-health`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': supabaseAnonKey,
+    },
+  });
+  if (!response.ok) throw new Error('Health check failed');
+  return response.json() as Promise<AIHealthOutput>;
 };
