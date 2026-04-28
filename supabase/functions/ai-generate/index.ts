@@ -314,8 +314,8 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  // section_content is kept intentionally small to stay under edge function timeout
   if (task === 'section_content') return 4096;
+  if (task === 'full_curriculum') return 16000;
   if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
@@ -345,7 +345,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(task === 'full_curriculum' ? 120000 : 60000),
   });
 
   if (!response.ok) {
