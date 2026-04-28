@@ -545,7 +545,7 @@ Deno.serve(async (req: Request) => {
       }).catch(() => {});
     }
 
-    return new Response(JSON.stringify({ error: 'An unexpected error occurred. Please try again.' }), {
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
