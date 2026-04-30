@@ -65,25 +65,27 @@ export default function AdminCourses() {
     if (!editCourse) return;
     setSaving(true);
     const coursePayload = editCourse as Partial<Course>;
+    const isFree = Boolean(coursePayload.is_free) || Number(coursePayload.price) === 0;
     const payload = {
       title: coursePayload.title,
       description: coursePayload.description,
       short_description: coursePayload.short_description,
-      price: coursePayload.price || 0,
+      price: isFree ? 0 : (coursePayload.price || 0),
       category: coursePayload.category || 'General',
       level: coursePayload.level || 'beginner',
       teacher_id: coursePayload.teacher_id || null,
-      is_free: coursePayload.is_free || false,
-      stripe_payment_link: coursePayload.stripe_payment_link || null,
+      is_free: isFree,
+      is_paid: !isFree,
+      stripe_payment_link: isFree ? null : (coursePayload.stripe_payment_link || null),
     };
     if (editCourse.id) {
       const { error } = await supabase.from('courses').update(payload).eq('id', editCourse.id);
       if (!error) { toast.success('Course updated'); setShowModal(false); fetchData(); }
-      else toast.error('Failed to update');
+      else toast.error(`Failed to update: ${error.message}`);
     } else {
       const { error } = await supabase.from('courses').insert({ ...payload, is_published: false });
       if (!error) { toast.success('Course created'); setShowModal(false); fetchData(); }
-      else toast.error('Failed to create');
+      else toast.error(`Failed to create: ${error.message}`);
     }
     setSaving(false);
   };

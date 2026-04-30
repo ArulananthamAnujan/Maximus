@@ -782,13 +782,17 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       }
 
       toast.success(`Curriculum built — ${aiCurriculumPreview.length} sections with lessons, notes, slides, quizzes and activities`);
+
+      // Reset panel state before fetching so UI never flashes blank
+      setAICurriculumInsertStatus('');
       setShowAICurriculumPanel(false);
       setAICurriculumStep('form');
       setAICurriculumPreview([]);
-      setAICurriculumInsertStatus('');
       setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
-      await fetchSections();
-      await fetchQuizzes();
+
+      // Refresh data — errors here must not crash the page
+      try { await fetchSections(); } catch { /* ignore */ }
+      try { await fetchQuizzes(); } catch { /* ignore */ }
       setActiveTab('curriculum');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
@@ -909,21 +913,23 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse) return;
     setSaving(true);
     const extData = courseData as { start_date?: string; end_date?: string; duration_weeks?: number };
+    const isFree = Boolean(courseData.is_free) || Number(courseData.price) === 0;
     const { error } = await supabase.from('courses').update({
       title: courseData.title,
       short_description: courseData.short_description,
       description: courseData.description,
       category: courseData.category,
       level: courseData.level,
-      price: courseData.price,
-      is_free: courseData.is_free,
+      price: isFree ? 0 : courseData.price,
+      is_free: isFree,
+      is_paid: !isFree,
       thumbnail_url: courseData.thumbnail_url,
       start_date: extData.start_date || null,
       end_date: extData.end_date || null,
       duration_weeks: extData.duration_weeks || null,
     } as Record<string, unknown>).eq('id', selectedCourse);
     if (!error) { toast.success('Course details saved successfully'); fetchCourses(); }
-    else toast.error('Failed to save details');
+    else toast.error(`Failed to save details: ${error.message}`);
     setSaving(false);
   };
 
