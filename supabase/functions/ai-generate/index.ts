@@ -158,15 +158,30 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
+Each section must have: the exact number of lessons requested (mix of article and document types), exactly 1 quiz with 4-5 questions, and 1-2 activities.
 For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
 For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
 If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
 
-    lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
+    lesson_notes: `You are an expert educator writing comprehensive, detailed lesson notes that are rich and interactive for students. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
-Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
+For content_html: write 1200-1800 words of deeply detailed educational content using clean semantic HTML.
+Allowed tags ONLY: h2, h3, p, ul, ol, li, strong, em, blockquote, table, thead, tbody, tr, th, td, details, summary, mark, code, pre.
+
+Structure requirements:
+1. Learning objectives section (ul with 3-4 specific outcomes)
+2. Introduction with real-world context and why this matters (150-200 words)
+3. 4-6 main concept sections, each with:
+   - Clear h2 heading
+   - Detailed explanation (200-300 words)
+   - A concrete example or case study wrapped in <blockquote>
+   - Key terms in <strong>
+4. A <details><summary>Deep Dive</summary>...</details> expandable section with advanced insight
+5. A comparison table (<table>) where relevant
+6. Practice prompts: 2-3 reflection questions in a <ul> with <strong>Reflect:</strong> prefix
+7. Summary section recapping the 4-6 core ideas
+
+No scripts, no inline styles, no external references.`,
 
     presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
@@ -190,16 +205,22 @@ Guidelines:
 - time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
 - Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
-    section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
   "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-STRICT LENGTH LIMITS (required to avoid timeout):
-- Each lesson notes_html: 200-300 words MAX. Use h3, p, ul, li, strong only. Cover: 1 intro paragraph, 2-3 key concept bullets, 1 summary line.
-- Slides: exactly 6 slides total for the section. Use only h3, p, ul, li per slide. Max 60 words per slide.
+For each lesson notes_html write 600-900 words of rich educational content using ONLY these tags: h2, h3, p, ul, ol, li, strong, em, blockquote, details, summary, mark, table, thead, tbody, tr, th, td.
+Each lesson notes_html must include:
+- Learning objectives (ul, 3 items)
+- Introduction paragraph (context + why it matters)
+- 3-4 concept sections (h2 heading + detailed paragraph + example in blockquote)
+- One <details><summary>Deep Dive</summary>...</details> expandable section
+- 2 reflection questions (<ul> with <strong>Reflect:</strong> prefix)
+- Summary paragraph
+Slides: generate 8-10 slides. Each slide content_html uses only h3, p, ul, li, strong. 60-100 words per slide.
 If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
@@ -314,8 +335,8 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'section_content') return 4096;
-  if (task === 'full_curriculum') return 16000;
+  if (task === 'full_curriculum') return 8192;
+  if (task === 'section_content') return 16000;
   if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
@@ -345,7 +366,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(task === 'full_curriculum' ? 120000 : 60000),
+    signal: AbortSignal.timeout(['full_curriculum', 'section_content', 'lesson_notes'].includes(task) ? 120000 : 60000),
   });
 
   if (!response.ok) {

@@ -561,7 +561,6 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { generateFullCurriculum } = await import('../../lib/ai');
 
-      // Build a summary of already-existing sections so the AI builds on them
       const existingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
         ? sections.map((s, i) => {
             const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
@@ -569,15 +568,49 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }).join('\n')
         : undefined;
 
-      const result = await generateFullCurriculum({
-        topic: aiCurriculumForm.topic,
-        target_audience: aiCurriculumForm.target_audience,
-        difficulty: aiCurriculumForm.difficulty,
-        num_sections: aiCurriculumForm.num_sections,
-        lessons_per_section: aiCurriculumForm.lessons_per_section,
-        existing_sections_summary: existingSummary,
-      });
-      setAICurriculumPreview(result.sections);
+      const total = aiCurriculumForm.num_sections;
+      const BATCH = 4;
+
+      if (total <= BATCH) {
+        // Small request — single call
+        const result = await generateFullCurriculum({
+          topic: aiCurriculumForm.topic,
+          target_audience: aiCurriculumForm.target_audience,
+          difficulty: aiCurriculumForm.difficulty,
+          num_sections: total,
+          lessons_per_section: aiCurriculumForm.lessons_per_section,
+          existing_sections_summary: existingSummary,
+        });
+        setAICurriculumPreview(result.sections);
+      } else {
+        // Large request — batch into groups of 4, run sequentially so each
+        // batch can reference what the prior batches already covered
+        const allSections: import('../../lib/ai').AICurriculumSection[] = [];
+        let coveredSummary = existingSummary;
+
+        for (let start = 0; start < total; start += BATCH) {
+          const count = Math.min(BATCH, total - start);
+          const result = await generateFullCurriculum({
+            topic: aiCurriculumForm.topic,
+            target_audience: aiCurriculumForm.target_audience,
+            difficulty: aiCurriculumForm.difficulty,
+            num_sections: count,
+            lessons_per_section: aiCurriculumForm.lessons_per_section,
+            existing_sections_summary: coveredSummary,
+          });
+          allSections.push(...result.sections);
+          // Build running summary so next batch doesn't repeat topics
+          const batchSummary = result.sections.map((s, i) => {
+            const lessonTitles = s.lessons.map((l: { title: string }) => l.title).join(', ');
+            return `Section ${start + i + 1}: "${s.title}" — Lessons: ${lessonTitles}`;
+          }).join('\n');
+          coveredSummary = coveredSummary
+            ? `${coveredSummary}\n${batchSummary}`
+            : batchSummary;
+        }
+        setAICurriculumPreview(allSections);
+      }
+
       setAICurriculumExpanded(0);
       setAICurriculumStep('preview');
     } catch (err) {
@@ -1453,13 +1486,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sections <span className="text-sky-600 font-bold">{aiCurriculumForm.num_sections}</span></label>
-                            <input type="range" min={1} max={8} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>8</span></div>
+                            <input type="range" min={1} max={12} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>12</span></div>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>
-                            <input type="range" min={2} max={6} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>6</span></div>
+                            <input type="range" min={2} max={5} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>5</span></div>
                           </div>
                         </div>
                         {sections.length > 0 && (

@@ -723,9 +723,30 @@ function NotesViewer({ doc }: { doc: LessonDocument }) {
           Download PDF
         </button>
       </div>
-      <div className="p-5 bg-white">
-        <div className="prose prose-slate prose-sm max-w-none leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: doc.content_html }} />
+      <div className="p-6 bg-white">
+        <style>{`
+          .notes-body h2 { font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 1.5rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 2px solid #e2e8f0; }
+          .notes-body h3 { font-size: 1rem; font-weight: 600; color: #1e293b; margin: 1.25rem 0 0.4rem; }
+          .notes-body p { color: #334155; line-height: 1.75; margin: 0.6rem 0; }
+          .notes-body ul, .notes-body ol { padding-left: 1.4rem; margin: 0.5rem 0 0.75rem; color: #334155; }
+          .notes-body li { margin: 0.3rem 0; line-height: 1.65; }
+          .notes-body strong { color: #0f172a; font-weight: 600; }
+          .notes-body em { color: #475569; }
+          .notes-body mark { background: #fef9c3; color: #713f12; padding: 0.05rem 0.3rem; border-radius: 3px; }
+          .notes-body code { background: #f1f5f9; color: #0f172a; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; font-family: monospace; }
+          .notes-body pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; margin: 0.75rem 0; }
+          .notes-body blockquote { border-left: 4px solid #0ea5e9; background: #f0f9ff; color: #0c4a6e; padding: 0.75rem 1rem; border-radius: 0 8px 8px 0; margin: 0.75rem 0; font-style: italic; }
+          .notes-body table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+          .notes-body th { background: #0f172a; color: #f8fafc; padding: 0.6rem 0.9rem; text-align: left; font-weight: 600; }
+          .notes-body td { padding: 0.55rem 0.9rem; border-bottom: 1px solid #e2e8f0; color: #334155; }
+          .notes-body tr:nth-child(even) td { background: #f8fafc; }
+          .notes-body details { border: 1px solid #e2e8f0; border-radius: 8px; margin: 0.75rem 0; overflow: hidden; }
+          .notes-body details summary { background: #f1f5f9; padding: 0.65rem 1rem; font-weight: 600; color: #1e293b; cursor: pointer; user-select: none; list-style: none; display: flex; align-items: center; gap: 0.5rem; }
+          .notes-body details summary::before { content: '▶'; font-size: 0.7rem; color: #64748b; transition: transform 0.2s; }
+          .notes-body details[open] summary::before { transform: rotate(90deg); }
+          .notes-body details > *:not(summary) { padding: 0.75rem 1rem; }
+        `}</style>
+        <div className="notes-body" dangerouslySetInnerHTML={{ __html: doc.content_html }} />
       </div>
     </div>
   );
