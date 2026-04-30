@@ -666,9 +666,10 @@ function SlidesViewer({ doc }: { doc: LessonDocument }) {
         )}
       </div>
 
-      {/* Slide content */}
-      <div className={`flex-1 overflow-auto ${fullscreen ? 'flex items-center justify-center bg-slate-900 p-8' : 'border-x border-b border-slate-200'}`}>
-        <div className={`${fullscreen ? 'w-full max-w-4xl bg-white rounded-2xl shadow-2xl p-12 min-h-80' : 'p-6 bg-white min-h-60'}`}>
+      {/* Slide content — fixed height so navigating slides never resizes the card */}
+      <div className={`${fullscreen ? 'flex items-center justify-center bg-slate-900 p-8' : 'border-x border-b border-slate-200 bg-white'}`}
+        style={{ height: fullscreen ? 'calc(100vh - 112px)' : '420px', overflow: 'hidden' }}>
+        <div className={`${fullscreen ? 'w-full max-w-4xl bg-white rounded-2xl shadow-2xl p-12' : 'p-6 bg-white'} h-full overflow-y-auto`}>
           <div className="prose prose-slate max-w-none text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: currentHtml }} />
         </div>
       </div>

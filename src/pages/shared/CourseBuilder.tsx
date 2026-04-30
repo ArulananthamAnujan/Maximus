@@ -827,64 +827,80 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       existing_sections_summary: existingSummary,
     };
 
-    // Delete old docs so we start fresh
+    // Check which docs already exist
     const lessonIds = section.lessons.map(l => l.id);
-    await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
+    const { data: existingDocs } = await supabase
+      .from('lesson_documents')
+      .select('lesson_id, type')
+      .in('lesson_id', lessonIds);
 
-    const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-    let notesOk = false;
-    let slidesOk = false;
+    const lessonsWithNotes = new Set((existingDocs || []).filter(d => d.type === 'notes').map(d => d.lesson_id));
+    const hasSlides = (existingDocs || []).some(d => d.type === 'slides');
+    const missingNotes = section.lessons.filter(l => !lessonsWithNotes.has(l.id));
+    const needsNotes = missingNotes.length > 0;
+    const needsSlides = !hasSlides;
 
-    // Call 1 — notes
-    try {
-      const notesResult = await generateSectionNotes(sectionInput);
-      for (let li = 0; li < section.lessons.length; li++) {
-        const lessonDb = section.lessons[li];
-        const lessonContent = notesResult.lessons?.[li];
-        if (!lessonDb || !lessonContent?.notes_html) continue;
-        await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
-        docRows.push({
-          lesson_id: lessonDb.id,
-          course_id: selectedCourse,
-          type: 'notes',
-          title: `${lessonDb.title} — Notes`,
-          content_html: lessonContent.notes_html,
-          order_index: 0,
-        });
+    const newDocRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+    let notesOk = !needsNotes; // already OK if nothing missing
+    let slidesOk = !needsSlides;
+
+    // Generate notes only for lessons that don't have them
+    if (needsNotes) {
+      try {
+        const notesResult = await generateSectionNotes(sectionInput);
+        for (let li = 0; li < section.lessons.length; li++) {
+          const lessonDb = section.lessons[li];
+          if (lessonsWithNotes.has(lessonDb.id)) continue; // skip existing
+          const lessonContent = notesResult.lessons?.[li];
+          if (!lessonDb || !lessonContent?.notes_html) continue;
+          await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+          newDocRows.push({
+            lesson_id: lessonDb.id,
+            course_id: selectedCourse,
+            type: 'notes',
+            title: `${lessonDb.title} — Notes`,
+            content_html: lessonContent.notes_html,
+            order_index: 0,
+          });
+        }
+        notesOk = true;
+      } catch (notesErr) {
+        toast.error(`Notes generation failed: ${notesErr instanceof Error ? notesErr.message : 'Unknown error'}`);
       }
-      notesOk = true;
-    } catch (notesErr) {
-      toast.error(`Notes generation failed: ${notesErr instanceof Error ? notesErr.message : 'Unknown error'}`);
     }
 
-    // Call 2 — slides
-    try {
-      const slidesResult = await generateSectionSlides(sectionInput);
-      if (slidesResult.slides?.length && section.lessons.length > 0) {
-        const slidesHtml = slidesResult.slides.map(s =>
-          `<section class="slide" data-slide="${s.slide_number}">
-            <h2>${s.heading}</h2>
-            ${s.content_html}
-            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-          </section>`
-        ).join('\n');
-        docRows.push({
-          lesson_id: section.lessons[0].id,
-          course_id: selectedCourse,
-          type: 'slides',
-          title: slidesResult.slides_title || `${section.title} — Slides`,
-          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-          order_index: 1,
-        });
-        slidesOk = true;
+    // Generate slides only if missing
+    if (needsSlides) {
+      try {
+        const slidesResult = await generateSectionSlides(sectionInput);
+        if (slidesResult.slides?.length && section.lessons.length > 0) {
+          const slidesHtml = slidesResult.slides.map(s =>
+            `<section class="slide" data-slide="${s.slide_number}">
+              <h2>${s.heading}</h2>
+              ${s.content_html}
+              ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+            </section>`
+          ).join('\n');
+          newDocRows.push({
+            lesson_id: section.lessons[0].id,
+            course_id: selectedCourse,
+            type: 'slides',
+            title: slidesResult.slides_title || `${section.title} — Slides`,
+            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+            order_index: 1,
+          });
+          slidesOk = true;
+        }
+      } catch (slidesErr) {
+        toast.error(`Slides generation failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
       }
-    } catch (slidesErr) {
-      toast.error(`Slides generation failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
     }
 
-    if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
+    if (newDocRows.length > 0) await supabase.from('lesson_documents').insert(newDocRows);
 
-    if (notesOk && slidesOk) {
+    if (!needsNotes && !needsSlides) {
+      toast.success(`All notes and slides already exist for "${section.title}"`);
+    } else if (notesOk && slidesOk) {
       toast.success(`Notes and slides generated for "${section.title}"`);
     } else if (notesOk || slidesOk) {
       toast.success(`Partial content generated for "${section.title}" — see errors above`);
