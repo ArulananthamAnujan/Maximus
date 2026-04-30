@@ -69,6 +69,16 @@ function validateSectionContent(obj: unknown): boolean {
   return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
 }
 
+function validateSectionNotes(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.section_title === 'string' && Array.isArray(o.lessons);
+}
+
+function validateSectionSlides(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.slides_title === 'string' && Array.isArray(o.slides);
+}
+
 function validateGenerateExam(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
@@ -87,6 +97,8 @@ const validators: Record<string, (o: unknown) => boolean> = {
   lesson_notes: validateLessonNotes,
   presentation_slides: validatePresentationSlides,
   section_content: validateSectionContent,
+  section_notes: validateSectionNotes,
+  section_slides: validateSectionSlides,
   generate_exam: validateGenerateExam,
 };
 
@@ -222,6 +234,30 @@ Each lesson notes_html must include:
 - Summary paragraph
 Slides: generate 8-10 slides. Each slide content_html uses only h3, p, ul, li, strong. 60-100 words per slide.
 If prior section context is given, build on it — do NOT repeat covered material.`,
+
+    section_notes: `You are an expert educator writing comprehensive, interactive lesson notes. ${jsonRule}
+Output shape: {
+  "section_title": string,
+  "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}]
+}
+For each lesson notes_html write 600-900 words using ONLY: h2, h3, p, ul, ol, li, strong, em, blockquote, details, summary, mark, table, thead, tbody, tr, th, td.
+Each notes_html must include:
+- Learning objectives (ul, 3 items)
+- Introduction paragraph (context + why it matters)
+- 3-4 concept sections (h2 heading + detailed paragraph + example in blockquote)
+- One <details><summary>Deep Dive</summary>...</details> expandable section
+- 2 reflection questions (ul with <strong>Reflect:</strong> prefix)
+- Summary paragraph
+If prior section context is given, build on it — do NOT repeat covered material.`,
+
+    section_slides: `You are an expert educator creating structured presentation slides for a course section. ${jsonRule}
+Output shape: {
+  "slides_title": string,
+  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
+}
+Generate 8-10 slides covering all lessons in the section. Each slide content_html uses only h3, p, ul, li, strong tags. 60-100 words per slide.
+Include: title slide, learning objectives, one slide per key concept per lesson, a practical example slide, summary, and next steps.
+If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
   return prompts[task] || jsonRule;
@@ -313,6 +349,23 @@ Lessons in this section:
 ${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
     }
 
+    case 'section_notes':
+    case 'section_slides': {
+      const lessons = Array.isArray(input.lessons)
+        ? (input.lessons as Array<{ title: string; description: string }>)
+            .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
+            .join('\n')
+        : String(input.lessons);
+      const action = task === 'section_notes' ? 'lesson notes' : 'presentation slides';
+      return `Generate ${action} for this section:
+Course: ${input.course_title}
+Section: ${input.section_title}
+Target Audience: ${input.target_audience}
+Difficulty: ${input.difficulty}
+Lessons in this section:
+${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
+    }
+
     case 'generate_exam':
       return `Generate an exam for:
 Subject / Topic: ${input.topic}
@@ -330,14 +383,15 @@ ${input.extra_instructions ? `Additional instructions: ${input.extra_instruction
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'generate_exam'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 
 function getMaxTokens(task: string): number {
   if (task === 'full_curriculum') return 8192;
   if (task === 'section_content') return 16000;
-  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
+  if (['section_notes', 'lesson_notes', 'lesson_content'].includes(task)) return 12000;
+  if (['section_slides', 'presentation_slides'].includes(task)) return 6000;
   return 4096;
 }
 
@@ -366,7 +420,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(['full_curriculum', 'section_content', 'lesson_notes'].includes(task) ? 120000 : 60000),
+    signal: AbortSignal.timeout(['full_curriculum', 'section_content', 'section_notes', 'lesson_notes'].includes(task) ? 120000 : 60000),
   });
 
   if (!response.ok) {

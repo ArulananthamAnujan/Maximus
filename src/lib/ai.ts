@@ -342,6 +342,24 @@ export interface SectionContentOutput {
 export const generateSectionContent = (input: SectionContentInput) =>
   callAI<SectionContentOutput>('section_content', input);
 
+// ─── Split tasks: notes-only and slides-only ─────────────────────────────────
+
+export interface SectionNotesOutput {
+  section_title: string;
+  lessons: SectionContentLessonOutput[];
+}
+
+export interface SectionSlidesOutput {
+  slides_title: string;
+  slides: PresentationSlide[];
+}
+
+export const generateSectionNotes = (input: SectionContentInput) =>
+  callAI<SectionNotesOutput>('section_notes', input);
+
+export const generateSectionSlides = (input: SectionContentInput) =>
+  callAI<SectionSlidesOutput>('section_slides', input);
+
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
   const { data: { session } } = await supabase.auth.getSession();
