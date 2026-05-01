@@ -158,10 +158,14 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
-For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
-For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
-If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
+STRICT RULES to keep response compact:
+- Each section: exactly the requested number of lessons, exactly 1 quiz with exactly 3 questions, exactly 1 activity.
+- lesson description: 1 short sentence only (max 15 words).
+- quiz explanation: 1 sentence only (max 20 words).
+- activity instructions: 2 sentences max.
+- For mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
+- For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
+- If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered.`,
 
     lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
@@ -315,7 +319,7 @@ function getTemperature(task: string): number {
 
 function getMaxTokens(task: string): number {
   if (task === 'section_content') return 4096;
-  if (task === 'full_curriculum') return 16000;
+  if (task === 'full_curriculum') return 20000;
   if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
@@ -345,7 +349,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(task === 'full_curriculum' ? 120000 : 60000),
+    signal: AbortSignal.timeout(task === 'full_curriculum' ? 180000 : 90000),
   });
 
   if (!response.ok) {
