@@ -117,6 +117,23 @@
 }
 
 @layer utilities {
+  /* Dark-background slide body — invert prose colors */
+  .prose-invert-slide h3 { @apply text-white font-bold mb-2; }
+  .prose-invert-slide p  { @apply text-slate-300 leading-relaxed; }
+  .prose-invert-slide ul { @apply space-y-1.5 list-none pl-0; }
+  .prose-invert-slide li { @apply text-slate-200 text-sm flex gap-2; }
+  .prose-invert-slide li::before { content: "▸"; @apply text-sky-400 shrink-0; }
+
+  /* Slide body bullet styling for light slides */
+  .slide-body ul { @apply space-y-1.5 list-none pl-0; }
+  .slide-body li { @apply text-sm flex gap-2 items-start; }
+  .slide-body li::before { content: "▸"; @apply shrink-0 mt-0.5; color: currentColor; opacity: 0.6; }
+  .slide-body h3 { @apply text-base font-bold mb-1.5; }
+  .slide-body p  { @apply text-sm leading-relaxed; }
+
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
   .text-gradient-sky {
     @apply bg-gradient-to-r from-sky-500 to-blue-600 bg-clip-text text-transparent;
   }
