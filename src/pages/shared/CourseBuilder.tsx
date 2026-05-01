@@ -527,6 +527,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
   // Lesson document panel (notes/slides visible without edit mode)
   const [expandedDocsLessonId, setExpandedDocsLessonId] = useState<string | null>(null);
+  // Increment to force LessonDocumentViewer remount after generation
+  const [docViewerKey, setDocViewerKey] = useState(0);
   // Per-section PDF & PPT generation
   const [generatingSectionDocsId, setGeneratingSectionDocsId] = useState<string | null>(null);
 
@@ -876,7 +878,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
 
       toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
-      if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
+      if (section.lessons.length > 0) {
+        // Force remount of the viewer so it refetches the newly inserted docs
+        setExpandedDocsLessonId(null);
+        setDocViewerKey(k => k + 1);
+        setTimeout(() => setExpandedDocsLessonId(section.lessons[0].id), 50);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Generation failed');
     } finally {
@@ -1923,14 +1930,14 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           {/* AI-generated documents (notes + slides) — toggle with the doc button */}
                           {expandedDocsLessonId === lesson.id && selectedCourse && (
                             <div className="mx-4 mb-4 mt-1">
-                              <DocumentViewerErrorBoundary key={lesson.id}>
+                              <DocumentViewerErrorBoundary key={`${lesson.id}-${docViewerKey}`}>
                                 <Suspense fallback={
                                   <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
                                     <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />
                                     Loading documents...
                                   </div>
                                 }>
-                                  <LessonDocumentViewer lessonId={lesson.id} courseId={selectedCourse} />
+                                  <LessonDocumentViewer key={`${lesson.id}-${docViewerKey}`} lessonId={lesson.id} courseId={selectedCourse} />
                                 </Suspense>
                               </DocumentViewerErrorBoundary>
                             </div>

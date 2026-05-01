@@ -773,20 +773,30 @@ interface ParsedSlideUI {
 }
 
 function parseSlidesForUI(slidesHtml: string): ParsedSlideUI[] {
-  const div = document.createElement('div');
-  div.innerHTML = slidesHtml;
-  const slideEls = div.querySelectorAll('.slide');
-  return Array.from(slideEls).map((el, idx) => {
-    const cloned = el.cloneNode(true) as Element;
-    const h2 = cloned.querySelector('h2');
-    const notesEl = cloned.querySelector('.speaker-notes');
-    const heading = h2?.textContent?.trim() || `Slide ${idx + 1}`;
-    const notes = notesEl?.textContent?.trim().replace(/^Speaker notes:?/i, '').trim() || '';
-    const slideType = getSlideType(el);
-    notesEl?.remove();
-    h2?.remove();
-    return { index: idx, heading, slideType, bodyHtml: cloned.innerHTML, speakerNotes: notes };
-  });
+  try {
+    if (!slidesHtml || typeof document === 'undefined') return [];
+    const div = document.createElement('div');
+    div.innerHTML = slidesHtml;
+    const slideEls = div.querySelectorAll('.slide');
+    if (slideEls.length === 0) return [];
+    return Array.from(slideEls).map((el, idx) => {
+      try {
+        const cloned = el.cloneNode(true) as Element;
+        const h2 = cloned.querySelector('h2');
+        const notesEl = cloned.querySelector('.speaker-notes');
+        const heading = h2?.textContent?.trim() || `Slide ${idx + 1}`;
+        const notes = notesEl?.textContent?.trim().replace(/^Speaker notes:?/i, '').trim() || '';
+        const slideType = getSlideType(el);
+        notesEl?.remove();
+        h2?.remove();
+        return { index: idx, heading, slideType, bodyHtml: cloned.innerHTML, speakerNotes: notes };
+      } catch {
+        return { index: idx, heading: `Slide ${idx + 1}`, slideType: 'concept', bodyHtml: '', speakerNotes: '' };
+      }
+    });
+  } catch {
+    return [];
+  }
 }
 
 // ─── Slides Viewer ───────────────────────────────────────────────────────────
@@ -1032,23 +1042,35 @@ function NotesViewer({ doc }: { doc: LessonDocument }) {
 export default function LessonDocumentViewer({ lessonId, courseId: _courseId }: Props) {
   const [docs, setDocs] = useState<LessonDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeDoc, setActiveDoc] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (!lessonId) return;
+    if (!lessonId) { setLoading(false); return; }
+    let cancelled = false;
     setLoading(true);
+    setError(null);
     supabase
       .from('lesson_documents')
       .select('id, type, title, content_html, order_index')
       .eq('lesson_id', lessonId)
       .order('order_index')
-      .then(({ data }) => {
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        if (err) { setError(err.message); setLoading(false); return; }
         const loaded = (data || []) as LessonDocument[];
         setDocs(loaded);
-        if (loaded.length > 0) setActiveDoc(loaded[0].id);
+        if (loaded.length > 0) setActiveDoc(prev => prev && loaded.find(d => d.id === prev) ? prev : loaded[0].id);
+        setLoading(false);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setError(err?.message || 'Failed to load documents');
         setLoading(false);
       });
-  }, [lessonId]);
+    return () => { cancelled = true; };
+  }, [lessonId, refreshKey]);
 
   if (loading) return (
     <div className="flex items-center gap-2 py-4 text-xs text-slate-400">
@@ -1056,9 +1078,17 @@ export default function LessonDocumentViewer({ lessonId, courseId: _courseId }: 
     </div>
   );
 
+  if (error) return (
+    <div className="py-4 text-center text-xs text-red-500 space-y-1">
+      <p>Failed to load: {error}</p>
+      <button className="underline text-sky-500" onClick={() => setRefreshKey(k => k + 1)}>Retry</button>
+    </div>
+  );
+
   if (docs.length === 0) return (
-    <div className="py-4 text-center text-xs text-slate-400">
-      No notes or slides generated yet.
+    <div className="py-4 text-center text-xs text-slate-400 space-y-1">
+      <p>No notes or slides generated yet.</p>
+      <button className="underline text-sky-500" onClick={() => setRefreshKey(k => k + 1)}>Refresh</button>
     </div>
   );
 
