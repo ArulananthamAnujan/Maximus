@@ -158,7 +158,7 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
+Each section must have: 2-4 lessons (mix of article and document types), exactly 1 quiz with 3-4 questions, and exactly 1 activity. Keep lesson descriptions to 1 sentence, activity instructions to 2 sentences, and quiz explanations to 1 sentence — brevity is critical for large courses.
 For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
 For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
 If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
@@ -316,8 +316,8 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'section_content') return 4096;
-  if (task === 'full_curriculum') return 16000;
+  if (task === 'section_content') return 6000;
+  if (task === 'full_curriculum') return 24000;
   if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
@@ -347,7 +347,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(task === 'full_curriculum' ? 120000 : 60000),
+    signal: AbortSignal.timeout(task === 'full_curriculum' ? 180000 : task === 'section_content' ? 90000 : 60000),
   });
 
   if (!response.ok) {
