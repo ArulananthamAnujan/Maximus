@@ -487,28 +487,7 @@ export default function StudentCoursePlayer() {
                 )}
                 {(activeLesson.type === 'article' || activeLesson.type === 'text') && (
                   activeLesson.content
-                    ? <div className="bg-white dark:bg-navy-800 rounded-xl border border-gray-100 dark:border-navy-700 mb-6 overflow-hidden">
-                        <style>{`
-                          .lesson-body h2 { font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 1.5rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 2px solid #e2e8f0; }
-                          .lesson-body h3 { font-size: 1rem; font-weight: 600; color: #1e293b; margin: 1.25rem 0 0.4rem; }
-                          .lesson-body p { color: #334155; line-height: 1.75; margin: 0.6rem 0; }
-                          .lesson-body ul, .lesson-body ol { padding-left: 1.4rem; margin: 0.5rem 0 0.75rem; color: #334155; }
-                          .lesson-body li { margin: 0.3rem 0; line-height: 1.65; }
-                          .lesson-body strong { color: #0f172a; font-weight: 600; }
-                          .lesson-body mark { background: #fef9c3; color: #713f12; padding: 0.05rem 0.3rem; border-radius: 3px; }
-                          .lesson-body blockquote { border-left: 4px solid #0ea5e9; background: #f0f9ff; color: #0c4a6e; padding: 0.75rem 1rem; border-radius: 0 8px 8px 0; margin: 0.75rem 0; font-style: italic; }
-                          .lesson-body table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
-                          .lesson-body th { background: #0f172a; color: #f8fafc; padding: 0.6rem 0.9rem; text-align: left; font-weight: 600; }
-                          .lesson-body td { padding: 0.55rem 0.9rem; border-bottom: 1px solid #e2e8f0; color: #334155; }
-                          .lesson-body tr:nth-child(even) td { background: #f8fafc; }
-                          .lesson-body details { border: 1px solid #e2e8f0; border-radius: 8px; margin: 0.75rem 0; overflow: hidden; }
-                          .lesson-body details summary { background: #f1f5f9; padding: 0.65rem 1rem; font-weight: 600; color: #1e293b; cursor: pointer; user-select: none; list-style: none; display: flex; align-items: center; gap: 0.5rem; }
-                          .lesson-body details summary::before { content: '▶'; font-size: 0.7rem; color: #64748b; transition: transform 0.2s; }
-                          .lesson-body details[open] summary::before { transform: rotate(90deg); }
-                          .lesson-body details > *:not(summary) { padding: 0.75rem 1rem; }
-                        `}</style>
-                        <div className="lesson-body p-6" dangerouslySetInnerHTML={{ __html: activeLesson.content }} />
-                      </div>
+                    ? <div className="prose dark:prose-invert prose-sm max-w-none bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6 leading-relaxed" dangerouslySetInnerHTML={{ __html: activeLesson.content }} />
                     : <div className="bg-white dark:bg-navy-800 rounded-xl p-6 border border-gray-100 dark:border-navy-700 mb-6"><p className="text-gray-500 dark:text-gray-400 text-sm">No content available for this lesson yet.</p></div>
                 )}
                 {activeLesson.type === 'link' && activeLesson.url && (

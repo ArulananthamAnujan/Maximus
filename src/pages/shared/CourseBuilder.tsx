@@ -561,6 +561,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { generateFullCurriculum } = await import('../../lib/ai');
 
+      // Build a summary of already-existing sections so the AI builds on them
       const existingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
         ? sections.map((s, i) => {
             const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
@@ -568,49 +569,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }).join('\n')
         : undefined;
 
-      const total = aiCurriculumForm.num_sections;
-      const BATCH = 4;
-
-      if (total <= BATCH) {
-        // Small request — single call
-        const result = await generateFullCurriculum({
-          topic: aiCurriculumForm.topic,
-          target_audience: aiCurriculumForm.target_audience,
-          difficulty: aiCurriculumForm.difficulty,
-          num_sections: total,
-          lessons_per_section: aiCurriculumForm.lessons_per_section,
-          existing_sections_summary: existingSummary,
-        });
-        setAICurriculumPreview(result.sections);
-      } else {
-        // Large request — batch into groups of 4, run sequentially so each
-        // batch can reference what the prior batches already covered
-        const allSections: import('../../lib/ai').AICurriculumSection[] = [];
-        let coveredSummary = existingSummary;
-
-        for (let start = 0; start < total; start += BATCH) {
-          const count = Math.min(BATCH, total - start);
-          const result = await generateFullCurriculum({
-            topic: aiCurriculumForm.topic,
-            target_audience: aiCurriculumForm.target_audience,
-            difficulty: aiCurriculumForm.difficulty,
-            num_sections: count,
-            lessons_per_section: aiCurriculumForm.lessons_per_section,
-            existing_sections_summary: coveredSummary,
-          });
-          allSections.push(...result.sections);
-          // Build running summary so next batch doesn't repeat topics
-          const batchSummary = result.sections.map((s, i) => {
-            const lessonTitles = s.lessons.map((l: { title: string }) => l.title).join(', ');
-            return `Section ${start + i + 1}: "${s.title}" — Lessons: ${lessonTitles}`;
-          }).join('\n');
-          coveredSummary = coveredSummary
-            ? `${coveredSummary}\n${batchSummary}`
-            : batchSummary;
-        }
-        setAICurriculumPreview(allSections);
-      }
-
+      const result = await generateFullCurriculum({
+        topic: aiCurriculumForm.topic,
+        target_audience: aiCurriculumForm.target_audience,
+        difficulty: aiCurriculumForm.difficulty,
+        num_sections: aiCurriculumForm.num_sections,
+        lessons_per_section: aiCurriculumForm.lessons_per_section,
+        existing_sections_summary: existingSummary,
+      });
+      setAICurriculumPreview(result.sections);
       setAICurriculumExpanded(0);
       setAICurriculumStep('preview');
     } catch (err) {
@@ -623,22 +590,25 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse || !profile) return;
     setAICurriculumInserting(true);
     setAICurriculumInsertStatus('Setting up sections...');
-
-    const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
-    const startIdx = sections.length;
-
-    // Track newly inserted sections with their lesson IDs for the AI pass
-    type InsertedSection = {
-      sec: typeof aiCurriculumPreview[number];
-      insertedLessons: Array<{ id: string; title: string }>;
-    };
-    const insertedSections: InsertedSection[] = [];
-
-    // ── PASS 1: Insert all sections, lessons, quizzes, activities (fast DB ops) ──
     try {
+      const { generateSectionContent } = await import('../../lib/ai');
+      const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
+      const startIdx = sections.length;
+
+      // Build existing sections summary for context continuity
+      const existingSummary = sections.length > 0
+        ? sections.map((s, i) => {
+            const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
+            return `Section ${i + 1}: "${s.title}"${lessonTitles ? ` (${lessonTitles})` : ''}`;
+          }).join('\n')
+        : undefined;
+
+      // Track newly inserted sections for rolling context
+      const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
+
       for (let i = 0; i < aiCurriculumPreview.length; i++) {
         const sec = aiCurriculumPreview[i];
-        setAICurriculumInsertStatus(`Creating section ${i + 1}/${aiCurriculumPreview.length}: "${sec.title}"...`);
+        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: creating "${sec.title}"...`);
 
         const { data: sectionData, error: sectionErr } = await supabase
           .from('sections')
@@ -647,6 +617,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           .single();
         if (sectionErr || !sectionData) continue;
 
+        // Insert lessons
         const lessonRows = (sec.lessons || []).map((l, li) => ({
           section_id: sectionData.id,
           course_id: selectedCourse,
@@ -658,13 +629,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           order_index: li,
           is_preview: false,
         }));
-
         let insertedLessons: Array<{ id: string; title: string }> = [];
         if (lessonRows.length > 0) {
           const { data: lessonData, error: lessonErr } = await supabase.from('lessons').insert(lessonRows).select('id, title');
           if (!lessonErr) insertedLessons = lessonData || [];
         }
 
+        // Insert quiz
         if (sec.quiz?.questions?.length) {
           const { data: quizData, error: quizErr } = await supabase.from('quizzes').insert({
             course_id: selectedCourse,
@@ -694,6 +665,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }
         }
 
+        // Insert activities
         if (sec.activities?.length && insertedLessons.length > 0) {
           const activityRows = sec.activities.map((a, ai) => ({
             lesson_id: insertedLessons[0].id,
@@ -707,91 +679,45 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           await supabase.from('lesson_activities').insert(activityRows);
         }
 
-        insertedSections.push({ sec, insertedLessons });
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
-      setAICurriculumInsertStatus('');
-      // Still refresh so any sections that did insert are visible
-      try { await fetchSections(); } catch { /* ignore */ }
-      try { await fetchQuizzes(); } catch { /* ignore */ }
-      setActiveTab('curriculum');
-      setAICurriculumInserting(false);
-      return;
-    }
-
-    // ── Show sections immediately after DB inserts ───────────────────────────
-    toast.success(`${insertedSections.length} sections created — now generating notes & slides in the background...`);
-
-    setAICurriculumInsertStatus('');
-    setShowAICurriculumPanel(false);
-    setAICurriculumStep('form');
-    setAICurriculumPreview([]);
-    setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
-    setAICurriculumInserting(false);
-
-    try { await fetchSections(); } catch { /* ignore */ }
-    try { await fetchQuizzes(); } catch { /* ignore */ }
-    setActiveTab('curriculum');
-
-    if (insertedSections.length === 0) return;
-
-    // ── PASS 2: Generate notes & slides in background (non-blocking) ─────────
-    const existingSummary = sections.length > 0
-      ? sections.map((s, i) => {
-          const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
-          return `Section ${i + 1}: "${s.title}"${lessonTitles ? ` (${lessonTitles})` : ''}`;
-        }).join('\n')
-      : undefined;
-    const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
-
-    (async () => {
-      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
-      let notesGenerated = 0;
-      let slidesGenerated = 0;
-
-      for (let i = 0; i < insertedSections.length; i++) {
-        const { sec, insertedLessons } = insertedSections[i];
-        if (insertedLessons.length === 0) continue;
-
-        const sectionInput = {
-          section_title: sec.title,
-          course_title: courseName,
-          lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
-          target_audience: aiCurriculumForm.target_audience,
-          difficulty: aiCurriculumForm.difficulty,
-          existing_sections_summary: insertedSectionSummaries.length > 0
-            ? insertedSectionSummaries.join('\n')
-            : undefined,
-        };
-
-        const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-
+        // ONE batch AI call per section — generates all lesson notes + slides together
+        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating notes & slides for "${sec.title}"...`);
         try {
-          const notesResult = await generateSectionNotes(sectionInput);
+          const sectionContent = await generateSectionContent({
+            section_title: sec.title,
+            course_title: courseName,
+            lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
+            target_audience: aiCurriculumForm.target_audience,
+            difficulty: aiCurriculumForm.difficulty,
+            existing_sections_summary: insertedSectionSummaries.length > 0
+              ? insertedSectionSummaries.join('\n')
+              : undefined,
+          });
+
+          const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+
+          // Store each lesson's notes
           for (let li = 0; li < insertedLessons.length; li++) {
             const lessonDb = insertedLessons[li];
-            const lessonContent = notesResult.lessons?.[li];
-            if (!lessonDb || !lessonContent?.notes_html) continue;
-            await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
-            docRows.push({
-              lesson_id: lessonDb.id,
-              course_id: selectedCourse,
-              type: 'notes',
-              title: `${lessonDb.title} — Notes`,
-              content_html: lessonContent.notes_html,
-              order_index: 0,
-            });
-          }
-          notesGenerated++;
-        } catch (notesErr) {
-          toast.error(`Notes for "${sec.title}" failed: ${notesErr instanceof Error ? notesErr.message : 'Unknown error'}`);
-        }
+            const lessonContent = sectionContent.lessons?.[li];
+            if (!lessonDb || !lessonContent) continue;
 
-        try {
-          const slidesResult = await generateSectionSlides(sectionInput);
-          if (slidesResult.slides?.length && insertedLessons.length > 0) {
-            const slidesHtml = slidesResult.slides.map(s =>
+            const notesHtml = lessonContent.notes_html || '';
+            if (notesHtml) {
+              await supabase.from('lessons').update({ content: notesHtml }).eq('id', lessonDb.id);
+              docRows.push({
+                lesson_id: lessonDb.id,
+                course_id: selectedCourse,
+                type: 'notes',
+                title: `${lessonDb.title} — Notes`,
+                content_html: notesHtml,
+                order_index: 0,
+              });
+            }
+          }
+
+          // Store section slides linked to the first lesson
+          if (sectionContent.slides?.length && insertedLessons.length > 0) {
+            const slidesHtml = sectionContent.slides.map(s =>
               `<section class="slide" data-slide="${s.slide_number}">
                 <h2>${s.heading}</h2>
                 ${s.content_html}
@@ -802,131 +728,115 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               lesson_id: insertedLessons[0].id,
               course_id: selectedCourse,
               type: 'slides',
-              title: slidesResult.slides_title || `${sec.title} — Slides`,
+              title: sectionContent.slides_title || `${sec.title} — Slides`,
               content_html: `<div class="slides-deck">${slidesHtml}</div>`,
               order_index: 1,
             });
-            slidesGenerated++;
           }
-        } catch (slidesErr) {
-          toast.error(`Slides for "${sec.title}" failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
-        }
 
-        if (docRows.length > 0) {
-          await supabase.from('lesson_documents').insert(docRows);
-        }
+          if (docRows.length > 0) {
+            await supabase.from('lesson_documents').insert(docRows);
+          }
 
-        insertedSectionSummaries.push(
-          `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
-        );
+          // Add this section to rolling context for the next section
+          insertedSectionSummaries.push(
+            `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
+          );
+        } catch (contentErr) {
+          // Content generation failed — sections/lessons are already saved, just skip docs
+          toast.error(`Notes/slides for "${sec.title}" could not be generated: ${contentErr instanceof Error ? contentErr.message : 'Unknown error'}`);
+        }
       }
 
-      toast.success(`Notes & slides ready — ${notesGenerated} note sets and ${slidesGenerated} slide decks generated`);
-    })();
+      toast.success(`Curriculum built — ${aiCurriculumPreview.length} sections with lessons, notes, slides, quizzes and activities`);
+      setShowAICurriculumPanel(false);
+      setAICurriculumStep('form');
+      setAICurriculumPreview([]);
+      setAICurriculumInsertStatus('');
+      setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
+      await fetchSections();
+      await fetchQuizzes();
+      setActiveTab('curriculum');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
+      setAICurriculumInsertStatus('');
+    } finally {
+      setAICurriculumInserting(false);
+    }
   };
 
   const handleGenerateSectionDocs = async (section: Section & { lessons: Lesson[] }) => {
     if (!selectedCourse || generatingSectionDocsId) return;
     if (!section.lessons?.length) { toast.error('Add lessons to this section before generating.'); return; }
     setGeneratingSectionDocsId(section.id);
+    try {
+      const { generateSectionContent } = await import('../../lib/ai');
+      const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
 
-    const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
-    const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
-    const otherSections = sections.filter(s => s.id !== section.id);
-    const existingSummary = otherSections.length > 0
-      ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
-      : undefined;
+      // Build context from ALL other sections
+      const otherSections = sections.filter(s => s.id !== section.id);
+      const existingSummary = otherSections.length > 0
+        ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
+        : undefined;
 
-    const sectionInput = {
-      section_title: section.title,
-      course_title: courseName,
-      lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
-      target_audience: 'general',
-      difficulty: 'beginner',
-      existing_sections_summary: existingSummary,
-    };
+      const result = await generateSectionContent({
+        section_title: section.title,
+        course_title: courseName,
+        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+        target_audience: 'general',
+        difficulty: 'beginner',
+        existing_sections_summary: existingSummary,
+      });
 
-    // Check which docs already exist
-    const lessonIds = section.lessons.map(l => l.id);
-    const { data: existingDocs } = await supabase
-      .from('lesson_documents')
-      .select('lesson_id, type')
-      .in('lesson_id', lessonIds);
+      // Delete old docs for lessons in this section then re-insert
+      const lessonIds = section.lessons.map(l => l.id);
+      await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
 
-    const lessonsWithNotes = new Set((existingDocs || []).filter(d => d.type === 'notes').map(d => d.lesson_id));
-    const hasSlides = (existingDocs || []).some(d => d.type === 'slides');
-    const missingNotes = section.lessons.filter(l => !lessonsWithNotes.has(l.id));
-    const needsNotes = missingNotes.length > 0;
-    const needsSlides = !hasSlides;
+      const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-    const newDocRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-    let notesOk = !needsNotes; // already OK if nothing missing
-    let slidesOk = !needsSlides;
-
-    // Generate notes only for lessons that don't have them
-    if (needsNotes) {
-      try {
-        const notesResult = await generateSectionNotes(sectionInput);
-        for (let li = 0; li < section.lessons.length; li++) {
-          const lessonDb = section.lessons[li];
-          if (lessonsWithNotes.has(lessonDb.id)) continue; // skip existing
-          const lessonContent = notesResult.lessons?.[li];
-          if (!lessonDb || !lessonContent?.notes_html) continue;
-          await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
-          newDocRows.push({
-            lesson_id: lessonDb.id,
-            course_id: selectedCourse,
-            type: 'notes',
-            title: `${lessonDb.title} — Notes`,
-            content_html: lessonContent.notes_html,
-            order_index: 0,
-          });
-        }
-        notesOk = true;
-      } catch (notesErr) {
-        toast.error(`Notes generation failed: ${notesErr instanceof Error ? notesErr.message : 'Unknown error'}`);
+      for (let li = 0; li < section.lessons.length; li++) {
+        const lessonDb = section.lessons[li];
+        const lessonContent = result.lessons?.[li];
+        if (!lessonDb || !lessonContent?.notes_html) continue;
+        await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+        docRows.push({
+          lesson_id: lessonDb.id,
+          course_id: selectedCourse,
+          type: 'notes',
+          title: `${lessonDb.title} — Notes`,
+          content_html: lessonContent.notes_html,
+          order_index: 0,
+        });
       }
-    }
 
-    // Generate slides only if missing
-    if (needsSlides) {
-      try {
-        const slidesResult = await generateSectionSlides(sectionInput);
-        if (slidesResult.slides?.length && section.lessons.length > 0) {
-          const slidesHtml = slidesResult.slides.map(s =>
-            `<section class="slide" data-slide="${s.slide_number}">
-              <h2>${s.heading}</h2>
-              ${s.content_html}
-              ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-            </section>`
-          ).join('\n');
-          newDocRows.push({
-            lesson_id: section.lessons[0].id,
-            course_id: selectedCourse,
-            type: 'slides',
-            title: slidesResult.slides_title || `${section.title} — Slides`,
-            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-            order_index: 1,
-          });
-          slidesOk = true;
-        }
-      } catch (slidesErr) {
-        toast.error(`Slides generation failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
+      if (result.slides?.length && section.lessons.length > 0) {
+        const slidesHtml = result.slides.map(s =>
+          `<section class="slide" data-slide="${s.slide_number}">
+            <h2>${s.heading}</h2>
+            ${s.content_html}
+            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+          </section>`
+        ).join('\n');
+        docRows.push({
+          lesson_id: section.lessons[0].id,
+          course_id: selectedCourse,
+          type: 'slides',
+          title: result.slides_title || `${section.title} — Slides`,
+          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+          order_index: 1,
+        });
       }
+
+      if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
+
+      toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
+      // Re-open the first lesson's docs panel so the user can immediately see them
+      if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Generation failed');
+    } finally {
+      setGeneratingSectionDocsId(null);
     }
-
-    if (newDocRows.length > 0) await supabase.from('lesson_documents').insert(newDocRows);
-
-    if (!needsNotes && !needsSlides) {
-      toast.success(`All notes and slides already exist for "${section.title}"`);
-    } else if (notesOk && slidesOk) {
-      toast.success(`Notes and slides generated for "${section.title}"`);
-    } else if (notesOk || slidesOk) {
-      toast.success(`Partial content generated for "${section.title}" — see errors above`);
-    }
-
-    if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
-    setGeneratingSectionDocsId(null);
   };
 
   const handleAIQuizFromCurriculum = async (e: React.FormEvent) => {
@@ -966,23 +876,21 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse) return;
     setSaving(true);
     const extData = courseData as { start_date?: string; end_date?: string; duration_weeks?: number };
-    const isFree = Boolean(courseData.is_free) || Number(courseData.price) === 0;
     const { error } = await supabase.from('courses').update({
       title: courseData.title,
       short_description: courseData.short_description,
       description: courseData.description,
       category: courseData.category,
       level: courseData.level,
-      price: isFree ? 0 : courseData.price,
-      is_free: isFree,
-      is_paid: !isFree,
+      price: courseData.price,
+      is_free: courseData.is_free,
       thumbnail_url: courseData.thumbnail_url,
       start_date: extData.start_date || null,
       end_date: extData.end_date || null,
       duration_weeks: extData.duration_weeks || null,
     } as Record<string, unknown>).eq('id', selectedCourse);
     if (!error) { toast.success('Course details saved successfully'); fetchCourses(); }
-    else toast.error(`Failed to save details: ${error.message}`);
+    else toast.error('Failed to save details');
     setSaving(false);
   };
 
@@ -1545,13 +1453,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sections <span className="text-sky-600 font-bold">{aiCurriculumForm.num_sections}</span></label>
-                            <input type="range" min={1} max={12} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>12</span></div>
+                            <input type="range" min={1} max={8} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>8</span></div>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>
-                            <input type="range" min={2} max={5} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>5</span></div>
+                            <input type="range" min={2} max={6} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>6</span></div>
                           </div>
                         </div>
                         {sections.length > 0 && (

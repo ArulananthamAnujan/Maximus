@@ -69,16 +69,6 @@ function validateSectionContent(obj: unknown): boolean {
   return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
 }
 
-function validateSectionNotes(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.section_title === 'string' && Array.isArray(o.lessons);
-}
-
-function validateSectionSlides(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.slides_title === 'string' && Array.isArray(o.slides);
-}
-
 function validateGenerateExam(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
@@ -97,8 +87,6 @@ const validators: Record<string, (o: unknown) => boolean> = {
   lesson_notes: validateLessonNotes,
   presentation_slides: validatePresentationSlides,
   section_content: validateSectionContent,
-  section_notes: validateSectionNotes,
-  section_slides: validateSectionSlides,
   generate_exam: validateGenerateExam,
 };
 
@@ -170,30 +158,15 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-Each section must have: the exact number of lessons requested (mix of article and document types), exactly 1 quiz with 4-5 questions, and 1-2 activities.
+Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
 For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
 For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
 If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
 
-    lesson_notes: `You are an expert educator writing comprehensive, detailed lesson notes that are rich and interactive for students. ${jsonRule}
+    lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: write 1200-1800 words of deeply detailed educational content using clean semantic HTML.
-Allowed tags ONLY: h2, h3, p, ul, ol, li, strong, em, blockquote, table, thead, tbody, tr, th, td, details, summary, mark, code, pre.
-
-Structure requirements:
-1. Learning objectives section (ul with 3-4 specific outcomes)
-2. Introduction with real-world context and why this matters (150-200 words)
-3. 4-6 main concept sections, each with:
-   - Clear h2 heading
-   - Detailed explanation (200-300 words)
-   - A concrete example or case study wrapped in <blockquote>
-   - Key terms in <strong>
-4. A <details><summary>Deep Dive</summary>...</details> expandable section with advanced insight
-5. A comparison table (<table>) where relevant
-6. Practice prompts: 2-3 reflection questions in a <ul> with <strong>Reflect:</strong> prefix
-7. Summary section recapping the 4-6 core ideas
-
-No scripts, no inline styles, no external references.`,
+For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
+Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
 
     presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
@@ -217,46 +190,16 @@ Guidelines:
 - time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
 - Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
-    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
   "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-For each lesson notes_html write 600-900 words of rich educational content using ONLY these tags: h2, h3, p, ul, ol, li, strong, em, blockquote, details, summary, mark, table, thead, tbody, tr, th, td.
-Each lesson notes_html must include:
-- Learning objectives (ul, 3 items)
-- Introduction paragraph (context + why it matters)
-- 3-4 concept sections (h2 heading + detailed paragraph + example in blockquote)
-- One <details><summary>Deep Dive</summary>...</details> expandable section
-- 2 reflection questions (<ul> with <strong>Reflect:</strong> prefix)
-- Summary paragraph
-Slides: generate 8-10 slides. Each slide content_html uses only h3, p, ul, li, strong. 60-100 words per slide.
-If prior section context is given, build on it — do NOT repeat covered material.`,
-
-    section_notes: `You are an expert educator writing comprehensive, interactive lesson notes. ${jsonRule}
-Output shape: {
-  "section_title": string,
-  "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}]
-}
-For each lesson notes_html write 600-900 words using ONLY: h2, h3, p, ul, ol, li, strong, em, blockquote, details, summary, mark, table, thead, tbody, tr, th, td.
-Each notes_html must include:
-- Learning objectives (ul, 3 items)
-- Introduction paragraph (context + why it matters)
-- 3-4 concept sections (h2 heading + detailed paragraph + example in blockquote)
-- One <details><summary>Deep Dive</summary>...</details> expandable section
-- 2 reflection questions (ul with <strong>Reflect:</strong> prefix)
-- Summary paragraph
-If prior section context is given, build on it — do NOT repeat covered material.`,
-
-    section_slides: `You are an expert educator creating structured presentation slides for a course section. ${jsonRule}
-Output shape: {
-  "slides_title": string,
-  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
-}
-Generate 8-10 slides covering all lessons in the section. Each slide content_html uses only h3, p, ul, li, strong tags. 60-100 words per slide.
-Include: title slide, learning objectives, one slide per key concept per lesson, a practical example slide, summary, and next steps.
+STRICT LENGTH LIMITS (required to avoid timeout):
+- Each lesson notes_html: 200-300 words MAX. Use h3, p, ul, li, strong only. Cover: 1 intro paragraph, 2-3 key concept bullets, 1 summary line.
+- Slides: exactly 6 slides total for the section. Use only h3, p, ul, li per slide. Max 60 words per slide.
 If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
@@ -349,23 +292,6 @@ Lessons in this section:
 ${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
     }
 
-    case 'section_notes':
-    case 'section_slides': {
-      const lessons = Array.isArray(input.lessons)
-        ? (input.lessons as Array<{ title: string; description: string }>)
-            .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
-            .join('\n')
-        : String(input.lessons);
-      const action = task === 'section_notes' ? 'lesson notes' : 'presentation slides';
-      return `Generate ${action} for this section:
-Course: ${input.course_title}
-Section: ${input.section_title}
-Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
-Lessons in this section:
-${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
-    }
-
     case 'generate_exam':
       return `Generate an exam for:
 Subject / Topic: ${input.topic}
@@ -383,15 +309,14 @@ ${input.extra_instructions ? `Additional instructions: ${input.extra_instruction
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'generate_exam'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'full_curriculum') return 8192;
-  if (task === 'section_content') return 16000;
-  if (['section_notes', 'lesson_notes', 'lesson_content'].includes(task)) return 12000;
-  if (['section_slides', 'presentation_slides'].includes(task)) return 6000;
+  if (task === 'section_content') return 4096;
+  if (task === 'full_curriculum') return 16000;
+  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
 
@@ -420,7 +345,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(['full_curriculum', 'section_content', 'section_notes', 'lesson_notes'].includes(task) ? 120000 : 60000),
+    signal: AbortSignal.timeout(task === 'full_curriculum' ? 120000 : 60000),
   });
 
   if (!response.ok) {
@@ -520,22 +445,15 @@ Deno.serve(async (req: Request) => {
       .eq('user_id', userId)
       .gte('created_at', oneMinuteAgo);
 
-    if ((count ?? 0) >= 60) {
-      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 60 AI calls per minute.' }), {
+    if ((count ?? 0) >= 15) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 15 AI calls per minute.' }), {
         status: 429,
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
       });
     }
 
     // ── Parse body ───────────────────────────────────────────────────────────
-    let body: { task: string; input: Record<string, unknown> };
-    try {
-      body = await req.json() as { task: string; input: Record<string, unknown> };
-    } catch {
-      return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const body = await req.json() as { task: string; input: Record<string, unknown> };
     const { task, input: rawInput } = body;
 
     if (!task || !rawInput || !validators[task]) {
