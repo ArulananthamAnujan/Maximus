@@ -1,8 +1,5 @@
 import { useState, useEffect } from 'react';
-import {
-  FileText, Presentation, ChevronLeft, ChevronRight,
-  Download, BookOpen, X, Maximize2, Minimize2, Loader2,
-} from 'lucide-react';
+import { FileText, Presentation, ChevronLeft, ChevronRight, Download, BookOpen, X, Maximize2, Minimize2, Loader2, List, Grid3x3 as Grid3X3 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface LessonDocument {
@@ -39,8 +36,9 @@ function stripHtml(html: string): string {
 
 // Parse HTML into structured blocks for PDF rendering
 interface TextBlock {
-  type: 'h1' | 'h2' | 'h3' | 'p' | 'bullet' | 'quote';
+  type: 'h1' | 'h2' | 'h3' | 'p' | 'bullet' | 'quote' | 'numbered';
   text: string;
+  level?: number;
 }
 
 function parseHtmlToBlocks(html: string): TextBlock[] {
@@ -56,11 +54,20 @@ function parseHtmlToBlocks(html: string): TextBlock[] {
     else if (tag === 'h2') blocks.push({ type: 'h2', text });
     else if (tag === 'h3') blocks.push({ type: 'h3', text });
     else if (tag === 'blockquote') blocks.push({ type: 'quote', text });
-    else if (tag === 'li') blocks.push({ type: 'bullet', text });
+    else if (tag === 'li') {
+      const parent = node.parentElement?.tagName?.toLowerCase();
+      blocks.push({ type: parent === 'ol' ? 'numbered' : 'bullet', text });
+    }
     else if (tag === 'p') blocks.push({ type: 'p', text });
-    else if (tag === 'ul' || tag === 'ol') {
+    else if (tag === 'ul') {
       node.querySelectorAll('li').forEach(li => {
         blocks.push({ type: 'bullet', text: li.textContent?.trim() || '' });
+      });
+      return;
+    } else if (tag === 'ol') {
+      let counter = 1;
+      node.querySelectorAll('li').forEach(li => {
+        blocks.push({ type: 'numbered', text: li.textContent?.trim() || '', level: counter++ });
       });
       return;
     } else if (node.children.length > 0) {
@@ -82,55 +89,81 @@ async function generatePdf(title: string, contentHtml: string) {
 
   const pageW = 210;
   const pageH = 297;
-  const marginL = 20;
-  const marginR = 20;
+  const marginL = 22;
+  const marginR = 22;
   const marginT = 20;
-  const marginB = 20;
+  const marginB = 22;
   const usableW = pageW - marginL - marginR;
   let y = marginT;
 
   const addPage = () => { doc.addPage(); y = marginT; };
   const checkPage = (needed: number) => { if (y + needed > pageH - marginB) addPage(); };
 
-  // Header bar
+  // ── Header bar ────────────────────────────────────────────────────────────
   doc.setFillColor(15, 118, 110);
-  doc.rect(0, 0, pageW, 14, 'F');
+  doc.rect(0, 0, pageW, 16, 'F');
+  // Accent stripe
+  doc.setFillColor(20, 184, 166);
+  doc.rect(0, 13, pageW, 3, 'F');
+
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text('LESSON NOTES', marginL, 9);
-  doc.text(new Date().toLocaleDateString(), pageW - marginR, 9, { align: 'right' });
+  doc.text('LESSON NOTES', marginL, 10);
+  doc.text(new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' }), pageW - marginR, 10, { align: 'right' });
 
-  y = 24;
+  y = 26;
 
-  // Title
+  // ── Title ─────────────────────────────────────────────────────────────────
   doc.setTextColor(15, 23, 42);
-  doc.setFontSize(20);
+  doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
   const titleLines = doc.splitTextToSize(title, usableW);
   titleLines.forEach((line: string) => {
-    checkPage(10);
+    checkPage(12);
     doc.text(line, marginL, y);
-    y += 10;
+    y += 12;
   });
+  y += 2;
 
   // Divider
   doc.setDrawColor(14, 165, 233);
-  doc.setLineWidth(0.8);
-  doc.line(marginL, y + 2, pageW - marginR, y + 2);
+  doc.setLineWidth(1);
+  doc.line(marginL, y, pageW - marginR, y);
   y += 8;
 
   const blocks = parseHtmlToBlocks(contentHtml);
+  let numberedCounter = 0;
 
   for (const block of blocks) {
-    if (block.type === 'h2') {
+    if (block.type !== 'numbered') numberedCounter = 0;
+
+    if (block.type === 'h1') {
+      checkPage(16);
+      y += 5;
+      // Teal background label
+      doc.setFillColor(240, 253, 250);
+      doc.setDrawColor(20, 184, 166);
+      doc.setLineWidth(0.3);
+      const h1Lines = doc.splitTextToSize(block.text, usableW - 6);
+      const boxH = h1Lines.length * 9 + 6;
+      doc.roundedRect(marginL, y - 5, usableW, boxH, 2, 2, 'FD');
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 118, 110);
+      h1Lines.forEach((line: string) => { checkPage(9); doc.text(line, marginL + 3, y); y += 9; });
+      y += 3;
+    } else if (block.type === 'h2') {
       checkPage(14);
-      y += 4;
+      y += 5;
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(15, 118, 110);
-      const lines = doc.splitTextToSize(block.text, usableW);
-      lines.forEach((line: string) => { checkPage(8); doc.text(line, marginL, y); y += 8; });
+      // Left border accent
+      doc.setFillColor(14, 165, 233);
+      doc.rect(marginL, y - 5, 2.5, 10, 'F');
+      const lines = doc.splitTextToSize(block.text, usableW - 6);
+      lines.forEach((line: string) => { checkPage(9); doc.text(line, marginL + 5, y); y += 9; });
       y += 2;
     } else if (block.type === 'h3') {
       checkPage(12);
@@ -145,554 +178,351 @@ async function generatePdf(title: string, contentHtml: string) {
       doc.setFontSize(11);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(51, 65, 85);
+      // Teal bullet dot
       doc.setFillColor(14, 165, 233);
-      doc.circle(marginL + 2, y - 1.5, 1, 'F');
-      const lines = doc.splitTextToSize(block.text, usableW - 8);
+      doc.circle(marginL + 2.5, y - 1.8, 1.2, 'F');
+      const lines = doc.splitTextToSize(block.text, usableW - 10);
       lines.forEach((line: string, idx: number) => {
         checkPage(6);
-        doc.text(line, marginL + 6, y);
+        doc.text(line, marginL + 7, y);
+        if (idx < lines.length - 1) y += 6;
+      });
+      y += 6;
+    } else if (block.type === 'numbered') {
+      checkPage(7);
+      numberedCounter++;
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(51, 65, 85);
+      // Numbered circle
+      doc.setFillColor(15, 118, 110);
+      doc.circle(marginL + 3, y - 1.8, 2.5, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text(String(numberedCounter), marginL + 3, y - 0.5, { align: 'center' });
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(51, 65, 85);
+      const lines = doc.splitTextToSize(block.text, usableW - 10);
+      lines.forEach((line: string, idx: number) => {
+        checkPage(6);
+        doc.text(line, marginL + 8, y);
         if (idx < lines.length - 1) y += 6;
       });
       y += 6;
     } else if (block.type === 'quote') {
-      checkPage(12);
-      y += 2;
+      checkPage(14);
+      y += 3;
       doc.setFillColor(240, 249, 255);
-      const lines = doc.splitTextToSize(block.text, usableW - 10);
-      const boxH = lines.length * 6 + 6;
-      doc.roundedRect(marginL, y - 4, usableW, boxH, 2, 2, 'F');
+      const lines = doc.splitTextToSize(block.text, usableW - 12);
+      const boxH = lines.length * 6 + 8;
+      doc.roundedRect(marginL, y - 5, usableW, boxH, 2, 2, 'F');
       doc.setFillColor(14, 165, 233);
-      doc.rect(marginL, y - 4, 2, boxH, 'F');
+      doc.rect(marginL, y - 5, 3, boxH, 'F');
+      // Quote mark
+      doc.setFontSize(20);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(14, 165, 233);
+      doc.text('\u201C', marginL + 5, y + 2);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'italic');
       doc.setTextColor(3, 105, 161);
-      lines.forEach((line: string) => { checkPage(6); doc.text(line, marginL + 5, y); y += 6; });
-      y += 4;
+      lines.forEach((line: string) => { checkPage(6); doc.text(line, marginL + 12, y); y += 6; });
+      y += 5;
     } else {
+      // paragraph
       checkPage(7);
       doc.setFontSize(11);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(51, 65, 85);
       const lines = doc.splitTextToSize(block.text, usableW);
-      lines.forEach((line: string) => { checkPage(6); doc.text(line, marginL, y); y += 6; });
+      lines.forEach((line: string) => { checkPage(6.5); doc.text(line, marginL, y); y += 6.5; });
       y += 2;
     }
   }
 
+  // ── Key Points sidebar (if room, append at bottom) ────────────────────────
   // Footer on every page
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
+    // Footer stripe
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, pageH - 14, pageW, 14, 'F');
     doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.4);
-    doc.line(marginL, pageH - 12, pageW - marginR, pageH - 12);
+    doc.line(marginL, pageH - 14, pageW - marginR, pageH - 14);
+    // Footer teal accent
+    doc.setFillColor(15, 118, 110);
+    doc.rect(0, pageH - 14, 4, 14, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(148, 163, 184);
-    doc.text(title, marginL, pageH - 7);
-    doc.text(`Page ${p} of ${totalPages}`, pageW - marginR, pageH - 7, { align: 'right' });
+    doc.setTextColor(100, 116, 139);
+    doc.text(title.length > 60 ? title.slice(0, 57) + '...' : title, marginL, pageH - 6);
+    doc.text(`Page ${p} of ${totalPages}`, pageW - marginR, pageH - 6, { align: 'right' });
   }
 
   doc.save(`${title.replace(/[^a-z0-9]/gi, '_')}.pdf`);
 }
 
-// ─── PPTX generation — pure browser, zero dependencies ──────────────────────
-// Builds a valid .pptx (Office Open XML ZIP) without any npm package.
+// ─── Slides Viewer — rich interactive HTML ───────────────────────────────────
 
 interface ParsedSlide {
-  slideNumber: number;
   heading: string;
-  bullets: string[];
+  bodyHtml: string;
   speakerNotes: string;
+  slideType: 'title' | 'content' | 'summary';
 }
 
-function parseSlidesFromHtml(slidesHtml: string): ParsedSlide[] {
+function parseSlidesFromHtml(html: string): ParsedSlide[] {
   const div = document.createElement('div');
-  div.innerHTML = slidesHtml;
+  div.innerHTML = html;
   const slideEls = div.querySelectorAll('.slide');
+
+  if (slideEls.length === 0) {
+    // Fallback: treat entire HTML as a single slide
+    return [{
+      heading: '',
+      bodyHtml: html,
+      speakerNotes: '',
+      slideType: 'content',
+    }];
+  }
+
   return Array.from(slideEls).map((el, idx) => {
-    const h2 = el.querySelector('h2');
     const notesEl = el.querySelector('.speaker-notes');
-    const heading = h2?.textContent?.trim() || `Slide ${idx + 1}`;
     const notes = notesEl?.textContent?.trim().replace(/^Speaker notes:?/i, '').trim() || '';
     notesEl?.remove();
+
+    const h2 = el.querySelector('h2');
+    const heading = h2?.textContent?.trim() || `Slide ${idx + 1}`;
     h2?.remove();
-    // Collect visible text lines as bullets
-    const bullets: string[] = [];
-    const gather = (node: Element) => {
-      const tag = node.tagName?.toLowerCase();
-      const text = node.textContent?.trim() || '';
-      if (!text) return;
-      if (['li', 'p', 'h3'].includes(tag)) { bullets.push(text); return; }
-      Array.from(node.children).forEach(c => gather(c as Element));
+
+    const bodyHtml = el.innerHTML.trim();
+    const isTitle = idx === 0;
+    const isSummary = heading.toLowerCase().includes('summary') || heading.toLowerCase().includes('next steps');
+
+    return {
+      heading,
+      bodyHtml,
+      speakerNotes: notes,
+      slideType: isTitle ? 'title' : isSummary ? 'summary' : 'content',
     };
-    Array.from(el.children).forEach(c => gather(c as Element));
-    return { slideNumber: idx + 1, heading, bullets, speakerNotes: notes };
   });
 }
 
-function xmlEscape(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+function SlideDisplay({ slide, index, total, fullscreen }: { slide: ParsedSlide; index: number; total: number; fullscreen: boolean }) {
+  const [showNotes, setShowNotes] = useState(false);
+
+  const isTitle = slide.slideType === 'title';
+  const isSummary = slide.slideType === 'summary';
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Slide canvas */}
+      <div className={`flex-1 relative overflow-hidden ${isTitle ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900' : isSummary ? 'bg-gradient-to-br from-teal-900 via-teal-800 to-slate-900' : 'bg-white'}`}>
+        {/* Top accent bar */}
+        <div className={`absolute top-0 left-0 right-0 h-1.5 ${isTitle || isSummary ? 'bg-teal-400' : 'bg-teal-600'}`} />
+
+        {/* Slide number badge */}
+        <div className="absolute top-4 right-5 text-xs font-mono opacity-40 text-slate-400">
+          {index + 1} / {total}
+        </div>
+
+        {/* Content */}
+        <div className={`flex flex-col justify-center h-full px-10 py-8 ${fullscreen ? 'px-16 py-12' : ''}`}>
+          {isTitle ? (
+            <div className="text-center">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-teal-800/50 rounded-full text-teal-300 text-xs font-semibold mb-6 border border-teal-700/50">
+                <Presentation className="w-3 h-3" /> Presentation
+              </div>
+              <h1 className={`font-bold text-white mb-4 leading-tight ${fullscreen ? 'text-5xl' : 'text-3xl'}`}>
+                {slide.heading}
+              </h1>
+              {slide.bodyHtml && (
+                <div className={`text-slate-400 leading-relaxed ${fullscreen ? 'text-xl' : 'text-base'}`}
+                  dangerouslySetInnerHTML={{ __html: slide.bodyHtml }} />
+              )}
+            </div>
+          ) : (
+            <>
+              <h2 className={`font-bold mb-5 leading-tight ${fullscreen ? 'text-3xl' : 'text-xl'} ${isSummary ? 'text-white' : 'text-slate-900'}`}>
+                {slide.heading}
+              </h2>
+              <div
+                className={`leading-relaxed slide-body ${fullscreen ? 'text-lg' : 'text-sm'} ${isSummary ? 'slide-body-dark' : 'slide-body-light'}`}
+                dangerouslySetInnerHTML={{ __html: slide.bodyHtml }}
+              />
+            </>
+          )}
+        </div>
+
+        {/* Bottom accent line */}
+        <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${isTitle || isSummary ? 'bg-teal-700' : 'bg-slate-100'}`} />
+      </div>
+
+      {/* Speaker notes panel */}
+      {slide.speakerNotes && (
+        <div>
+          <button
+            onClick={() => setShowNotes(n => !n)}
+            className="flex items-center gap-2 w-full px-4 py-2 bg-amber-50 border-t border-amber-200 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+          >
+            <span className="w-4 h-4 rounded bg-amber-200 flex items-center justify-center text-amber-700 text-xs font-bold shrink-0">N</span>
+            {showNotes ? 'Hide' : 'Show'} Speaker Notes
+          </button>
+          {showNotes && (
+            <div className="px-5 py-3 bg-amber-50 border-t border-amber-100 text-xs text-amber-800 leading-relaxed">
+              {slide.speakerNotes}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
-// EMU conversion: 1 inch = 914400 EMU, slide is 12192000 x 6858000 EMU (widescreen 16:9)
-const W = 12192000;
-const H = 6858000;
-const emu = (inch: number) => Math.round(inch * 914400);
-
-function makeSlideXml(s: ParsedSlide, isTitle: boolean, courseTitle: string): string {
-  const BG = isTitle ? '0F172A' : 'FFFFFF';
-  const headingColor = isTitle ? 'FFFFFF' : '0F172A';
-  const subColor = isTitle ? '0EA5E9' : '334155';
-  const barColor = '0E7490';
-
-  // Top accent bar shape (800 EMU tall)
-  const accentBar = `
-    <p:sp>
-      <p:nvSpPr><p:cNvPr id="2" name="Bar"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
-      <p:spPr>
-        <a:xfrm><a:off x="0" y="0"/><a:ext cx="${W}" cy="${emu(0.1)}"/></a:xfrm>
-        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-        <a:solidFill><a:srgbClr val="${barColor}"/></a:solidFill>
-        <a:ln><a:noFill/></a:ln>
-      </p:spPr>
-      <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
-    </p:sp>`;
-
-  // Heading text box
-  const headingY = isTitle ? emu(1.5) : emu(0.18);
-  const headingH = isTitle ? emu(1.4) : emu(0.65);
-  const headingSize = isTitle ? 3600 : 2400;
-  const headingTx = `
-    <p:sp>
-      <p:nvSpPr><p:cNvPr id="3" name="Heading"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
-      <p:spPr>
-        <a:xfrm><a:off x="${emu(0.4)}" y="${headingY}"/><a:ext cx="${W - emu(0.8)}" cy="${headingH}"/></a:xfrm>
-        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
-      </p:spPr>
-      <p:txBody>
-        <a:bodyPr wrap="square" lIns="${emu(0.05)}" rIns="${emu(0.05)}" tIns="${emu(0.05)}" bIns="${emu(0.05)}"/>
-        <a:lstStyle/>
-        <a:p>
-          <a:pPr algn="${isTitle ? 'ctr' : 'l'}"/>
-          <a:r><a:rPr lang="en-AU" sz="${headingSize}" b="1" dirty="0">
-            <a:solidFill><a:srgbClr val="${headingColor}"/></a:solidFill>
-            <a:latin typeface="Calibri"/>
-          </a:rPr><a:t>${xmlEscape(s.heading)}</a:t></a:r>
-        </a:p>
-      </p:txBody>
-    </p:sp>`;
-
-  // Title slide subtitle (course name + date)
-  const subtitleTx = isTitle ? `
-    <p:sp>
-      <p:nvSpPr><p:cNvPr id="5" name="Sub"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
-      <p:spPr>
-        <a:xfrm><a:off x="${emu(0.4)}" y="${emu(3.1)}"/><a:ext cx="${W - emu(0.8)}" cy="${emu(0.6)}"/></a:xfrm>
-        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
-      </p:spPr>
-      <p:txBody>
-        <a:bodyPr wrap="square"/>
-        <a:lstStyle/>
-        <a:p><a:pPr algn="ctr"/>
-          <a:r><a:rPr lang="en-AU" sz="1800" dirty="0">
-            <a:solidFill><a:srgbClr val="${subColor}"/></a:solidFill>
-            <a:latin typeface="Calibri"/>
-          </a:rPr><a:t>${xmlEscape(courseTitle)}</a:t></a:r>
-        </a:p>
-      </p:txBody>
-    </p:sp>
-    <p:sp>
-      <p:nvSpPr><p:cNvPr id="6" name="Date"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
-      <p:spPr>
-        <a:xfrm><a:off x="${emu(0.4)}" y="${emu(3.85)}"/><a:ext cx="${W - emu(0.8)}" cy="${emu(0.4)}"/></a:xfrm>
-        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
-      </p:spPr>
-      <p:txBody>
-        <a:bodyPr wrap="square"/>
-        <a:lstStyle/>
-        <a:p><a:pPr algn="ctr"/>
-          <a:r><a:rPr lang="en-AU" sz="1300" dirty="0">
-            <a:solidFill><a:srgbClr val="94A3B8"/></a:solidFill>
-            <a:latin typeface="Calibri"/>
-          </a:rPr><a:t>${xmlEscape(new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long' }))}</a:t></a:r>
-        </a:p>
-      </p:txBody>
-    </p:sp>` : '';
-
-  // Content bullets
-  const bulletsXml = !isTitle && s.bullets.length > 0 ? `
-    <p:sp>
-      <p:nvSpPr><p:cNvPr id="4" name="Body"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
-      <p:spPr>
-        <a:xfrm><a:off x="${emu(0.4)}" y="${emu(1.05)}"/><a:ext cx="${W - emu(0.8)}" cy="${H - emu(1.55)}"/></a:xfrm>
-        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>
-      </p:spPr>
-      <p:txBody>
-        <a:bodyPr wrap="square" lIns="${emu(0.05)}" rIns="${emu(0.05)}" tIns="${emu(0.08)}" bIns="${emu(0.05)}"/>
-        <a:lstStyle/>
-        ${s.bullets.map(b => `
-        <a:p>
-          <a:pPr marL="${emu(0.2)}" indent="${emu(-0.2)}">
-            <a:buChar char="•"/>
-          </a:pPr>
-          <a:r><a:rPr lang="en-AU" sz="1400" dirty="0">
-            <a:solidFill><a:srgbClr val="334155"/></a:solidFill>
-            <a:latin typeface="Calibri"/>
-          </a:rPr><a:t>${xmlEscape(b)}</a:t></a:r>
-        </a:p>`).join('')}
-      </p:txBody>
-    </p:sp>` : '';
-
-  // Bottom footer bar
-  const footerBar = !isTitle ? `
-    <p:sp>
-      <p:nvSpPr><p:cNvPr id="7" name="Footer"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr/></p:nvSpPr>
-      <p:spPr>
-        <a:xfrm><a:off x="0" y="${H - emu(0.08)}"/><a:ext cx="${W}" cy="${emu(0.08)}"/></a:xfrm>
-        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-        <a:solidFill><a:srgbClr val="E2E8F0"/></a:solidFill>
-        <a:ln><a:noFill/></a:ln>
-      </p:spPr>
-      <p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody>
-    </p:sp>` : '';
-
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
-       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-  <p:cSld>
-    <p:bg><p:bgPr>
-      <a:solidFill><a:srgbClr val="${BG}"/></a:solidFill>
-      <a:effectLst/>
-    </p:bgPr></p:bg>
-    <p:spTree>
-      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
-      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
-        <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
-      ${accentBar}${headingTx}${subtitleTx}${bulletsXml}${footerBar}
-    </p:spTree>
-  </p:cSld>
-  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
-</p:sld>`;
-}
-
-function makeNotesXml(notes: string): string {
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
-         xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-         xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-  <p:cSld><p:spTree>
-    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
-    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
-      <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
-    <p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>
-      <p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
-      <p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>
-        <a:p><a:r><a:rPr lang="en-AU" dirty="0"/><a:t>${xmlEscape(notes)}</a:t></a:r></a:p>
-      </p:txBody>
-    </p:sp>
-  </p:spTree></p:cSld>
-  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
-</p:notes>`;
-}
-
-// Minimal ZIP builder — no external library needed
-function uint8(str: string): Uint8Array {
-  return new TextEncoder().encode(str);
-}
-
-function crc32(buf: Uint8Array): number {
-  const table = (crc32 as unknown as { t?: Uint32Array }).t ??
-    (() => {
-      const t = new Uint32Array(256);
-      for (let i = 0; i < 256; i++) {
-        let c = i;
-        for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-        t[i] = c;
-      }
-      return ((crc32 as unknown as { t?: Uint32Array }).t = t);
-    })();
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < buf.length; i++) c = table[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
-  return (c ^ 0xFFFFFFFF) >>> 0;
-}
-
-function le16(n: number) { return [(n & 0xFF), (n >> 8) & 0xFF]; }
-function le32(n: number) { return [(n & 0xFF), (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF]; }
-
-interface ZipEntry { name: string; data: Uint8Array; }
-
-function buildZip(entries: ZipEntry[]): Uint8Array {
-  const parts: Uint8Array[] = [];
-  const centralDir: Uint8Array[] = [];
-  let offset = 0;
-
-  for (const entry of entries) {
-    const nameBytes = uint8(entry.name);
-    const crc = crc32(entry.data);
-    const size = entry.data.length;
-    const localHeader = new Uint8Array([
-      0x50,0x4B,0x03,0x04, // sig
-      0x14,0x00,           // version needed
-      0x00,0x00,           // flags
-      0x00,0x00,           // compression (stored)
-      0x00,0x00,0x00,0x00, // mod time/date
-      ...le32(crc),
-      ...le32(size),
-      ...le32(size),
-      ...le16(nameBytes.length),
-      0x00,0x00,           // extra length
-      ...nameBytes,
-    ]);
-    parts.push(localHeader, entry.data);
-    centralDir.push(new Uint8Array([
-      0x50,0x4B,0x01,0x02, // sig
-      0x14,0x00,           // version made by
-      0x14,0x00,           // version needed
-      0x00,0x00,           // flags
-      0x00,0x00,           // compression
-      0x00,0x00,0x00,0x00, // mod time/date
-      ...le32(crc),
-      ...le32(size),
-      ...le32(size),
-      ...le16(nameBytes.length),
-      0x00,0x00,           // extra length
-      0x00,0x00,           // comment length
-      0x00,0x00,           // disk start
-      0x00,0x00,           // int attr
-      0x20,0x00,0x00,0x00, // ext attr
-      ...le32(offset),
-      ...nameBytes,
-    ]));
-    offset += localHeader.length + size;
-  }
-
-  const cdSize = centralDir.reduce((s, b) => s + b.length, 0);
-  const eocd = new Uint8Array([
-    0x50,0x4B,0x05,0x06, // sig
-    0x00,0x00,0x00,0x00, // disk numbers
-    ...le16(entries.length),
-    ...le16(entries.length),
-    ...le32(cdSize),
-    ...le32(offset),
-    0x00,0x00,           // comment length
-  ]);
-
-  const all = [...parts, ...centralDir, eocd];
-  const total = all.reduce((s, b) => s + b.length, 0);
-  const out = new Uint8Array(total);
-  let pos = 0;
-  for (const b of all) { out.set(b, pos); pos += b.length; }
-  return out;
-}
-
-async function generatePptx(title: string, slidesHtml: string) {
-  const slides = parseSlidesFromHtml(slidesHtml);
-  if (slides.length === 0) return;
-
-  const entries: ZipEntry[] = [];
-
-  const add = (name: string, content: string) =>
-    entries.push({ name, data: uint8(content) });
-
-  // [Content_Types].xml
-  const slideTypes = slides.map((_, i) =>
-    `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`
-  ).join('');
-  const noteTypes = slides.filter(s => s.speakerNotes).map((_, i) =>
-    `<Override PartName="/ppt/notesSlides/notesSlide${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`
-  ).join('');
-
-  add('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
-  <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
-  <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
-  ${slideTypes}${noteTypes}
-</Types>`);
-
-  // _rels/.rels
-  add('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
-</Relationships>`);
-
-  // ppt/_rels/presentation.xml.rels
-  const presRels = slides.map((_, i) =>
-    `<Relationship Id="rId${i + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${i + 1}.xml"/>`
-  ).join('');
-  add('ppt/_rels/presentation.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>
-  ${presRels}
-</Relationships>`);
-
-  // ppt/presentation.xml
-  const slideIdList = slides.map((_, i) =>
-    `<p:sldId id="${256 + i}" r:id="rId${i + 2}"/>`
-  ).join('');
-  add('ppt/presentation.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
-                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-                xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
-                saveSubsetFonts="1">
-  <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
-  <p:sldIdLst>${slideIdList}</p:sldIdLst>
-  <p:sldSz cx="${W}" cy="${H}" type="screen16x9"/>
-  <p:notesSz cx="6858000" cy="9144000"/>
-</p:presentation>`);
-
-  // Minimal slide master + layout (required by spec)
-  const masterXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
-             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-             xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-  <p:cSld><p:spTree>
-    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
-    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
-      <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
-  </p:spTree></p:cSld>
-  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
-  <p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>
-</p:sldMaster>`;
-  add('ppt/slideMasters/slideMaster1.xml', masterXml);
-  add('ppt/slideMasters/_rels/slideMaster1.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
-</Relationships>`);
-
-  add('ppt/slideLayouts/slideLayout1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
-             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-             xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">
-  <p:cSld name="Blank"><p:spTree>
-    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
-    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>
-      <a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
-  </p:spTree></p:cSld>
-  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
-</p:sldLayout>`);
-  add('ppt/slideLayouts/_rels/slideLayout1.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>
-</Relationships>`);
-
-  // Individual slides
-  for (let i = 0; i < slides.length; i++) {
-    const s = slides[i];
-    add(`ppt/slides/slide${i + 1}.xml`, makeSlideXml(s, i === 0, title));
-
-    // Slide rels (points to layout)
-    const slideRels: string[] = [
-      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>`,
-    ];
-    if (s.speakerNotes) {
-      slideRels.push(`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide${i + 1}.xml"/>`);
-    }
-    add(`ppt/slides/_rels/slide${i + 1}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  ${slideRels.join('')}
-</Relationships>`);
-
-    if (s.speakerNotes) {
-      add(`ppt/notesSlides/notesSlide${i + 1}.xml`, makeNotesXml(s.speakerNotes));
-      add(`ppt/notesSlides/_rels/notesSlide${i + 1}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide${i + 1}.xml"/>
-</Relationships>`);
-    }
-  }
-
-  const zip = buildZip(entries);
-  const blob = new Blob([zip], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${title.replace(/[^a-z0-9]/gi, '_')}.pptx`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-// ─── Slides Viewer ───────────────────────────────────────────────────────────
 function SlidesViewer({ doc }: { doc: LessonDocument }) {
   const [slide, setSlide] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [dlPdf, setDlPdf] = useState(false);
-  const [dlPptx, setDlPptx] = useState(false);
+  const [view, setView] = useState<'slides' | 'grid'>('slides');
 
-  const parser = typeof window !== 'undefined' ? new DOMParser() : null;
-  const parsed = parser?.parseFromString(doc.content_html, 'text/html');
-  const slideEls = parsed ? Array.from(parsed.querySelectorAll('.slide')) : [];
-  const total = slideEls.length;
-  const currentHtml = slideEls[slide]?.innerHTML || doc.content_html;
+  const slides = parseSlidesFromHtml(doc.content_html);
+  const total = slides.length;
+  const current = slides[slide] || slides[0];
+
+  const goTo = (idx: number) => { setSlide(idx); setView('slides'); };
 
   return (
-    <div className={`${fullscreen ? 'fixed inset-0 z-50 bg-slate-900 flex flex-col' : 'relative'}`}>
-      {/* Toolbar */}
-      <div className={`flex items-center gap-2 px-4 py-2.5 ${fullscreen ? 'bg-slate-800 border-b border-slate-700' : 'bg-slate-800 rounded-t-xl border border-slate-700'}`}>
-        <div className="w-7 h-7 rounded-lg bg-teal-900 flex items-center justify-center shrink-0">
-          <Presentation className="w-3.5 h-3.5 text-teal-300" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-white truncate">{doc.title}</p>
-          {total > 0 && <p className="text-xs text-slate-400">Slide {slide + 1} of {total}</p>}
-        </div>
-        <button
-          onClick={async () => { setDlPdf(true); try { await generatePdf(doc.title, doc.content_html); } finally { setDlPdf(false); } }}
-          disabled={dlPdf}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-60 border border-red-900"
-          title="Download as PDF"
-        >
-          {dlPdf ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />} PDF
-        </button>
-        <button
-          onClick={async () => { setDlPptx(true); try { await generatePptx(doc.title, doc.content_html); } finally { setDlPptx(false); } }}
-          disabled={dlPptx}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-sky-300 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-60 border border-sky-800"
-          title="Download as PowerPoint"
-        >
-          {dlPptx ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />} PPT
-        </button>
-        <button onClick={() => setFullscreen(f => !f)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-700 transition-colors">
-          {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-        </button>
-        {fullscreen && (
-          <button onClick={() => setFullscreen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-700 transition-colors">
-            <X className="w-4 h-4" />
+    <>
+      <style>{`
+        .slide-body-light h3 { font-size: 1em; font-weight: 700; color: #0F172A; margin-bottom: 0.5rem; margin-top: 0.75rem; }
+        .slide-body-light p { color: #334155; margin-bottom: 0.4rem; line-height: 1.6; }
+        .slide-body-light ul, .slide-body-light ol { padding-left: 1.2rem; margin-bottom: 0.4rem; }
+        .slide-body-light li { color: #334155; margin-bottom: 0.35rem; line-height: 1.6; }
+        .slide-body-light strong { color: #0E7490; font-weight: 700; }
+        .slide-body-light blockquote { border-left: 3px solid #0EA5E9; padding-left: 0.75rem; color: #0369A1; font-style: italic; margin: 0.5rem 0; background: #F0F9FF; padding: 0.5rem 0.75rem; border-radius: 0 4px 4px 0; }
+        .slide-body-dark h3 { font-size: 1em; font-weight: 700; color: #99F6E4; margin-bottom: 0.5rem; margin-top: 0.75rem; }
+        .slide-body-dark p { color: #CCFBF1; margin-bottom: 0.4rem; line-height: 1.6; }
+        .slide-body-dark ul, .slide-body-dark ol { padding-left: 1.2rem; margin-bottom: 0.4rem; }
+        .slide-body-dark li { color: #CCFBF1; margin-bottom: 0.35rem; line-height: 1.6; }
+        .slide-body-dark strong { color: #5EEAD4; font-weight: 700; }
+      `}</style>
+      <div className={`${fullscreen ? 'fixed inset-0 z-50 flex flex-col bg-slate-900' : 'relative rounded-xl overflow-hidden border border-slate-200'}`}>
+        {/* Toolbar */}
+        <div className={`flex items-center gap-2 px-4 py-2.5 ${fullscreen ? 'bg-slate-800 border-b border-slate-700' : 'bg-slate-800'}`}>
+          <div className="w-7 h-7 rounded-lg bg-teal-900 flex items-center justify-center shrink-0">
+            <Presentation className="w-3.5 h-3.5 text-teal-300" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white truncate">{doc.title}</p>
+            {total > 0 && <p className="text-xs text-slate-400">Slide {slide + 1} of {total}</p>}
+          </div>
+
+          {/* View toggle */}
+          <div className="flex items-center gap-0.5 bg-slate-700 rounded-lg p-0.5">
+            <button
+              onClick={() => setView('slides')}
+              className={`p-1.5 rounded-md transition-colors ${view === 'slides' ? 'bg-slate-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              title="Slide view"
+            >
+              <List className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => setView('grid')}
+              className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-slate-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              title="Grid overview"
+            >
+              <Grid3X3 className="w-3 h-3" />
+            </button>
+          </div>
+
+          <button
+            onClick={async () => { setDlPdf(true); try { await generatePdf(doc.title, doc.content_html); } finally { setDlPdf(false); } }}
+            disabled={dlPdf}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-red-300 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-60 border border-red-900"
+            title="Download as PDF"
+          >
+            {dlPdf ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />} PDF
           </button>
+          <button onClick={() => setFullscreen(f => !f)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-700 transition-colors">
+            {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+          {fullscreen && (
+            <button onClick={() => setFullscreen(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-700 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Main area */}
+        {view === 'grid' ? (
+          // Slide overview grid
+          <div className={`overflow-auto p-4 bg-slate-900 ${fullscreen ? 'flex-1' : 'max-h-[420px]'}`}>
+            <div className="grid grid-cols-3 gap-3">
+              {slides.map((s, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => goTo(idx)}
+                  className={`relative rounded-lg overflow-hidden border-2 transition-all text-left ${idx === slide ? 'border-teal-400 shadow-lg shadow-teal-900/50' : 'border-slate-700 hover:border-slate-500'}`}
+                >
+                  <div className={`p-3 min-h-20 ${s.slideType === 'title' ? 'bg-slate-800' : s.slideType === 'summary' ? 'bg-teal-900' : 'bg-white'}`}>
+                    <p className={`text-xs font-bold leading-tight line-clamp-2 ${s.slideType !== 'content' ? 'text-white' : 'text-slate-900'}`}>
+                      {s.heading || `Slide ${idx + 1}`}
+                    </p>
+                    <div className={`mt-1.5 text-xs leading-tight line-clamp-3 opacity-70 ${s.slideType !== 'content' ? 'text-slate-300' : 'text-slate-600'}`}
+                      dangerouslySetInnerHTML={{ __html: s.bodyHtml.replace(/<[^>]+>/g, ' ') }} />
+                  </div>
+                  <div className={`absolute top-1 right-1.5 text-xs font-mono opacity-50 ${s.slideType !== 'content' ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {idx + 1}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          // Single slide view
+          <div className={`${fullscreen ? 'flex-1 overflow-hidden' : 'min-h-72'}`}>
+            <SlideDisplay slide={current} index={slide} total={total} fullscreen={fullscreen} />
+          </div>
+        )}
+
+        {/* Navigation bar */}
+        {view === 'slides' && total > 1 && (
+          <div className={`flex items-center justify-between px-4 py-3 ${fullscreen ? 'bg-slate-800 border-t border-slate-700' : 'bg-slate-800 border-t border-slate-700'}`}>
+            <button
+              onClick={() => setSlide(s => Math.max(0, s - 1))}
+              disabled={slide === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-40 border border-slate-600"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" /> Prev
+            </button>
+
+            {/* Dot indicators */}
+            <div className="flex items-center gap-1 flex-wrap justify-center max-w-xs">
+              {Array.from({ length: total }).map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setSlide(idx)}
+                  title={slides[idx]?.heading || `Slide ${idx + 1}`}
+                  className={`h-1.5 rounded-full transition-all ${idx === slide ? 'w-5 bg-teal-400' : 'w-1.5 bg-slate-600 hover:bg-slate-400'}`}
+                />
+              ))}
+            </div>
+
+            <button
+              onClick={() => setSlide(s => Math.min(total - 1, s + 1))}
+              disabled={slide === total - 1}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-40 border border-slate-600"
+            >
+              Next <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
       </div>
-
-      {/* Slide content */}
-      <div className={`flex-1 overflow-auto ${fullscreen ? 'flex items-center justify-center bg-slate-900 p-8' : 'border-x border-b border-slate-200'}`}>
-        <div className={`${fullscreen ? 'w-full max-w-4xl bg-white rounded-2xl shadow-2xl p-12 min-h-80' : 'p-6 bg-white min-h-60'}`}>
-          <div className="prose prose-slate max-w-none text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: currentHtml }} />
-        </div>
-      </div>
-
-      {/* Navigation */}
-      {total > 1 && (
-        <div className={`flex items-center justify-between px-4 py-3 ${fullscreen ? 'bg-slate-800 border-t border-slate-700' : 'bg-slate-50 border-x border-b border-slate-200 rounded-b-xl'}`}>
-          <button onClick={() => setSlide(s => Math.max(0, s - 1))} disabled={slide === 0}
-            className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 ${fullscreen ? 'text-white hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100 border border-slate-200'}`}>
-            <ChevronLeft className="w-3.5 h-3.5" /> Prev
-          </button>
-          <div className="flex items-center gap-1">
-            {Array.from({ length: total }).map((_, idx) => (
-              <button key={idx} onClick={() => setSlide(idx)}
-                className={`h-1.5 rounded-full transition-all ${idx === slide ? (fullscreen ? 'w-5 bg-sky-400' : 'w-5 bg-teal-500') : (fullscreen ? 'w-1.5 bg-slate-600' : 'w-1.5 bg-slate-300')}`} />
-            ))}
-          </div>
-          <button onClick={() => setSlide(s => Math.min(total - 1, s + 1))} disabled={slide === total - 1}
-            className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 ${fullscreen ? 'text-white hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100 border border-slate-200'}`}>
-            Next <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -736,6 +566,9 @@ export default function LessonDocumentViewer({ lessonId, courseId }: Props) {
   const [docs, setDocs] = useState<LessonDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeDoc, setActiveDoc] = useState<string | null>(null);
+
+  // suppress unused warning — courseId may be used for future RLS scoping
+  void courseId;
 
   useEffect(() => {
     if (!lessonId) return;
@@ -782,7 +615,7 @@ export default function LessonDocumentViewer({ lessonId, courseId }: Props) {
                     : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
                 }`}>
                 {isNotes ? <FileText className="w-3 h-3" /> : <Presentation className="w-3 h-3" />}
-                {isNotes ? 'Notes (PDF)' : 'Slides (PPT)'}
+                {isNotes ? 'Notes (PDF)' : 'Slides'}
               </button>
             );
           })}
@@ -825,7 +658,7 @@ export function LessonDocumentBadges({ lessonId }: { lessonId: string }) {
       )}
       {counts.slides > 0 && (
         <span className="flex items-center gap-0.5 text-xs bg-slate-800 text-white px-1.5 py-0.5 rounded font-medium">
-          <BookOpen className="w-2.5 h-2.5" /> PPT
+          <BookOpen className="w-2.5 h-2.5" /> Slides
         </span>
       )}
     </span>

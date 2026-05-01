@@ -168,10 +168,11 @@ Output shape: {"title": string, "content_html": string, "key_points": string[], 
 For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
 Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
 
-    presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
+    presentation_slides: `You are an expert educator creating rich, detailed presentation slides for a lesson. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
-Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
-Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
+Generate 10-14 slides. Each slide content_html should use: h3, p, ul, ol, li, strong, em, blockquote tags. Aim for 80-180 words of substantive content per slide.
+Include: title slide (with course context and objectives), detailed learning objectives, 1-2 slides per key concept with explanations AND real-world examples, a worked example or case study slide, a practice activity slide, key terms/glossary slide, summary with 5-7 takeaways, and a next steps/resources slide.
+speaker_notes: Write 3-5 sentences of detailed talking points a teacher would say for each slide — include tips, context, and questions to ask students.`,
 
     generate_exam: `You are an expert exam writer for language and academic preparation (IELTS, PTE, academic English, etc.). ${jsonRule}
 Output shape: {
@@ -190,16 +191,17 @@ Guidelines:
 - time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
 - Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
-    section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate detailed lesson notes for every lesson in the section PLUS rich presentation slides for the entire section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
   "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-STRICT LENGTH LIMITS (required to avoid timeout):
-- Each lesson notes_html: 200-300 words MAX. Use h3, p, ul, li, strong only. Cover: 1 intro paragraph, 2-3 key concept bullets, 1 summary line.
-- Slides: exactly 6 slides total for the section. Use only h3, p, ul, li per slide. Max 60 words per slide.
+LENGTH GUIDELINES:
+- Each lesson notes_html: 300-500 words. Use h3, p, ul, ol, li, strong, blockquote. Cover: intro paragraph, 3-4 key concept sections with examples, summary.
+- Slides: 6-8 slides total for the section. Use h3, p, ul, li, strong per slide. Aim for 80-150 words per slide with real examples and context.
+- speaker_notes: 2-3 sentences of talking points per slide.
 If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
