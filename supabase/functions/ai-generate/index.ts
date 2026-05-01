@@ -151,7 +151,7 @@ Output shape: {"translated_content": string}`,
 Output shape: {"activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]}
 Instructions should be 2-4 sentences, actionable, and clearly describe what the student must do.`,
 
-    full_curriculum: `You are an expert curriculum designer creating a complete, structured course. ${jsonRule}
+    full_curriculum: `You are an expert curriculum designer. ${jsonRule}
 Output shape: {
   "sections": [{
     "title": string,
@@ -160,16 +160,13 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-STRICT RULES:
+RULES:
 - Each section: exactly the requested number of lessons, exactly 1 quiz with EXACTLY 10 questions, exactly 1 activity.
-- Quiz difficulty distribution: 3 easy questions (basic recall/recognition), 4 medium questions (application/understanding), 3 hard questions (analysis/synthesis/edge cases). Include the "difficulty" field on every question.
-- Mix question types: at least 7 mcq and at least 2 true_false per quiz. Make hard questions tricky with plausible distractors.
-- lesson description: 1 short sentence only (max 15 words).
-- quiz explanation: 1 sentence only (max 20 words).
-- activity instructions: 2 sentences max.
-- For mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
-- For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
-- If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered.`,
+- Quiz: 3 easy + 4 medium + 3 hard questions. At least 7 mcq and 2 true_false. Hard questions must have plausible distractors.
+- lesson description: max 12 words. quiz explanation: max 15 words. activity instructions: max 2 sentences.
+- mcq: exactly 4 options; correct_answer must exactly match one option string.
+- true_false: options must be ["True","False"]; correct_answer must be "True" or "False".
+- Build on existing sections — never repeat covered topics.`,
 
     lesson_notes: `You are an expert educator writing comprehensive, detailed lesson notes equivalent to 5+ printed pages. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
@@ -205,7 +202,7 @@ Guidelines:
 - time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
 - Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
-    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate lesson notes for every lesson in the section PLUS presentation slides for the section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
@@ -213,15 +210,15 @@ Output shape: {
   "slides": [{"slide_number": number, "heading": string, "slide_type": "title"|"objectives"|"concept"|"example"|"activity"|"summary", "content_html": string, "speaker_notes": string}]
 }
 NOTES REQUIREMENTS (per lesson):
-- notes_html: 1000-1500 words of detailed educational content using h2, h3, p, ul, ol, li, strong, em, blockquote tags.
-- Structure each lesson: Introduction (1-2 paragraphs) → Background & Context → 2-3 Core Concept sections (each with explanation + example + blockquote tip) → Common Mistakes (bulleted) → Practice Exercise → Summary.
-- Be thorough with real examples, practical applications, and actionable advice.
-SLIDES REQUIREMENTS (for the whole section):
-- Generate 10-12 slides total. Mix of slide types.
-- Slide types: "title" (section cover), "objectives" (learning goals), "concept" (key idea with 4-6 bullets), "example" (worked example with steps), "activity" (hands-on task), "summary" (key takeaways).
-- content_html per slide: use h3 for sub-headings, ul/li for bullets, p for short paragraphs. 60-100 words per slide.
-- speaker_notes: 2-3 sentences of presenter guidance per slide.
-If prior section context is given, build on it — do NOT repeat covered material.`,
+- notes_html: 400-600 words per lesson using h2, h3, p, ul, ol, li, strong, em, blockquote tags only.
+- Structure: Introduction (1 paragraph) → 2 Core Concepts with explanation + example → Key Mistakes (3-4 bullets) → Summary.
+- key_points: 3-5 strings, each under 15 words.
+SLIDES REQUIREMENTS:
+- Generate exactly 8-10 slides total for the whole section. Mix types.
+- slide_type one of: "title", "objectives", "concept", "example", "activity", "summary".
+- content_html per slide: ul/li bullets or short p tags. 40-60 words per slide max.
+- speaker_notes: 1-2 sentences only.
+Be concise. Every word must add value.`,
   };
 
   return prompts[task] || jsonRule;
@@ -336,10 +333,10 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'section_content') return 16000;
-  if (task === 'full_curriculum') return 20000;
-  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
-  return 4096;
+  if (task === 'section_content') return 8192;
+  if (task === 'full_curriculum') return 8192;
+  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 4096;
+  return 2048;
 }
 
 // ─── Anthropic call ──────────────────────────────────────────────────────────
@@ -367,12 +364,18 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(task === 'full_curriculum' ? 180000 : 90000),
+    signal: AbortSignal.timeout(55000),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${body.slice(0, 200)}`);
+    // Try to extract a clean error message from Anthropic's JSON error body
+    let detail = body.slice(0, 300);
+    try {
+      const parsed = JSON.parse(body) as { error?: { message?: string }; message?: string };
+      detail = parsed?.error?.message || parsed?.message || detail;
+    } catch { /* use raw body */ }
+    throw new Error(`Anthropic error ${response.status}: ${detail}`);
   }
 
   const data = await response.json() as {
