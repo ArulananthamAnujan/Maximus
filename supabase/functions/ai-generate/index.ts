@@ -127,9 +127,11 @@ Output shape: {"title": string, "description": string, "modules": [{"title": str
 Output shape: {"content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
 For content_html: use clean semantic HTML only — h2, h3, p, ul, ol, strong, em, code tags. No scripts, no inline styles, no external references.`,
 
-    quiz_from_content: `You are an expert quiz designer. ${jsonRule}
-Output shape: {"questions": [{"type": "mcq"|"true_false"|"short_answer", "question": string, "options": string[]|null, "correct_answer": string, "explanation": string, "points": number}]}
-For mcq: include 4 options. For true_false: options should be ["True","False"]. For short_answer: options should be null.`,
+    quiz_from_content: `You are an expert quiz designer creating rigorous, challenging assessments. ${jsonRule}
+Output shape: {"questions": [{"type": "mcq"|"true_false"|"short_answer", "question": string, "options": string[]|null, "correct_answer": string, "explanation": string, "points": number, "difficulty": "easy"|"medium"|"hard"}]}
+For mcq: include exactly 4 options with plausible distractors — avoid obviously wrong answers. For true_false: options should be ["True","False"]. For short_answer: options should be null.
+Difficulty guidelines: easy = direct recall; medium = application or comparison; hard = analysis, synthesis, edge cases, or common misconceptions. Use the "difficulty" field on every question.
+Generate questions that test deep understanding, not just surface memorization. Hard questions should require critical thinking.`,
 
     flashcards: `You are an expert educator creating concise, effective flashcards. ${jsonRule}
 Output shape: {"cards": [{"front": string, "back": string}]}
@@ -154,12 +156,14 @@ Output shape: {
   "sections": [{
     "title": string,
     "lessons": [{"title": string, "type": "article"|"document", "estimated_duration_minutes": number, "description": string}],
-    "quiz": {"title": string, "questions": [{"type": "mcq"|"true_false", "question": string, "options": string[], "correct_answer": string, "explanation": string, "points": number}]},
+    "quiz": {"title": string, "questions": [{"type": "mcq"|"true_false", "question": string, "options": string[], "correct_answer": string, "explanation": string, "points": number, "difficulty": "easy"|"medium"|"hard"}]},
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-STRICT RULES to keep response compact:
-- Each section: exactly the requested number of lessons, exactly 1 quiz with exactly 3 questions, exactly 1 activity.
+STRICT RULES:
+- Each section: exactly the requested number of lessons, exactly 1 quiz with EXACTLY 10 questions, exactly 1 activity.
+- Quiz difficulty distribution: 3 easy questions (basic recall/recognition), 4 medium questions (application/understanding), 3 hard questions (analysis/synthesis/edge cases). Include the "difficulty" field on every question.
+- Mix question types: at least 7 mcq and at least 2 true_false per quiz. Make hard questions tricky with plausible distractors.
 - lesson description: 1 short sentence only (max 15 words).
 - quiz explanation: 1 sentence only (max 20 words).
 - activity instructions: 2 sentences max.

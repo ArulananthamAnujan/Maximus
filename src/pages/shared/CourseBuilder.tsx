@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense, Component } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Video, FileText,
@@ -23,6 +23,38 @@ const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocume
 import { LessonDocumentBadges } from '../../components/ui/LessonDocumentViewer';
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
+
+// ─── Error boundary to prevent white-screen crashes in lazy panels ───────────
+class DocumentViewerErrorBoundary extends Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  componentDidCatch() {
+    // Reset on next render cycle so retries work
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="mx-4 mb-4 mt-1 rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
+          <p className="font-semibold mb-1">Could not load documents</p>
+          <p className="text-xs text-red-400">{this.state.error}</p>
+          <button
+            className="mt-2 text-xs text-red-500 underline"
+            onClick={() => this.setState({ hasError: false, error: '' })}
+          >Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Maps both UI type names and DB type names
 const LESSON_ICONS: Record<string, typeof Video> = {
@@ -1891,14 +1923,16 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           {/* AI-generated documents (notes + slides) — toggle with the doc button */}
                           {expandedDocsLessonId === lesson.id && selectedCourse && (
                             <div className="mx-4 mb-4 mt-1">
-                              <Suspense fallback={
-                                <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
-                                  <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />
-                                  Loading documents...
-                                </div>
-                              }>
-                                <LessonDocumentViewer lessonId={lesson.id} courseId={selectedCourse} />
-                              </Suspense>
+                              <DocumentViewerErrorBoundary key={lesson.id}>
+                                <Suspense fallback={
+                                  <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
+                                    <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />
+                                    Loading documents...
+                                  </div>
+                                }>
+                                  <LessonDocumentViewer lessonId={lesson.id} courseId={selectedCourse} />
+                                </Suspense>
+                              </DocumentViewerErrorBoundary>
                             </div>
                           )}
 
