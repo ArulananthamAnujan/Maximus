@@ -623,25 +623,22 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse || !profile) return;
     setAICurriculumInserting(true);
     setAICurriculumInsertStatus('Setting up sections...');
+
+    const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
+    const startIdx = sections.length;
+
+    // Track newly inserted sections with their lesson IDs for the AI pass
+    type InsertedSection = {
+      sec: typeof aiCurriculumPreview[number];
+      insertedLessons: Array<{ id: string; title: string }>;
+    };
+    const insertedSections: InsertedSection[] = [];
+
+    // ── PASS 1: Insert all sections, lessons, quizzes, activities (fast DB ops) ──
     try {
-      const { generateSectionContent } = await import('../../lib/ai');
-      const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
-      const startIdx = sections.length;
-
-      // Build existing sections summary for context continuity
-      const existingSummary = sections.length > 0
-        ? sections.map((s, i) => {
-            const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
-            return `Section ${i + 1}: "${s.title}"${lessonTitles ? ` (${lessonTitles})` : ''}`;
-          }).join('\n')
-        : undefined;
-
-      // Track newly inserted sections for rolling context
-      const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
-
       for (let i = 0; i < aiCurriculumPreview.length; i++) {
         const sec = aiCurriculumPreview[i];
-        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: creating "${sec.title}"...`);
+        setAICurriculumInsertStatus(`Creating section ${i + 1}/${aiCurriculumPreview.length}: "${sec.title}"...`);
 
         const { data: sectionData, error: sectionErr } = await supabase
           .from('sections')
@@ -650,7 +647,6 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           .single();
         if (sectionErr || !sectionData) continue;
 
-        // Insert lessons
         const lessonRows = (sec.lessons || []).map((l, li) => ({
           section_id: sectionData.id,
           course_id: selectedCourse,
@@ -662,13 +658,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           order_index: li,
           is_preview: false,
         }));
+
         let insertedLessons: Array<{ id: string; title: string }> = [];
         if (lessonRows.length > 0) {
           const { data: lessonData, error: lessonErr } = await supabase.from('lessons').insert(lessonRows).select('id, title');
           if (!lessonErr) insertedLessons = lessonData || [];
         }
 
-        // Insert quiz
         if (sec.quiz?.questions?.length) {
           const { data: quizData, error: quizErr } = await supabase.from('quizzes').insert({
             course_id: selectedCourse,
@@ -698,7 +694,6 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }
         }
 
-        // Insert activities
         if (sec.activities?.length && insertedLessons.length > 0) {
           const activityRows = sec.activities.map((a, ai) => ({
             lesson_id: insertedLessons[0].id,
@@ -712,7 +707,53 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           await supabase.from('lesson_activities').insert(activityRows);
         }
 
-        // Two separate AI calls: notes first, then slides
+        insertedSections.push({ sec, insertedLessons });
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
+      setAICurriculumInsertStatus('');
+      // Still refresh so any sections that did insert are visible
+      try { await fetchSections(); } catch { /* ignore */ }
+      try { await fetchQuizzes(); } catch { /* ignore */ }
+      setActiveTab('curriculum');
+      setAICurriculumInserting(false);
+      return;
+    }
+
+    // ── Show sections immediately after DB inserts ───────────────────────────
+    toast.success(`${insertedSections.length} sections created — now generating notes & slides in the background...`);
+
+    setAICurriculumInsertStatus('');
+    setShowAICurriculumPanel(false);
+    setAICurriculumStep('form');
+    setAICurriculumPreview([]);
+    setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
+    setAICurriculumInserting(false);
+
+    try { await fetchSections(); } catch { /* ignore */ }
+    try { await fetchQuizzes(); } catch { /* ignore */ }
+    setActiveTab('curriculum');
+
+    if (insertedSections.length === 0) return;
+
+    // ── PASS 2: Generate notes & slides in background (non-blocking) ─────────
+    const existingSummary = sections.length > 0
+      ? sections.map((s, i) => {
+          const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
+          return `Section ${i + 1}: "${s.title}"${lessonTitles ? ` (${lessonTitles})` : ''}`;
+        }).join('\n')
+      : undefined;
+    const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
+
+    (async () => {
+      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
+      let notesGenerated = 0;
+      let slidesGenerated = 0;
+
+      for (let i = 0; i < insertedSections.length; i++) {
+        const { sec, insertedLessons } = insertedSections[i];
+        if (insertedLessons.length === 0) continue;
+
         const sectionInput = {
           section_title: sec.title,
           course_title: courseName,
@@ -726,10 +767,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
         const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-        // Step A — notes
-        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating notes for "${sec.title}"...`);
         try {
-          const { generateSectionNotes } = await import('../../lib/ai');
           const notesResult = await generateSectionNotes(sectionInput);
           for (let li = 0; li < insertedLessons.length; li++) {
             const lessonDb = insertedLessons[li];
@@ -745,14 +783,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               order_index: 0,
             });
           }
+          notesGenerated++;
         } catch (notesErr) {
           toast.error(`Notes for "${sec.title}" failed: ${notesErr instanceof Error ? notesErr.message : 'Unknown error'}`);
         }
 
-        // Step B — slides
-        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating slides for "${sec.title}"...`);
         try {
-          const { generateSectionSlides } = await import('../../lib/ai');
           const slidesResult = await generateSectionSlides(sectionInput);
           if (slidesResult.slides?.length && insertedLessons.length > 0) {
             const slidesHtml = slidesResult.slides.map(s =>
@@ -770,6 +806,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               content_html: `<div class="slides-deck">${slidesHtml}</div>`,
               order_index: 1,
             });
+            slidesGenerated++;
           }
         } catch (slidesErr) {
           toast.error(`Slides for "${sec.title}" failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
@@ -779,31 +816,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           await supabase.from('lesson_documents').insert(docRows);
         }
 
-        // Add this section to rolling context for the next section
         insertedSectionSummaries.push(
           `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
         );
       }
 
-      toast.success(`Curriculum built — ${aiCurriculumPreview.length} sections with lessons, notes, slides, quizzes and activities`);
-
-      // Reset panel state before fetching so UI never flashes blank
-      setAICurriculumInsertStatus('');
-      setShowAICurriculumPanel(false);
-      setAICurriculumStep('form');
-      setAICurriculumPreview([]);
-      setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
-
-      // Refresh data — errors here must not crash the page
-      try { await fetchSections(); } catch { /* ignore */ }
-      try { await fetchQuizzes(); } catch { /* ignore */ }
-      setActiveTab('curriculum');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
-      setAICurriculumInsertStatus('');
-    } finally {
-      setAICurriculumInserting(false);
-    }
+      toast.success(`Notes & slides ready — ${notesGenerated} note sets and ${slidesGenerated} slide decks generated`);
+    })();
   };
 
   const handleGenerateSectionDocs = async (section: Section & { lessons: Lesson[] }) => {
