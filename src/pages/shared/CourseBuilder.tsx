@@ -803,87 +803,72 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse || generatingSectionDocsId) return;
     if (!section.lessons?.length) { toast.error('Add lessons to this section before generating.'); return; }
     setGeneratingSectionDocsId(section.id);
+    // Close any open viewer before generation starts
+    setExpandedDocsLessonId(null);
     try {
-      const { generateLessonNotes, generatePresentationSlides } = await import('../../lib/ai');
+      const { generateSectionContent } = await import('../../lib/ai');
       const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
-      const difficulty = 'intermediate';
-      const target_audience = 'general learners';
 
-      // Delete old docs for all lessons in this section
+      // Single API call generates all lesson notes + slides together
+      const result = await generateSectionContent({
+        section_title: section.title,
+        course_title: courseName,
+        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+        target_audience: 'general learners',
+        difficulty: 'intermediate',
+      });
+
+      // Delete old docs for this section after successful generation
       const lessonIds = section.lessons.map(l => l.id);
       await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
 
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // Generate notes for each lesson sequentially to avoid rate limits
-      for (const lessonDb of section.lessons) {
-        try {
-          const notesResult = await generateLessonNotes({
-            lesson_title: lessonDb.title,
-            section_title: section.title,
-            course_title: courseName,
-            target_audience,
-            difficulty,
-          });
-          if (notesResult?.content_html) {
-            await supabase.from('lessons').update({ content: notesResult.content_html }).eq('id', lessonDb.id);
-            docRows.push({
-              lesson_id: lessonDb.id,
-              course_id: selectedCourse,
-              type: 'notes',
-              title: `${lessonDb.title} — Notes`,
-              content_html: notesResult.content_html,
-              order_index: 0,
-            });
-          }
-        } catch (noteErr) {
-          toast.error(`Notes failed for "${lessonDb.title}": ${noteErr instanceof Error ? noteErr.message : 'Unknown error'}`);
-        }
-      }
-
-      // Generate slides for the whole section
-      try {
-        const slidesResult = await generatePresentationSlides({
-          section_title: section.title,
-          course_title: courseName,
-          lesson_titles: section.lessons.map(l => l.title).join(', '),
-          target_audience,
-          difficulty,
-        });
-
-        if (slidesResult?.slides?.length && section.lessons.length > 0) {
-          const slidesHtml = slidesResult.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
-            `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
-              <h2>${s.heading}</h2>
-              ${s.content_html}
-              ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-            </section>`
-          ).join('\n');
+      // Save notes for each lesson
+      for (let i = 0; i < section.lessons.length; i++) {
+        const lessonDb = section.lessons[i];
+        const lessonResult = result.lessons?.[i];
+        if (lessonResult?.notes_html) {
+          await supabase.from('lessons').update({ content: lessonResult.notes_html }).eq('id', lessonDb.id);
           docRows.push({
-            lesson_id: section.lessons[0].id,
+            lesson_id: lessonDb.id,
             course_id: selectedCourse,
-            type: 'slides',
-            title: slidesResult.title || `${section.title} — Slides`,
-            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-            order_index: 1,
+            type: 'notes',
+            title: `${lessonDb.title} — Notes`,
+            content_html: lessonResult.notes_html,
+            order_index: 0,
           });
         }
-      } catch (slidesErr) {
-        toast.error(`Slides failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
       }
 
-      if (docRows.length > 0) {
-        const { error: insertErr } = await supabase.from('lesson_documents').insert(docRows);
-        if (insertErr) throw new Error(`Failed to save documents: ${insertErr.message}`);
+      // Save slides attached to the first lesson
+      if (result.slides?.length && section.lessons.length > 0) {
+        const slidesHtml = result.slides.map(s =>
+          `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
+            <h2>${s.heading}</h2>
+            ${s.content_html}
+            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+          </section>`
+        ).join('\n');
+        docRows.push({
+          lesson_id: section.lessons[0].id,
+          course_id: selectedCourse,
+          type: 'slides',
+          title: result.slides_title || `${section.title} — Slides`,
+          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+          order_index: 1,
+        });
       }
 
-      toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
-      if (section.lessons.length > 0) {
-        // Force remount of the viewer so it refetches the newly inserted docs
-        setExpandedDocsLessonId(null);
-        setDocViewerKey(k => k + 1);
-        setTimeout(() => setExpandedDocsLessonId(section.lessons[0].id), 50);
-      }
+      if (docRows.length === 0) throw new Error('Generation returned no content. Please try again.');
+
+      const { error: insertErr } = await supabase.from('lesson_documents').insert(docRows);
+      if (insertErr) throw new Error(`Failed to save documents: ${insertErr.message}`);
+
+      toast.success(`Notes and slides generated for "${section.title}"`);
+      // Bump key so viewer remounts with fresh data, then open it
+      setDocViewerKey(k => k + 1);
+      setExpandedDocsLessonId(section.lessons[0].id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Generation failed');
     } finally {
