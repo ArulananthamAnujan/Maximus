@@ -717,8 +717,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
           // Store section slides linked to the first lesson
           if (sectionContent.slides?.length && insertedLessons.length > 0) {
-            const slidesHtml = sectionContent.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
-              `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
+            const slidesHtml = sectionContent.slides.map(s =>
+              `<section class="slide" data-slide="${s.slide_number}">
                 <h2>${s.heading}</h2>
                 ${s.content_html}
                 ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
@@ -810,8 +810,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       }
 
       if (result.slides?.length && section.lessons.length > 0) {
-        const slidesHtml = result.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
-          `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
+        const slidesHtml = result.slides.map(s =>
+          `<section class="slide" data-slide="${s.slide_number}">
             <h2>${s.heading}</h2>
             ${s.content_html}
             ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
@@ -1453,8 +1453,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sections <span className="text-sky-600 font-bold">{aiCurriculumForm.num_sections}</span></label>
-                            <input type="range" min={1} max={12} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>12</span></div>
+                            <input type="range" min={1} max={8} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>8</span></div>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>

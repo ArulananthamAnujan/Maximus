@@ -158,19 +158,15 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-STRICT RULES to keep response compact:
-- Each section: exactly the requested number of lessons, exactly 1 quiz with exactly 3 questions, exactly 1 activity.
-- lesson description: 1 short sentence only (max 15 words).
-- quiz explanation: 1 sentence only (max 20 words).
-- activity instructions: 2 sentences max.
-- For mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
-- For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
-- If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered.`,
+Each section must have: 2-5 lessons (mix of article and document types), exactly 1 quiz with 3-5 questions, and 1-2 activities.
+For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
+For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
+If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
 
-    lesson_notes: `You are an expert educator writing comprehensive, detailed lesson notes equivalent to 5+ printed pages. ${jsonRule}
+    lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: write 1800-2500 words of rich, detailed educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
-Structure: 1) Introduction & Learning Objectives (2-3 paragraphs), 2) Background & Context (1-2 paragraphs + bullet points), 3) Core Concept 1 with detailed explanation, examples, and practical application (3-4 paragraphs), 4) Core Concept 2 with detailed explanation, examples, and a blockquote tip (3-4 paragraphs), 5) Core Concept 3 with detailed explanation and real-world application (3-4 paragraphs), 6) Common Mistakes & Best Practices (bulleted list), 7) Practice Exercises (numbered list with 3-4 exercises), 8) Summary & Key Takeaways (2-3 paragraphs). Be thorough, educational, and include plenty of examples.`,
+For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
+Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
 
     presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
@@ -194,22 +190,16 @@ Guidelines:
 - time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
 - Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
-    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate focused lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
-  "slides": [{"slide_number": number, "heading": string, "slide_type": "title"|"objectives"|"concept"|"example"|"activity"|"summary", "content_html": string, "speaker_notes": string}]
+  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-NOTES REQUIREMENTS (per lesson):
-- notes_html: 1000-1500 words of detailed educational content using h2, h3, p, ul, ol, li, strong, em, blockquote tags.
-- Structure each lesson: Introduction (1-2 paragraphs) → Background & Context → 2-3 Core Concept sections (each with explanation + example + blockquote tip) → Common Mistakes (bulleted) → Practice Exercise → Summary.
-- Be thorough with real examples, practical applications, and actionable advice.
-SLIDES REQUIREMENTS (for the whole section):
-- Generate 10-12 slides total. Mix of slide types.
-- Slide types: "title" (section cover), "objectives" (learning goals), "concept" (key idea with 4-6 bullets), "example" (worked example with steps), "activity" (hands-on task), "summary" (key takeaways).
-- content_html per slide: use h3 for sub-headings, ul/li for bullets, p for short paragraphs. 60-100 words per slide.
-- speaker_notes: 2-3 sentences of presenter guidance per slide.
+STRICT LENGTH LIMITS (required to avoid timeout):
+- Each lesson notes_html: 200-300 words MAX. Use h3, p, ul, li, strong only. Cover: 1 intro paragraph, 2-3 key concept bullets, 1 summary line.
+- Slides: exactly 6 slides total for the section. Use only h3, p, ul, li per slide. Max 60 words per slide.
 If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
@@ -324,8 +314,8 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'section_content') return 16000;
-  if (task === 'full_curriculum') return 20000;
+  if (task === 'section_content') return 4096;
+  if (task === 'full_curriculum') return 16000;
   if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
   return 4096;
 }
@@ -355,7 +345,7 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(task === 'full_curriculum' ? 180000 : 90000),
+    signal: AbortSignal.timeout(task === 'full_curriculum' ? 120000 : 60000),
   });
 
   if (!response.ok) {
