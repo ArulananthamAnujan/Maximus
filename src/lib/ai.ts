@@ -182,6 +182,8 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token ?? supabaseAnonKey;
 
+  const isLongTask = ['full_curriculum', 'section_notes', 'section_content', 'lesson_notes'].includes(task);
+
   let response: Response;
   try {
     response = await fetch(`${FUNCTIONS_BASE}/ai-generate`, {
@@ -192,17 +194,27 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
         'apikey': supabaseAnonKey,
       },
       body: JSON.stringify({ task, input }),
+      signal: AbortSignal.timeout(isLongTask ? 150_000 : 90_000),
     });
-  } catch {
+  } catch (fetchErr) {
+    if (fetchErr instanceof DOMException && fetchErr.name === 'TimeoutError') {
+      throw new Error('AI request timed out. The content may be too large — try fewer lessons per section.');
+    }
     throw new Error('Could not reach the AI service. Please check your connection and try again.');
   }
 
   if (!response.ok) {
-    let errMsg = 'AI request failed';
+    let errMsg = `AI request failed (HTTP ${response.status})`;
     try {
-      const errBody = await response.json() as { error?: string };
-      if (errBody.error) errMsg = errBody.error;
-    } catch { /* ignore */ }
+      const raw = await response.text();
+      try {
+        const parsed = JSON.parse(raw) as { error?: string };
+        if (parsed.error) errMsg = parsed.error;
+      } catch {
+        // Non-JSON body (e.g. gateway timeout HTML) — include first 120 chars
+        if (raw.trim()) errMsg = `AI service error (${response.status}): ${raw.replace(/<[^>]+>/g, '').trim().slice(0, 120)}`;
+      }
+    } catch { /* ignore body read errors */ }
     throw new Error(errMsg);
   }
 

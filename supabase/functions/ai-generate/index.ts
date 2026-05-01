@@ -528,7 +528,14 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Parse body ───────────────────────────────────────────────────────────
-    const body = await req.json() as { task: string; input: Record<string, unknown> };
+    let body: { task: string; input: Record<string, unknown> };
+    try {
+      body = await req.json() as { task: string; input: Record<string, unknown> };
+    } catch {
+      return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const { task, input: rawInput } = body;
 
     if (!task || !rawInput || !validators[task]) {
