@@ -295,6 +295,7 @@ export interface PresentationSlidesInput {
 export interface PresentationSlide {
   slide_number: number;
   heading: string;
+  slide_type?: string;
   content_html: string;
   speaker_notes: string;
 }

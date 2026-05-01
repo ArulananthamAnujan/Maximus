@@ -172,10 +172,17 @@ Output shape: {"title": string, "content_html": string, "key_points": string[], 
 For content_html: write 1800-2500 words of rich, detailed educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
 Structure: 1) Introduction & Learning Objectives (2-3 paragraphs), 2) Background & Context (1-2 paragraphs + bullet points), 3) Core Concept 1 with detailed explanation, examples, and practical application (3-4 paragraphs), 4) Core Concept 2 with detailed explanation, examples, and a blockquote tip (3-4 paragraphs), 5) Core Concept 3 with detailed explanation and real-world application (3-4 paragraphs), 6) Common Mistakes & Best Practices (bulleted list), 7) Practice Exercises (numbered list with 3-4 exercises), 8) Summary & Key Takeaways (2-3 paragraphs). Be thorough, educational, and include plenty of examples.`,
 
-    presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
-Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
-Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
-Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
+    presentation_slides: `You are an expert educator creating visually rich, structured presentation slides for a course section. ${jsonRule}
+Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "slide_type": "title"|"objectives"|"concept"|"example"|"activity"|"summary", "content_html": string, "speaker_notes": string}]}
+Generate 12-15 slides minimum. Use a variety of slide types:
+- "title": section/course cover (1 slide)
+- "objectives": learning goals as bullet list (1 slide)
+- "concept": key idea with 4-6 rich bullet points (3-5 slides)
+- "example": worked example with numbered steps or code (2-3 slides)
+- "activity": hands-on task with clear instructions (1-2 slides)
+- "summary": key takeaways and next steps (1-2 slides)
+Each slide content_html: use h3 for sub-headings, ul/li for bullets, p for paragraphs. 80-120 words per slide. Be specific and educational.
+speaker_notes: 2-4 sentences of detailed presenter guidance per slide.`,
 
     generate_exam: `You are an expert exam writer for language and academic preparation (IELTS, PTE, academic English, etc.). ${jsonRule}
 Output shape: {
@@ -280,12 +287,13 @@ Target Audience: ${input.target_audience}
 Difficulty: ${input.difficulty}`;
 
     case 'presentation_slides':
-      return `Create presentation slides for:
+      return `Create 12-15 rich presentation slides for:
 Section Title: ${input.section_title}
 Course: ${input.course_title}
 Lessons in this section: ${input.lesson_titles}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}`;
+Difficulty: ${input.difficulty}
+Requirements: Generate AT LEAST 12 slides. Include title, objectives, multiple concept slides, worked examples, an activity, and summary slides. Use a mix of all slide types.`;
 
     case 'section_content': {
       const lessons = Array.isArray(input.lessons)
