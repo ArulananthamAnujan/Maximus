@@ -717,8 +717,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
           // Store section slides linked to the first lesson
           if (sectionContent.slides?.length && insertedLessons.length > 0) {
-            const slidesHtml = sectionContent.slides.map(s =>
-              `<section class="slide" data-slide="${s.slide_number}">
+            const slidesHtml = sectionContent.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
+              `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
                 <h2>${s.heading}</h2>
                 ${s.content_html}
                 ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
@@ -810,8 +810,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       }
 
       if (result.slides?.length && section.lessons.length > 0) {
-        const slidesHtml = result.slides.map(s =>
-          `<section class="slide" data-slide="${s.slide_number}">
+        const slidesHtml = result.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
+          `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
             <h2>${s.heading}</h2>
             ${s.content_html}
             ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
