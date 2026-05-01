@@ -1453,8 +1453,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Sections <span className="text-sky-600 font-bold">{aiCurriculumForm.num_sections}</span></label>
-                            <input type="range" min={1} max={8} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>8</span></div>
+                            <input type="range" min={1} max={12} value={aiCurriculumForm.num_sections} onChange={e => setAICurriculumForm(f => ({ ...f, num_sections: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>1</span><span>12</span></div>
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>
