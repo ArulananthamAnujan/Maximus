@@ -467,8 +467,8 @@ Deno.serve(async (req: Request) => {
       .eq('user_id', userId)
       .gte('created_at', oneMinuteAgo);
 
-    if ((count ?? 0) >= 15) {
-      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 15 AI calls per minute.' }), {
+    if ((count ?? 0) >= 30) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 30 AI calls per minute.' }), {
         status: 429,
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
       });

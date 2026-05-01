@@ -815,36 +815,33 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // Generate rich notes for each lesson in parallel
-      const notesResults = await Promise.allSettled(
-        section.lessons.map(l =>
-          generateLessonNotes({
-            lesson_title: l.title,
+      // Generate notes for each lesson sequentially to avoid rate limits
+      for (const lessonDb of section.lessons) {
+        try {
+          const notesResult = await generateLessonNotes({
+            lesson_title: lessonDb.title,
             section_title: section.title,
             course_title: courseName,
             target_audience,
             difficulty,
-          })
-        )
-      );
-
-      for (let li = 0; li < section.lessons.length; li++) {
-        const lessonDb = section.lessons[li];
-        const result = notesResults[li];
-        if (result.status === 'fulfilled' && result.value?.content_html) {
-          await supabase.from('lessons').update({ content: result.value.content_html }).eq('id', lessonDb.id);
-          docRows.push({
-            lesson_id: lessonDb.id,
-            course_id: selectedCourse,
-            type: 'notes',
-            title: `${lessonDb.title} — Notes`,
-            content_html: result.value.content_html,
-            order_index: 0,
           });
+          if (notesResult?.content_html) {
+            await supabase.from('lessons').update({ content: notesResult.content_html }).eq('id', lessonDb.id);
+            docRows.push({
+              lesson_id: lessonDb.id,
+              course_id: selectedCourse,
+              type: 'notes',
+              title: `${lessonDb.title} — Notes`,
+              content_html: notesResult.content_html,
+              order_index: 0,
+            });
+          }
+        } catch (noteErr) {
+          toast.error(`Notes failed for "${lessonDb.title}": ${noteErr instanceof Error ? noteErr.message : 'Unknown error'}`);
         }
       }
 
-      // Generate 12+ slides for the whole section as a separate call
+      // Generate slides for the whole section
       try {
         const slidesResult = await generatePresentationSlides({
           section_title: section.title,
@@ -856,7 +853,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
         if (slidesResult?.slides?.length && section.lessons.length > 0) {
           const slidesHtml = slidesResult.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
-            `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${(s as { slide_type?: string }).slide_type || 'concept'}">
+            `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
               <h2>${s.heading}</h2>
               ${s.content_html}
               ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
@@ -872,10 +869,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           });
         }
       } catch (slidesErr) {
-        toast.error(`Slides generation failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
+        toast.error(`Slides failed: ${slidesErr instanceof Error ? slidesErr.message : 'Unknown error'}`);
       }
 
-      if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
+      if (docRows.length > 0) {
+        const { error: insertErr } = await supabase.from('lesson_documents').insert(docRows);
+        if (insertErr) throw new Error(`Failed to save documents: ${insertErr.message}`);
+      }
 
       toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
       if (section.lessons.length > 0) {
