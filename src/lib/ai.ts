@@ -198,10 +198,9 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
   }
 
   if (!response.ok) {
-    let errMsg = `AI request failed (HTTP ${response.status})`;
+    let errMsg = 'AI request failed';
     try {
-      const text = await response.text();
-      const errBody = JSON.parse(text) as { error?: string };
+      const errBody = await response.json() as { error?: string };
       if (errBody.error) errMsg = errBody.error;
     } catch { /* ignore */ }
     throw new Error(errMsg);
@@ -296,7 +295,6 @@ export interface PresentationSlidesInput {
 export interface PresentationSlide {
   slide_number: number;
   heading: string;
-  slide_type?: string;
   content_html: string;
   speaker_notes: string;
 }

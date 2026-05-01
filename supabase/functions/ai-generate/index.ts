@@ -127,11 +127,9 @@ Output shape: {"title": string, "description": string, "modules": [{"title": str
 Output shape: {"content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
 For content_html: use clean semantic HTML only — h2, h3, p, ul, ol, strong, em, code tags. No scripts, no inline styles, no external references.`,
 
-    quiz_from_content: `You are an expert quiz designer creating rigorous, challenging assessments. ${jsonRule}
-Output shape: {"questions": [{"type": "mcq"|"true_false"|"short_answer", "question": string, "options": string[]|null, "correct_answer": string, "explanation": string, "points": number, "difficulty": "easy"|"medium"|"hard"}]}
-For mcq: include exactly 4 options with plausible distractors — avoid obviously wrong answers. For true_false: options should be ["True","False"]. For short_answer: options should be null.
-Difficulty guidelines: easy = direct recall; medium = application or comparison; hard = analysis, synthesis, edge cases, or common misconceptions. Use the "difficulty" field on every question.
-Generate questions that test deep understanding, not just surface memorization. Hard questions should require critical thinking.`,
+    quiz_from_content: `You are an expert quiz designer. ${jsonRule}
+Output shape: {"questions": [{"type": "mcq"|"true_false"|"short_answer", "question": string, "options": string[]|null, "correct_answer": string, "explanation": string, "points": number}]}
+For mcq: include 4 options. For true_false: options should be ["True","False"]. For short_answer: options should be null.`,
 
     flashcards: `You are an expert educator creating concise, effective flashcards. ${jsonRule}
 Output shape: {"cards": [{"front": string, "back": string}]}
@@ -151,39 +149,44 @@ Output shape: {"translated_content": string}`,
 Output shape: {"activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]}
 Instructions should be 2-4 sentences, actionable, and clearly describe what the student must do.`,
 
-    full_curriculum: `You are an expert curriculum designer. ${jsonRule}
+    full_curriculum: `You are an expert curriculum designer creating a complete, structured course. ${jsonRule}
 Output shape: {
   "sections": [{
     "title": string,
     "lessons": [{"title": string, "type": "article"|"document", "estimated_duration_minutes": number, "description": string}],
-    "quiz": {"title": string, "questions": [{"type": "mcq"|"true_false", "question": string, "options": string[], "correct_answer": string, "explanation": string, "points": number, "difficulty": "easy"|"medium"|"hard"}]},
+    "quiz": {"title": string, "questions": [{"type": "mcq"|"true_false", "question": string, "options": string[], "correct_answer": string, "explanation": string, "points": number}]},
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-RULES:
-- Each section: exactly the requested number of lessons, exactly 1 quiz with EXACTLY 10 questions, exactly 1 activity.
-- Quiz: 3 easy + 4 medium + 3 hard questions. At least 7 mcq and 2 true_false. Hard questions must have plausible distractors.
-- lesson description: max 12 words. quiz explanation: max 15 words. activity instructions: max 2 sentences.
-- mcq: exactly 4 options; correct_answer must exactly match one option string.
-- true_false: options must be ["True","False"]; correct_answer must be "True" or "False".
-- Build on existing sections — never repeat covered topics.`,
+Each section must have: the exact number of lessons requested (mix of article and document types), exactly 1 quiz with 4-5 questions, and 1-2 activities.
+For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
+For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
+If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
 
-    lesson_notes: `You are an expert educator writing comprehensive, detailed lesson notes equivalent to 5+ printed pages. ${jsonRule}
+    lesson_notes: `You are an expert educator writing comprehensive, detailed lesson notes that are rich and interactive for students. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: write 1800-2500 words of rich, detailed educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
-Structure: 1) Introduction & Learning Objectives (2-3 paragraphs), 2) Background & Context (1-2 paragraphs + bullet points), 3) Core Concept 1 with detailed explanation, examples, and practical application (3-4 paragraphs), 4) Core Concept 2 with detailed explanation, examples, and a blockquote tip (3-4 paragraphs), 5) Core Concept 3 with detailed explanation and real-world application (3-4 paragraphs), 6) Common Mistakes & Best Practices (bulleted list), 7) Practice Exercises (numbered list with 3-4 exercises), 8) Summary & Key Takeaways (2-3 paragraphs). Be thorough, educational, and include plenty of examples.`,
+For content_html: write 1200-1800 words of deeply detailed educational content using clean semantic HTML.
+Allowed tags ONLY: h2, h3, p, ul, ol, li, strong, em, blockquote, table, thead, tbody, tr, th, td, details, summary, mark, code, pre.
 
-    presentation_slides: `You are an expert educator creating visually rich, structured presentation slides for a course section. ${jsonRule}
-Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "slide_type": "title"|"objectives"|"concept"|"example"|"activity"|"summary", "content_html": string, "speaker_notes": string}]}
-Generate 12-15 slides minimum. Use a variety of slide types:
-- "title": section/course cover (1 slide)
-- "objectives": learning goals as bullet list (1 slide)
-- "concept": key idea with 4-6 rich bullet points (3-5 slides)
-- "example": worked example with numbered steps or code (2-3 slides)
-- "activity": hands-on task with clear instructions (1-2 slides)
-- "summary": key takeaways and next steps (1-2 slides)
-Each slide content_html: use h3 for sub-headings, ul/li for bullets, p for paragraphs. 80-120 words per slide. Be specific and educational.
-speaker_notes: 2-4 sentences of detailed presenter guidance per slide.`,
+Structure requirements:
+1. Learning objectives section (ul with 3-4 specific outcomes)
+2. Introduction with real-world context and why this matters (150-200 words)
+3. 4-6 main concept sections, each with:
+   - Clear h2 heading
+   - Detailed explanation (200-300 words)
+   - A concrete example or case study wrapped in <blockquote>
+   - Key terms in <strong>
+4. A <details><summary>Deep Dive</summary>...</details> expandable section with advanced insight
+5. A comparison table (<table>) where relevant
+6. Practice prompts: 2-3 reflection questions in a <ul> with <strong>Reflect:</strong> prefix
+7. Summary section recapping the 4-6 core ideas
+
+No scripts, no inline styles, no external references.`,
+
+    presentation_slides: `You are an expert educator creating structured presentation slides for a lesson. ${jsonRule}
+Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
+Generate 8-12 slides. Each slide content_html should use only: h3, p, ul, li, strong tags. Keep each slide focused and concise (50-120 words of content).
+Include: title slide, learning objectives, one slide per key concept, practice/example slide, summary, and next steps slide.`,
 
     generate_exam: `You are an expert exam writer for language and academic preparation (IELTS, PTE, academic English, etc.). ${jsonRule}
 Output shape: {
@@ -202,23 +205,23 @@ Guidelines:
 - time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
 - Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
 
-    section_content: `You are an expert educator. In ONE response, generate lesson notes for every lesson in the section PLUS presentation slides for the section. ${jsonRule}
+    section_content: `You are an expert educator. In ONE response, generate comprehensive lesson notes for every lesson in the section PLUS presentation slides for the entire section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
-  "slides": [{"slide_number": number, "heading": string, "slide_type": "title"|"objectives"|"concept"|"example"|"activity"|"summary", "content_html": string, "speaker_notes": string}]
+  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-NOTES REQUIREMENTS (per lesson):
-- notes_html: 400-600 words per lesson using h2, h3, p, ul, ol, li, strong, em, blockquote tags only.
-- Structure: Introduction (1 paragraph) → 2 Core Concepts with explanation + example → Key Mistakes (3-4 bullets) → Summary.
-- key_points: 3-5 strings, each under 15 words.
-SLIDES REQUIREMENTS:
-- Generate exactly 8-10 slides total for the whole section. Mix types.
-- slide_type one of: "title", "objectives", "concept", "example", "activity", "summary".
-- content_html per slide: ul/li bullets or short p tags. 40-60 words per slide max.
-- speaker_notes: 1-2 sentences only.
-Be concise. Every word must add value.`,
+For each lesson notes_html write 600-900 words of rich educational content using ONLY these tags: h2, h3, p, ul, ol, li, strong, em, blockquote, details, summary, mark, table, thead, tbody, tr, th, td.
+Each lesson notes_html must include:
+- Learning objectives (ul, 3 items)
+- Introduction paragraph (context + why it matters)
+- 3-4 concept sections (h2 heading + detailed paragraph + example in blockquote)
+- One <details><summary>Deep Dive</summary>...</details> expandable section
+- 2 reflection questions (<ul> with <strong>Reflect:</strong> prefix)
+- Summary paragraph
+Slides: generate 8-10 slides. Each slide content_html uses only h3, p, ul, li, strong. 60-100 words per slide.
+If prior section context is given, build on it — do NOT repeat covered material.`,
   };
 
   return prompts[task] || jsonRule;
@@ -288,13 +291,12 @@ Target Audience: ${input.target_audience}
 Difficulty: ${input.difficulty}`;
 
     case 'presentation_slides':
-      return `Create 12-15 rich presentation slides for:
+      return `Create presentation slides for:
 Section Title: ${input.section_title}
 Course: ${input.course_title}
 Lessons in this section: ${input.lesson_titles}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
-Requirements: Generate AT LEAST 12 slides. Include title, objectives, multiple concept slides, worked examples, an activity, and summary slides. Use a mix of all slide types.`;
+Difficulty: ${input.difficulty}`;
 
     case 'section_content': {
       const lessons = Array.isArray(input.lessons)
@@ -333,10 +335,10 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'section_content') return 8192;
   if (task === 'full_curriculum') return 8192;
-  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 4096;
-  return 2048;
+  if (task === 'section_content') return 16000;
+  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
+  return 4096;
 }
 
 // ─── Anthropic call ──────────────────────────────────────────────────────────
@@ -364,18 +366,12 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(55000),
+    signal: AbortSignal.timeout(['full_curriculum', 'section_content', 'lesson_notes'].includes(task) ? 120000 : 60000),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    // Try to extract a clean error message from Anthropic's JSON error body
-    let detail = body.slice(0, 300);
-    try {
-      const parsed = JSON.parse(body) as { error?: { message?: string }; message?: string };
-      detail = parsed?.error?.message || parsed?.message || detail;
-    } catch { /* use raw body */ }
-    throw new Error(`Anthropic error ${response.status}: ${detail}`);
+    throw new Error(`Anthropic API error ${response.status}: ${body.slice(0, 200)}`);
   }
 
   const data = await response.json() as {
@@ -470,8 +466,8 @@ Deno.serve(async (req: Request) => {
       .eq('user_id', userId)
       .gte('created_at', oneMinuteAgo);
 
-    if ((count ?? 0) >= 30) {
-      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 30 AI calls per minute.' }), {
+    if ((count ?? 0) >= 15) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 15 AI calls per minute.' }), {
         status: 429,
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
       });

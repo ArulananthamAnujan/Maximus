@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense, Component } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Video, FileText,
@@ -23,38 +23,6 @@ const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocume
 import { LessonDocumentBadges } from '../../components/ui/LessonDocumentViewer';
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
-
-// ─── Error boundary to prevent white-screen crashes in lazy panels ───────────
-class DocumentViewerErrorBoundary extends Component<
-  { children: React.ReactNode; fallback?: React.ReactNode },
-  { hasError: boolean; error: string }
-> {
-  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: '' };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error: error.message };
-  }
-  componentDidCatch() {
-    // Reset on next render cycle so retries work
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="mx-4 mb-4 mt-1 rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
-          <p className="font-semibold mb-1">Could not load documents</p>
-          <p className="text-xs text-red-400">{this.state.error}</p>
-          <button
-            className="mt-2 text-xs text-red-500 underline"
-            onClick={() => this.setState({ hasError: false, error: '' })}
-          >Retry</button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 // Maps both UI type names and DB type names
 const LESSON_ICONS: Record<string, typeof Video> = {
@@ -527,8 +495,6 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
   // Lesson document panel (notes/slides visible without edit mode)
   const [expandedDocsLessonId, setExpandedDocsLessonId] = useState<string | null>(null);
-  // Increment to force LessonDocumentViewer remount after generation
-  const [docViewerKey, setDocViewerKey] = useState(0);
   // Per-section PDF & PPT generation
   const [generatingSectionDocsId, setGeneratingSectionDocsId] = useState<string | null>(null);
 
@@ -595,7 +561,6 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { generateFullCurriculum } = await import('../../lib/ai');
 
-      // Build a summary of already-existing sections so the AI builds on them
       const existingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
         ? sections.map((s, i) => {
             const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
@@ -603,15 +568,49 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }).join('\n')
         : undefined;
 
-      const result = await generateFullCurriculum({
-        topic: aiCurriculumForm.topic,
-        target_audience: aiCurriculumForm.target_audience,
-        difficulty: aiCurriculumForm.difficulty,
-        num_sections: aiCurriculumForm.num_sections,
-        lessons_per_section: aiCurriculumForm.lessons_per_section,
-        existing_sections_summary: existingSummary,
-      });
-      setAICurriculumPreview(result.sections);
+      const total = aiCurriculumForm.num_sections;
+      const BATCH = 4;
+
+      if (total <= BATCH) {
+        // Small request — single call
+        const result = await generateFullCurriculum({
+          topic: aiCurriculumForm.topic,
+          target_audience: aiCurriculumForm.target_audience,
+          difficulty: aiCurriculumForm.difficulty,
+          num_sections: total,
+          lessons_per_section: aiCurriculumForm.lessons_per_section,
+          existing_sections_summary: existingSummary,
+        });
+        setAICurriculumPreview(result.sections);
+      } else {
+        // Large request — batch into groups of 4, run sequentially so each
+        // batch can reference what the prior batches already covered
+        const allSections: import('../../lib/ai').AICurriculumSection[] = [];
+        let coveredSummary = existingSummary;
+
+        for (let start = 0; start < total; start += BATCH) {
+          const count = Math.min(BATCH, total - start);
+          const result = await generateFullCurriculum({
+            topic: aiCurriculumForm.topic,
+            target_audience: aiCurriculumForm.target_audience,
+            difficulty: aiCurriculumForm.difficulty,
+            num_sections: count,
+            lessons_per_section: aiCurriculumForm.lessons_per_section,
+            existing_sections_summary: coveredSummary,
+          });
+          allSections.push(...result.sections);
+          // Build running summary so next batch doesn't repeat topics
+          const batchSummary = result.sections.map((s, i) => {
+            const lessonTitles = s.lessons.map((l: { title: string }) => l.title).join(', ');
+            return `Section ${start + i + 1}: "${s.title}" — Lessons: ${lessonTitles}`;
+          }).join('\n');
+          coveredSummary = coveredSummary
+            ? `${coveredSummary}\n${batchSummary}`
+            : batchSummary;
+        }
+        setAICurriculumPreview(allSections);
+      }
+
       setAICurriculumExpanded(0);
       setAICurriculumStep('preview');
     } catch (err) {
@@ -751,8 +750,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
           // Store section slides linked to the first lesson
           if (sectionContent.slides?.length && insertedLessons.length > 0) {
-            const slidesHtml = sectionContent.slides.map((s: { slide_number: number; heading: string; slide_type?: string; content_html: string; speaker_notes?: string }) =>
-              `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
+            const slidesHtml = sectionContent.slides.map(s =>
+              `<section class="slide" data-slide="${s.slide_number}">
                 <h2>${s.heading}</h2>
                 ${s.content_html}
                 ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
@@ -803,48 +802,49 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse || generatingSectionDocsId) return;
     if (!section.lessons?.length) { toast.error('Add lessons to this section before generating.'); return; }
     setGeneratingSectionDocsId(section.id);
-    // Close any open viewer before generation starts
-    setExpandedDocsLessonId(null);
     try {
       const { generateSectionContent } = await import('../../lib/ai');
       const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
 
-      // Single API call generates all lesson notes + slides together
+      // Build context from ALL other sections
+      const otherSections = sections.filter(s => s.id !== section.id);
+      const existingSummary = otherSections.length > 0
+        ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
+        : undefined;
+
       const result = await generateSectionContent({
         section_title: section.title,
         course_title: courseName,
         lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
-        target_audience: 'general learners',
-        difficulty: 'intermediate',
+        target_audience: 'general',
+        difficulty: 'beginner',
+        existing_sections_summary: existingSummary,
       });
 
-      // Delete old docs for this section after successful generation
+      // Delete old docs for lessons in this section then re-insert
       const lessonIds = section.lessons.map(l => l.id);
       await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
 
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // Save notes for each lesson
-      for (let i = 0; i < section.lessons.length; i++) {
-        const lessonDb = section.lessons[i];
-        const lessonResult = result.lessons?.[i];
-        if (lessonResult?.notes_html) {
-          await supabase.from('lessons').update({ content: lessonResult.notes_html }).eq('id', lessonDb.id);
-          docRows.push({
-            lesson_id: lessonDb.id,
-            course_id: selectedCourse,
-            type: 'notes',
-            title: `${lessonDb.title} — Notes`,
-            content_html: lessonResult.notes_html,
-            order_index: 0,
-          });
-        }
+      for (let li = 0; li < section.lessons.length; li++) {
+        const lessonDb = section.lessons[li];
+        const lessonContent = result.lessons?.[li];
+        if (!lessonDb || !lessonContent?.notes_html) continue;
+        await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+        docRows.push({
+          lesson_id: lessonDb.id,
+          course_id: selectedCourse,
+          type: 'notes',
+          title: `${lessonDb.title} — Notes`,
+          content_html: lessonContent.notes_html,
+          order_index: 0,
+        });
       }
 
-      // Save slides attached to the first lesson
       if (result.slides?.length && section.lessons.length > 0) {
         const slidesHtml = result.slides.map(s =>
-          `<section class="slide" data-slide="${s.slide_number}" data-slide-type="${s.slide_type || 'concept'}">
+          `<section class="slide" data-slide="${s.slide_number}">
             <h2>${s.heading}</h2>
             ${s.content_html}
             ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
@@ -860,15 +860,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         });
       }
 
-      if (docRows.length === 0) throw new Error('Generation returned no content. Please try again.');
+      if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
 
-      const { error: insertErr } = await supabase.from('lesson_documents').insert(docRows);
-      if (insertErr) throw new Error(`Failed to save documents: ${insertErr.message}`);
-
-      toast.success(`Notes and slides generated for "${section.title}"`);
-      // Bump key so viewer remounts with fresh data, then open it
-      setDocViewerKey(k => k + 1);
-      setExpandedDocsLessonId(section.lessons[0].id);
+      toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
+      // Re-open the first lesson's docs panel so the user can immediately see them
+      if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Generation failed');
     } finally {
@@ -1495,8 +1491,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lessons/Section <span className="text-sky-600 font-bold">{aiCurriculumForm.lessons_per_section}</span></label>
-                            <input type="range" min={2} max={6} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
-                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>6</span></div>
+                            <input type="range" min={2} max={5} value={aiCurriculumForm.lessons_per_section} onChange={e => setAICurriculumForm(f => ({ ...f, lessons_per_section: Number(e.target.value) }))} className="w-full accent-sky-500" />
+                            <div className="flex justify-between text-xs text-slate-400 mt-1"><span>2</span><span>5</span></div>
                           </div>
                         </div>
                         {sections.length > 0 && (
@@ -1915,16 +1911,14 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           {/* AI-generated documents (notes + slides) — toggle with the doc button */}
                           {expandedDocsLessonId === lesson.id && selectedCourse && (
                             <div className="mx-4 mb-4 mt-1">
-                              <DocumentViewerErrorBoundary key={`${lesson.id}-${docViewerKey}`}>
-                                <Suspense fallback={
-                                  <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
-                                    <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />
-                                    Loading documents...
-                                  </div>
-                                }>
-                                  <LessonDocumentViewer key={`${lesson.id}-${docViewerKey}`} lessonId={lesson.id} courseId={selectedCourse} />
-                                </Suspense>
-                              </DocumentViewerErrorBoundary>
+                              <Suspense fallback={
+                                <div className="flex items-center gap-2 py-3 text-xs text-slate-400">
+                                  <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-slate-400 rounded-full animate-spin" />
+                                  Loading documents...
+                                </div>
+                              }>
+                                <LessonDocumentViewer lessonId={lesson.id} courseId={selectedCourse} />
+                              </Suspense>
                             </div>
                           )}
 
