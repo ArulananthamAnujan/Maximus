@@ -680,72 +680,90 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         }
 
         // ONE batch AI call per section — generates all lesson notes + slides together
+        // Stagger calls to avoid rate limiting (15 calls/min cap)
+        if (i > 0) await new Promise(r => setTimeout(r, 4500));
+
         setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating notes & slides for "${sec.title}"...`);
-        try {
-          const sectionContent = await generateSectionContent({
-            section_title: sec.title,
-            course_title: courseName,
-            lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
-            target_audience: aiCurriculumForm.target_audience,
-            difficulty: aiCurriculumForm.difficulty,
-            existing_sections_summary: insertedSectionSummaries.length > 0
-              ? insertedSectionSummaries.join('\n')
-              : undefined,
-          });
 
-          const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+        const tryGenerateSectionContent = async (attempt: number): Promise<void> => {
+          try {
+            const sectionContent = await generateSectionContent({
+              section_title: sec.title,
+              course_title: courseName,
+              lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
+              target_audience: aiCurriculumForm.target_audience,
+              difficulty: aiCurriculumForm.difficulty,
+              existing_sections_summary: insertedSectionSummaries.length > 0
+                ? insertedSectionSummaries.join('\n')
+                : undefined,
+            });
 
-          // Store each lesson's notes
-          for (let li = 0; li < insertedLessons.length; li++) {
-            const lessonDb = insertedLessons[li];
-            const lessonContent = sectionContent.lessons?.[li];
-            if (!lessonDb || !lessonContent) continue;
+            const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-            const notesHtml = lessonContent.notes_html || '';
-            if (notesHtml) {
-              await supabase.from('lessons').update({ content: notesHtml }).eq('id', lessonDb.id);
+            // Match AI lesson output to DB lessons by title (case-insensitive), fall back to index
+            for (let li = 0; li < insertedLessons.length; li++) {
+              const lessonDb = insertedLessons[li];
+              const lessonContent =
+                sectionContent.lessons?.find(lc =>
+                  lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
+                ) ?? sectionContent.lessons?.[li];
+              if (!lessonDb || !lessonContent) continue;
+
+              const notesHtml = lessonContent.notes_html || '';
+              if (notesHtml) {
+                await supabase.from('lessons').update({ content: notesHtml }).eq('id', lessonDb.id);
+                docRows.push({
+                  lesson_id: lessonDb.id,
+                  course_id: selectedCourse,
+                  type: 'notes',
+                  title: `${lessonDb.title} — Notes`,
+                  content_html: notesHtml,
+                  order_index: 0,
+                });
+              }
+            }
+
+            // Store section slides linked to the first lesson
+            if (sectionContent.slides?.length && insertedLessons.length > 0) {
+              const slidesHtml = sectionContent.slides.map(s =>
+                `<section class="slide" data-slide="${s.slide_number}">
+                  <h2>${s.heading}</h2>
+                  ${s.content_html}
+                  ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+                </section>`
+              ).join('\n');
               docRows.push({
-                lesson_id: lessonDb.id,
+                lesson_id: insertedLessons[0].id,
                 course_id: selectedCourse,
-                type: 'notes',
-                title: `${lessonDb.title} — Notes`,
-                content_html: notesHtml,
-                order_index: 0,
+                type: 'slides',
+                title: sectionContent.slides_title || `${sec.title} — Slides`,
+                content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+                order_index: 1,
               });
             }
-          }
 
-          // Store section slides linked to the first lesson
-          if (sectionContent.slides?.length && insertedLessons.length > 0) {
-            const slidesHtml = sectionContent.slides.map(s =>
-              `<section class="slide" data-slide="${s.slide_number}">
-                <h2>${s.heading}</h2>
-                ${s.content_html}
-                ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-              </section>`
-            ).join('\n');
-            docRows.push({
-              lesson_id: insertedLessons[0].id,
-              course_id: selectedCourse,
-              type: 'slides',
-              title: sectionContent.slides_title || `${sec.title} — Slides`,
-              content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-              order_index: 1,
-            });
-          }
+            if (docRows.length > 0) {
+              await supabase.from('lesson_documents').insert(docRows);
+            }
 
-          if (docRows.length > 0) {
-            await supabase.from('lesson_documents').insert(docRows);
+            // Add this section to rolling context for the next section
+            insertedSectionSummaries.push(
+              `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
+            );
+          } catch (contentErr) {
+            if (attempt < 2) {
+              // Wait longer before retry (rate limit backoff)
+              setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: retrying notes & slides for "${sec.title}"...`);
+              await new Promise(r => setTimeout(r, 8000));
+              return tryGenerateSectionContent(attempt + 1);
+            }
+            // Both attempts failed — log and continue so other sections still complete
+            console.warn(`Notes/slides skipped for "${sec.title}":`, contentErr);
+            toast.error(`Notes/slides skipped for section "${sec.title}" — you can regenerate them individually later.`);
           }
+        };
 
-          // Add this section to rolling context for the next section
-          insertedSectionSummaries.push(
-            `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
-          );
-        } catch (contentErr) {
-          // Content generation failed — sections/lessons are already saved, just skip docs
-          toast.error(`Notes/slides for "${sec.title}" could not be generated: ${contentErr instanceof Error ? contentErr.message : 'Unknown error'}`);
-        }
+        await tryGenerateSectionContent(1);
       }
 
       toast.success(`Curriculum built — ${aiCurriculumPreview.length} sections with lessons, notes, slides, quizzes and activities`);
@@ -796,7 +814,10 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
       for (let li = 0; li < section.lessons.length; li++) {
         const lessonDb = section.lessons[li];
-        const lessonContent = result.lessons?.[li];
+        const lessonContent =
+          result.lessons?.find(lc =>
+            lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
+          ) ?? result.lessons?.[li];
         if (!lessonDb || !lessonContent?.notes_html) continue;
         await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
         docRows.push({
