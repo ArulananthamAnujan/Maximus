@@ -561,7 +561,6 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { generateFullCurriculum } = await import('../../lib/ai');
 
-      // Build a summary of already-existing sections so the AI builds on them
       const existingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
         ? sections.map((s, i) => {
             const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
@@ -577,11 +576,19 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         lessons_per_section: aiCurriculumForm.lessons_per_section,
         existing_sections_summary: existingSummary,
       });
-      setAICurriculumPreview(result.sections);
+
+      const sections_result = Array.isArray(result?.sections) ? result.sections : [];
+      if (sections_result.length === 0) {
+        toast.error('AI returned an empty curriculum. Please try again.');
+        setAICurriculumStep('form');
+        return;
+      }
+      setAICurriculumPreview(sections_result);
       setAICurriculumExpanded(0);
       setAICurriculumStep('preview');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'AI generation failed');
+      console.error('Curriculum generation error:', err);
+      toast.error(err instanceof Error ? err.message : 'AI generation failed. Please try again.');
       setAICurriculumStep('form');
     }
   };
@@ -772,12 +779,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       setAICurriculumPreview([]);
       setAICurriculumInsertStatus('');
       setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
-      await fetchSections();
-      await fetchQuizzes();
+      try { await fetchSections(); } catch { /* non-fatal */ }
+      try { await fetchQuizzes(); } catch { /* non-fatal */ }
       setActiveTab('curriculum');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum');
+      console.error('Curriculum insert error:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum. Please try again.');
       setAICurriculumInsertStatus('');
+      // Keep the preview visible so the user can retry
+      setAICurriculumStep('preview');
     } finally {
       setAICurriculumInserting(false);
     }
@@ -1537,7 +1547,10 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     {/* Step: Preview */}
                     {aiCurriculumStep === 'preview' && (
                       <div className="divide-y divide-slate-100">
-                        {aiCurriculumPreview.map((sec, si) => (
+                        {(!aiCurriculumPreview || aiCurriculumPreview.length === 0) && (
+                          <div className="p-10 text-center text-slate-400 text-sm">No curriculum sections were generated. Please go back and try again.</div>
+                        )}
+                        {(aiCurriculumPreview || []).map((sec, si) => (
                           <div key={si} className="overflow-hidden">
                             <button
                               type="button"

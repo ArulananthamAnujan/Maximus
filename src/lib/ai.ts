@@ -170,17 +170,36 @@ export interface AIHealthOutput {
 
 // ─── Core wrapper ───────────────────────────────────────────────────────────
 
-const LONG_TASKS = new Set(['lesson_notes', 'presentation_slides', 'section_content', 'full_curriculum', 'lesson_content']);
-
 const FUNCTIONS_BASE = import.meta.env.DEV
   ? '/functions/v1'
   : `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1`;
 
+// Timeout per task in ms (client-side safety net — edge function has its own)
+const TASK_TIMEOUT: Record<string, number> = {
+  full_curriculum: 260000,
+  section_content: 200000,
+  lesson_notes: 140000,
+  presentation_slides: 140000,
+  lesson_content: 120000,
+  generate_exam: 100000,
+};
+const DEFAULT_TIMEOUT = 90000;
+
 export async function callAI<T>(task: string, input: object): Promise<T> {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
-  const { data: { session } } = await supabase.auth.getSession();
+  let session;
+  try {
+    const { data } = await supabase.auth.getSession();
+    session = data.session;
+  } catch {
+    // proceed with anon key if session fetch fails
+  }
   const token = session?.access_token ?? supabaseAnonKey;
+
+  const timeoutMs = TASK_TIMEOUT[task] ?? DEFAULT_TIMEOUT;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {
@@ -192,13 +211,20 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
         'apikey': supabaseAnonKey,
       },
       body: JSON.stringify({ task, input }),
+      signal: controller.signal,
     });
-  } catch {
-    throw new Error('Could not reach the AI service. Please check your connection and try again.');
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`AI request timed out after ${Math.round(timeoutMs / 1000)}s. The server is taking too long — please try again.`);
+    }
+    throw new Error('Could not reach the AI service. Please check your internet connection and try again.');
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
-    let errMsg = 'AI request failed';
+    let errMsg = `AI request failed (HTTP ${response.status})`;
     try {
       const errBody = await response.json() as { error?: string };
       if (errBody.error) errMsg = errBody.error;
@@ -206,8 +232,16 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
     throw new Error(errMsg);
   }
 
-  const data = await response.json() as T;
-  if (!data) throw new Error('AI returned an empty response. Please try again.');
+  let data: T;
+  try {
+    data = await response.json() as T;
+  } catch {
+    throw new Error('AI returned an unreadable response. Please try again.');
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('AI returned an empty or invalid response. Please try again.');
+  }
   return data;
 }
 
