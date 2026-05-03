@@ -476,6 +476,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [aiCurriculumInserting, setAICurriculumInserting] = useState(false);
   const [aiCurriculumInsertStatus, setAICurriculumInsertStatus] = useState('');
   const [aiCurriculumExpanded, setAICurriculumExpanded] = useState<number | null>(0);
+  // Background AI content generation (phase 2 — runs after panel closes)
+  const [bgGenStatus, setBgGenStatus] = useState<{ total: number; done: number; current: string; errors: number } | null>(null);
 
   // AI Quiz from Curriculum
   const [showAIQuizFromCurriculum, setShowAIQuizFromCurriculum] = useState(false);
@@ -596,34 +598,37 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const handleAICurriculumInsert = async () => {
     if (!selectedCourse || !profile) return;
     setAICurriculumInserting(true);
-    setAICurriculumInsertStatus('Setting up sections...');
+    setAICurriculumInsertStatus('Creating course structure...');
+
+    // ── PHASE 1: Insert all DB records (sections, lessons, quizzes, activities) ──
+    // This is fast (pure DB ops) and must complete before we close the panel.
+    type SectionBuild = {
+      sec: import('../../lib/ai').AICurriculumSection;
+      lessons: Array<{ id: string; title: string }>;
+      courseId: string;
+      courseName: string;
+    };
+
+    const sectionBuilds: SectionBuild[] = [];
+
     try {
-      const { generateSectionContent } = await import('../../lib/ai');
       const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
       const startIdx = sections.length;
+      const totalSections = aiCurriculumPreview.length;
 
-      // Build existing sections summary for context continuity
-      const existingSummary = sections.length > 0
-        ? sections.map((s, i) => {
-            const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
-            return `Section ${i + 1}: "${s.title}"${lessonTitles ? ` (${lessonTitles})` : ''}`;
-          }).join('\n')
-        : undefined;
-
-      // Track newly inserted sections for rolling context (keep last 4 only to avoid prompt bloat)
-      const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
-      const getContextSummary = () => insertedSectionSummaries.slice(-4).join('\n');
-
-      for (let i = 0; i < aiCurriculumPreview.length; i++) {
+      for (let i = 0; i < totalSections; i++) {
         const sec = aiCurriculumPreview[i];
-        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: creating "${sec.title}"...`);
+        setAICurriculumInsertStatus(`Creating structure ${i + 1}/${totalSections}: "${sec.title}"...`);
 
         const { data: sectionData, error: sectionErr } = await supabase
           .from('sections')
           .insert({ course_id: selectedCourse, title: sec.title, order_index: startIdx + i })
           .select('id')
           .single();
-        if (sectionErr || !sectionData) continue;
+        if (sectionErr || !sectionData) {
+          console.error('Section insert error:', sectionErr);
+          continue;
+        }
 
         // Insert lessons
         const lessonRows = (sec.lessons || []).map((l, li) => ({
@@ -633,14 +638,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           type: l.type === 'document' ? 'file' : 'text',
           lesson_type: l.type === 'document' ? 'file' : 'text',
           content: '',
-          duration_minutes: l.estimated_duration_minutes || 10,
+          duration_minutes: l.estimated_duration_minutes || 60,
           order_index: li,
           is_preview: false,
         }));
         let insertedLessons: Array<{ id: string; title: string }> = [];
         if (lessonRows.length > 0) {
-          const { data: lessonData, error: lessonErr } = await supabase.from('lessons').insert(lessonRows).select('id, title');
-          if (!lessonErr) insertedLessons = lessonData || [];
+          const { data: lessonData, error: lessonErr } = await supabase
+            .from('lessons').insert(lessonRows).select('id, title');
+          if (!lessonErr && lessonData) insertedLessons = lessonData;
         }
 
         // Insert quiz
@@ -655,7 +661,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }).select('id').single();
           if (!quizErr && quizData) {
             const questionRows = sec.quiz.questions.map((q, qi) => {
-              const opts: string[] = q.options && q.options.length > 0 ? q.options : ['True', 'False'];
+              const opts: string[] = q.options?.length ? q.options : ['True', 'False'];
               const correctIdx = opts.findIndex(o => o === q.correct_answer);
               return {
                 quiz_id: quizData.id,
@@ -687,13 +693,55 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           await supabase.from('lesson_activities').insert(activityRows);
         }
 
-        // ONE batch AI call per section — generates all lesson notes + slides together
-        // Stagger calls to avoid rate limiting (30 calls/min cap — 1 call per ~2.5s is safe)
-        if (i > 0) await new Promise(r => setTimeout(r, 2500));
+        sectionBuilds.push({ sec, lessons: insertedLessons, courseId: selectedCourse, courseName });
+      }
 
-        setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating notes & slides for "${sec.title}"...`);
+      // Phase 1 complete — close panel and show curriculum immediately
+      toast.success(`${totalSections} sections created! Generating notes & slides in background...`);
+      setShowAICurriculumPanel(false);
+      setAICurriculumStep('form');
+      setAICurriculumPreview([]);
+      setAICurriculumInsertStatus('');
+      setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
+      setAICurriculumInserting(false);
 
-        const tryGenerateSectionContent = async (attempt: number): Promise<void> => {
+      try { await fetchSections(); } catch { /* non-fatal */ }
+      try { await fetchQuizzes(); } catch { /* non-fatal */ }
+      setActiveTab('curriculum');
+
+    } catch (err) {
+      console.error('Curriculum structure insert error:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to create course structure. Please try again.');
+      setAICurriculumInsertStatus('');
+      setAICurriculumStep('preview');
+      setAICurriculumInserting(false);
+      return;
+    }
+
+    // ── PHASE 2: Generate AI notes + slides in background (non-blocking) ──
+    // Panel is already closed. Failures here show a banner but NEVER cause a white screen.
+    if (sectionBuilds.length === 0) return;
+
+    setBgGenStatus({ total: sectionBuilds.length, done: 0, current: sectionBuilds[0].sec.title, errors: 0 });
+
+    (async () => {
+      const { generateSectionContent } = await import('../../lib/ai');
+      const contextSummaries: string[] = [];
+      let errors = 0;
+
+      for (let i = 0; i < sectionBuilds.length; i++) {
+        const { sec, lessons, courseId, courseName } = sectionBuilds[i];
+
+        setBgGenStatus(prev => prev ? {
+          ...prev,
+          done: i,
+          current: sec.title,
+        } : null);
+
+        // Stagger to stay well within rate limits
+        if (i > 0) await new Promise(r => setTimeout(r, 1500));
+
+        const tryGenerate = async (attempt: number): Promise<void> => {
           try {
             const sectionContent = await generateSectionContent({
               section_title: sec.title,
@@ -701,16 +749,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
               target_audience: aiCurriculumForm.target_audience,
               difficulty: aiCurriculumForm.difficulty,
-              existing_sections_summary: insertedSectionSummaries.length > 0
-                ? getContextSummary()
+              existing_sections_summary: contextSummaries.length > 0
+                ? contextSummaries.slice(-4).join('\n')
                 : undefined,
             });
 
             const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-            // Match AI lesson output to DB lessons by title (case-insensitive), fall back to index
-            for (let li = 0; li < insertedLessons.length; li++) {
-              const lessonDb = insertedLessons[li];
+            for (let li = 0; li < lessons.length; li++) {
+              const lessonDb = lessons[li];
               const lessonContent =
                 sectionContent.lessons?.find(lc =>
                   lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
@@ -722,7 +769,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                 await supabase.from('lessons').update({ content: notesHtml }).eq('id', lessonDb.id);
                 docRows.push({
                   lesson_id: lessonDb.id,
-                  course_id: selectedCourse,
+                  course_id: courseId,
                   type: 'notes',
                   title: `${lessonDb.title} — Notes`,
                   content_html: notesHtml,
@@ -731,8 +778,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               }
             }
 
-            // Store section slides linked to the first lesson
-            if (sectionContent.slides?.length && insertedLessons.length > 0) {
+            if (sectionContent.slides?.length && lessons.length > 0) {
               const slidesHtml = sectionContent.slides.map(s =>
                 `<section class="slide" data-slide="${s.slide_number}">
                   <h2>${s.heading}</h2>
@@ -741,8 +787,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                 </section>`
               ).join('\n');
               docRows.push({
-                lesson_id: insertedLessons[0].id,
-                course_id: selectedCourse,
+                lesson_id: lessons[0].id,
+                course_id: courseId,
                 type: 'slides',
                 title: sectionContent.slides_title || `${sec.title} — Slides`,
                 content_html: `<div class="slides-deck">${slidesHtml}</div>`,
@@ -754,43 +800,36 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               await supabase.from('lesson_documents').insert(docRows);
             }
 
-            // Add this section to rolling context for the next section
-            insertedSectionSummaries.push(
-              `Section ${startIdx + i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
+            contextSummaries.push(
+              `Section ${i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
             );
-          } catch (contentErr) {
-            if (attempt < 2) {
-              setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: retrying notes & slides for "${sec.title}"...`);
-              await new Promise(r => setTimeout(r, 5000));
-              return tryGenerateSectionContent(attempt + 1);
+          } catch (err) {
+            if (attempt < 3) {
+              // Exponential back-off: 5s, 15s
+              await new Promise(r => setTimeout(r, attempt === 1 ? 5000 : 15000));
+              return tryGenerate(attempt + 1);
             }
-            // Both attempts failed — log and continue so other sections still complete
-            console.warn(`Notes/slides skipped for "${sec.title}":`, contentErr);
-            toast.error(`Notes/slides skipped for section "${sec.title}" — you can regenerate them individually later.`);
+            console.warn(`Notes/slides failed for "${sec.title}" after 3 attempts:`, err);
+            errors++;
           }
         };
 
-        await tryGenerateSectionContent(1);
+        await tryGenerate(1);
+
+        setBgGenStatus(prev => prev ? { ...prev, done: i + 1, errors } : null);
       }
 
-      toast.success(`Curriculum built — ${aiCurriculumPreview.length} sections with lessons, notes, slides, quizzes and activities`);
-      setShowAICurriculumPanel(false);
-      setAICurriculumStep('form');
-      setAICurriculumPreview([]);
-      setAICurriculumInsertStatus('');
-      setAICurriculumForm({ topic: '', target_audience: 'general', difficulty: 'beginner', num_sections: 3, lessons_per_section: 3, use_existing_context: true });
+      // Background generation complete
+      if (errors === 0) {
+        toast.success('All notes and slides have been generated successfully.');
+      } else {
+        toast.error(`${sectionBuilds.length - errors} of ${sectionBuilds.length} sections generated. Use "PDF & PPT" on any section to retry the rest.`);
+      }
+      setBgGenStatus(null);
+
+      // Refresh lessons to pick up the newly written content
       try { await fetchSections(); } catch { /* non-fatal */ }
-      try { await fetchQuizzes(); } catch { /* non-fatal */ }
-      setActiveTab('curriculum');
-    } catch (err) {
-      console.error('Curriculum insert error:', err);
-      toast.error(err instanceof Error ? err.message : 'Failed to save curriculum. Please try again.');
-      setAICurriculumInsertStatus('');
-      // Keep the preview visible so the user can retry
-      setAICurriculumStep('preview');
-    } finally {
-      setAICurriculumInserting(false);
-    }
+    })();
   };
 
   const handleGenerateSectionDocs = async (section: Section & { lessons: Lesson[] }) => {
@@ -1401,6 +1440,25 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
             {activeTab === 'curriculum' && (
               <div className="space-y-4">
+
+                {/* ─── Background AI generation progress banner ─────────────── */}
+                {bgGenStatus && (
+                  <div className="flex items-center gap-3 px-5 py-3.5 bg-teal-50 border border-teal-200 rounded-xl">
+                    <div className="w-4 h-4 border-2 border-teal-300 border-t-teal-600 rounded-full animate-spin shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-teal-800">
+                        Generating notes &amp; slides — {bgGenStatus.done}/{bgGenStatus.total} sections complete
+                      </p>
+                      <p className="text-xs text-teal-600 truncate mt-0.5">Working on: {bgGenStatus.current}</p>
+                    </div>
+                    <div className="w-32 bg-teal-200 rounded-full h-1.5 shrink-0">
+                      <div
+                        className="bg-teal-500 h-1.5 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.round((bgGenStatus.done / bgGenStatus.total) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* ─── AI Curriculum Generator ─────────────────────────────── */}
                 {!showAICurriculumPanel ? (
