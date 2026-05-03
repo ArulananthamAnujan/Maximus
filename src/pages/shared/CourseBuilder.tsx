@@ -478,6 +478,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [aiCurriculumExpanded, setAICurriculumExpanded] = useState<number | null>(0);
   // Background AI content generation (phase 2 — runs after panel closes)
   const [bgGenStatus, setBgGenStatus] = useState<{ total: number; done: number; current: string; errors: number } | null>(null);
+  // Batch curriculum generation progress
+  const [curriculumGenProgress, setCurriculumGenProgress] = useState<{ done: number; total: number } | null>(null);
 
   // AI Quiz from Curriculum
   const [showAIQuizFromCurriculum, setShowAIQuizFromCurriculum] = useState(false);
@@ -560,38 +562,73 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     e.preventDefault();
     if (!selectedCourse) return;
     setAICurriculumStep('loading');
+    setCurriculumGenProgress(null);
+
     try {
       const { generateFullCurriculum } = await import('../../lib/ai');
 
-      const existingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
+      const totalSections = aiCurriculumForm.num_sections;
+      // Max 4 sections per AI call to keep response size reliable and avoid timeouts
+      const BATCH_SIZE = 4;
+      const allSections: import('../../lib/ai').AICurriculumSection[] = [];
+
+      const baseExistingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
         ? sections.map((s, i) => {
             const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
             return `Week/Section ${i + 1}: "${s.title}"${lessonTitles ? ` — Lessons: ${lessonTitles}` : ''}`;
           }).join('\n')
-        : undefined;
+        : '';
 
-      const result = await generateFullCurriculum({
-        topic: aiCurriculumForm.topic,
-        target_audience: aiCurriculumForm.target_audience,
-        difficulty: aiCurriculumForm.difficulty,
-        num_sections: aiCurriculumForm.num_sections,
-        lessons_per_section: aiCurriculumForm.lessons_per_section,
-        existing_sections_summary: existingSummary,
-      });
+      const totalBatches = Math.ceil(totalSections / BATCH_SIZE);
+      setCurriculumGenProgress({ done: 0, total: totalBatches });
 
-      const sections_result = Array.isArray(result?.sections) ? result.sections : [];
-      if (sections_result.length === 0) {
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        const sectionsInThisBatch = Math.min(BATCH_SIZE, totalSections - batchIdx * BATCH_SIZE);
+
+        // Build rolling context from what's already been generated
+        const alreadyGeneratedSummary = allSections.length > 0
+          ? allSections.map((s, i) => {
+              const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
+              return `Week/Section ${i + 1}: "${s.title}" — Lessons: ${lessonTitles}`;
+            }).join('\n')
+          : '';
+
+        const existingSummaryParts = [baseExistingSummary, alreadyGeneratedSummary].filter(Boolean);
+        const existingSummary = existingSummaryParts.length > 0 ? existingSummaryParts.join('\n') : undefined;
+
+        const result = await generateFullCurriculum({
+          topic: aiCurriculumForm.topic,
+          target_audience: aiCurriculumForm.target_audience,
+          difficulty: aiCurriculumForm.difficulty,
+          num_sections: sectionsInThisBatch,
+          lessons_per_section: aiCurriculumForm.lessons_per_section,
+          existing_sections_summary: existingSummary,
+        });
+
+        const batchSections = Array.isArray(result?.sections) ? result.sections : [];
+        if (batchSections.length === 0) {
+          throw new Error(`Batch ${batchIdx + 1} returned no sections. Please try again.`);
+        }
+        allSections.push(...batchSections);
+        setCurriculumGenProgress({ done: batchIdx + 1, total: totalBatches });
+      }
+
+      if (allSections.length === 0) {
         toast.error('AI returned an empty curriculum. Please try again.');
         setAICurriculumStep('form');
+        setCurriculumGenProgress(null);
         return;
       }
-      setAICurriculumPreview(sections_result);
+
+      setAICurriculumPreview(allSections);
       setAICurriculumExpanded(0);
       setAICurriculumStep('preview');
+      setCurriculumGenProgress(null);
     } catch (err) {
       console.error('Curriculum generation error:', err);
       toast.error(err instanceof Error ? err.message : 'AI generation failed. Please try again.');
       setAICurriculumStep('form');
+      setCurriculumGenProgress(null);
     }
   };
 
@@ -1595,9 +1632,23 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           </div>
                           <div className="absolute inset-0 rounded-full border-4 border-sky-300 border-t-transparent animate-spin" />
                         </div>
-                        <div className="text-center">
+                        <div className="text-center space-y-2">
                           <p className="text-sm font-semibold text-slate-700">AI is crafting your curriculum</p>
-                          <p className="text-xs text-slate-400 mt-1">Building {aiCurriculumForm.num_sections} sections with lessons, quizzes and activities...</p>
+                          {curriculumGenProgress ? (
+                            <>
+                              <p className="text-xs text-slate-500">
+                                Batch {curriculumGenProgress.done + 1} of {curriculumGenProgress.total} — building sections {curriculumGenProgress.done * 4 + 1}–{Math.min((curriculumGenProgress.done + 1) * 4, aiCurriculumForm.num_sections)}...
+                              </p>
+                              <div className="w-48 mx-auto bg-sky-100 rounded-full h-1.5 mt-1">
+                                <div
+                                  className="bg-sky-500 h-1.5 rounded-full transition-all duration-500"
+                                  style={{ width: `${Math.round((curriculumGenProgress.done / curriculumGenProgress.total) * 100)}%` }}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <p className="text-xs text-slate-400">Preparing {aiCurriculumForm.num_sections} sections with lessons, quizzes and activities...</p>
+                          )}
                         </div>
                       </div>
                     )}

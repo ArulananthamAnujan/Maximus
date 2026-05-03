@@ -416,7 +416,8 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'full_curriculum') return 32000;
+  // full_curriculum is now called in batches of max 4 sections — 10k is sufficient
+  if (task === 'full_curriculum') return 10000;
   if (task === 'section_content') return 12000;
   if (task === 'lesson_notes') return 12000;
   if (task === 'presentation_slides') return 12000;
