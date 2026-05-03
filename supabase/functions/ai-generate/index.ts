@@ -476,7 +476,7 @@ The examination must meet university assessment standards with questions that va
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'generate_exam'];
+  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 
