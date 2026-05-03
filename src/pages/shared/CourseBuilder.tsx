@@ -403,7 +403,7 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
             onClick={onGenerateDocs}
             disabled={generatingDocs || section.lessons?.length === 0}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all disabled:opacity-50 bg-white border-blue-300 text-blue-700 hover:bg-blue-50"
-            title="Generate Notes & Slides for ALL sections in this course"
+            title="Generate lesson notes & slides for this section"
           >
             {generatingDocs
               ? <><div className="w-3 h-3 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin" /> Generating...</>
@@ -851,108 +851,121 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   };
 
   // Generate notes + slides for ALL sections in the course (called from any section's button)
-  const handleGenerateSectionDocs = async (_triggeredSection: Section & { lessons: Lesson[] }) => {
-    if (!selectedCourse || generatingSectionDocsId || bgGenStatus) return;
-
-    const courseId = selectedCourse;
-    const courseName = courses.find(c => c.id === courseId)?.title || '';
-    const allSections = sections.filter(s => s.lessons?.length > 0);
-
-    if (allSections.length === 0) {
-      toast.error('Add lessons to sections before generating notes & slides.');
+  // Generate notes + slides for ONE specific section only
+  const handleGenerateSectionDocs = (section: Section & { lessons: Lesson[] }) => {
+    if (!selectedCourse || generatingSectionDocsId) return;
+    if (!section.lessons?.length) {
+      toast.error('Add lessons to this section before generating.');
       return;
     }
 
-    // Use bgGenStatus for progress tracking (same UI as curriculum generation)
-    setBgGenStatus({ total: allSections.length, done: 0, current: allSections[0].title, errors: 0 });
-    setGeneratingSectionDocsId(courseId);
+    const courseId = selectedCourse;
+    const courseName = courses.find(c => c.id === courseId)?.title || '';
+
+    setGeneratingSectionDocsId(section.id);
+    setBgGenStatus({ total: 2, done: 0, current: `${section.title} — notes`, errors: 0 });
 
     (async () => {
       const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
-      let errors = 0;
 
-      for (let i = 0; i < allSections.length; i++) {
-        if (!mountedRef.current) return;
-        const sec = allSections[i];
-        if (mountedRef.current) setBgGenStatus(prev => prev ? { ...prev, done: i, current: sec.title } : null);
+      const sectionInput = {
+        section_title: section.title,
+        course_title: courseName,
+        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+        target_audience: 'general',
+        difficulty: 'intermediate',
+      };
 
-        if (i > 0) await new Promise(r => setTimeout(r, 300));
+      const lessonIds = section.lessons.map(l => l.id);
+      const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-        try {
-          const lessonIds = sec.lessons.map(l => l.id);
-          const sectionInput = {
-            section_title: sec.title,
-            course_title: courseName,
-            lessons: sec.lessons.map(l => ({ title: l.title, description: '' })),
-            target_audience: 'general',
-            difficulty: 'intermediate',
-          };
+      // ── Step 1: Notes ──────────────────────────────────────────────────────
+      if (!mountedRef.current) return;
+      setBgGenStatus(prev => prev ? { ...prev, done: 0, current: `${section.title} — generating notes` } : null);
 
-          // 2 calls per section: all notes in one + slides in one
-          const [notesResult, slidesResult] = await Promise.allSettled([
-            generateSectionNotes(sectionInput),
-            generateSectionSlides(sectionInput),
-          ]);
-
-          if (!mountedRef.current) return;
-
-          const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-          const lessonUpdates: Array<{ id: string; content: string }> = [];
-
-          if (notesResult.status === 'fulfilled' && notesResult.value?.lessons?.length) {
-            for (const lessonNote of notesResult.value.lessons) {
-              const matchedLesson = sec.lessons.find(l =>
-                l.title.toLowerCase().trim() === lessonNote.lesson_title?.toLowerCase().trim()
-              ) || sec.lessons[notesResult.value.lessons.indexOf(lessonNote)];
-              if (matchedLesson && lessonNote.notes_html) {
-                lessonUpdates.push({ id: matchedLesson.id, content: lessonNote.notes_html });
-                docRows.push({ lesson_id: matchedLesson.id, course_id: courseId, type: 'notes', title: `${matchedLesson.title} — Notes`, content_html: lessonNote.notes_html, order_index: 0 });
-              }
+      let notesOk = false;
+      try {
+        const notesData = await generateSectionNotes(sectionInput);
+        if (notesData?.lessons?.length) {
+          for (let i = 0; i < notesData.lessons.length; i++) {
+            const lessonNote = notesData.lessons[i];
+            // Always match by index first (most reliable); fall back to title match
+            const lesson = section.lessons[i] ?? section.lessons.find(l =>
+              l.title.toLowerCase().includes((lessonNote.lesson_title || '').toLowerCase().slice(0, 20))
+            );
+            if (lesson && lessonNote.notes_html?.trim()) {
+              docRows.push({
+                lesson_id: lesson.id,
+                course_id: courseId,
+                type: 'notes',
+                title: `${lesson.title} — Notes`,
+                content_html: lessonNote.notes_html,
+                order_index: 0,
+              });
+              // Non-blocking lesson content sync
+              supabase.from('lessons').update({ content: lessonNote.notes_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
             }
           }
-
-          if (slidesResult.status === 'fulfilled' && slidesResult.value?.slides?.length && sec.lessons.length > 0) {
-            const slidesHtml = slidesResult.value.slides.map(s =>
-              `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
-            ).join('\n');
-            docRows.push({ lesson_id: sec.lessons[0].id, course_id: courseId, type: 'slides', title: slidesResult.value.slides_title || `${sec.title} — Slides`, content_html: `<div class="slides-deck">${slidesHtml}</div>`, order_index: 1 });
-          }
-
-          if (!mountedRef.current) return;
-
-          if (docRows.length > 0) {
-            Promise.allSettled(lessonUpdates.map(u => supabase.from('lessons').update({ content: u.content }).eq('id', u.id))).catch(() => {});
-            await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
-            await supabase.from('lesson_documents').insert(docRows);
-          } else {
-            errors++;
-          }
-        } catch (secErr) {
-          console.warn(`Section "${sec.title}" failed:`, secErr);
-          errors++;
+          notesOk = docRows.length > 0;
         }
+      } catch (err) {
+        console.warn(`Notes failed for "${section.title}":`, err);
+      }
 
-        if (mountedRef.current) setBgGenStatus(prev => prev ? { ...prev, done: i + 1, errors } : null);
+      if (!mountedRef.current) return;
+      setBgGenStatus(prev => prev ? { ...prev, done: 1, current: `${section.title} — generating slides` } : null);
+
+      // ── Step 2: Slides ─────────────────────────────────────────────────────
+      let slidesOk = false;
+      try {
+        const slidesData = await generateSectionSlides(sectionInput);
+        if (slidesData?.slides?.length) {
+          const slidesHtml = slidesData.slides.map(s =>
+            `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
+          ).join('\n');
+          docRows.push({
+            lesson_id: section.lessons[0].id,
+            course_id: courseId,
+            type: 'slides',
+            title: slidesData.slides_title || `${section.title} — Slides`,
+            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+            order_index: 1,
+          });
+          slidesOk = true;
+        }
+      } catch (err) {
+        console.warn(`Slides failed for "${section.title}":`, err);
       }
 
       if (!mountedRef.current) return;
 
-      if (errors === 0) {
-        toast.success(`Generated notes & slides for all ${allSections.length} sections.`);
+      // ── Step 3: Persist ────────────────────────────────────────────────────
+      if (docRows.length > 0) {
+        try {
+          await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
+          await supabase.from('lesson_documents').insert(docRows);
+          const parts: string[] = [];
+          if (notesOk) parts.push('notes');
+          if (slidesOk) parts.push('slides');
+          toast.success(`Generated ${parts.join(' & ')} for "${section.title}"`);
+        } catch (dbErr) {
+          console.error('Failed to save documents:', dbErr);
+          toast.error('Generated content but failed to save — please try again.');
+        }
       } else {
-        toast.error(`${allSections.length - errors} of ${allSections.length} sections completed. Click "Notes & Slides" to retry.`);
+        toast.error(`Could not generate content for "${section.title}". Please try again.`);
       }
 
-      setBgGenStatus(null);
-      setGeneratingSectionDocsId(null);
-
-      try { await fetchSections(); } catch { /* non-fatal */ }
-    })().catch(err => {
-      console.error('Notes & Slides generation crashed:', err);
       if (mountedRef.current) {
         setBgGenStatus(null);
         setGeneratingSectionDocsId(null);
-        toast.error('Generation stopped unexpectedly. Please click "Notes & Slides" to retry.');
+      }
+    })().catch(err => {
+      console.error('handleGenerateSectionDocs crashed:', err);
+      if (mountedRef.current) {
+        setBgGenStatus(null);
+        setGeneratingSectionDocsId(null);
+        toast.error('Generation failed unexpectedly — please try again.');
       }
     });
   };
@@ -1489,19 +1502,21 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             {activeTab === 'curriculum' && (
               <div className="space-y-4">
 
-                {/* ─── Background AI generation progress banner ─────────────── */}
+                {/* ─── AI generation progress banner ───────────────────────── */}
                 {bgGenStatus && (
-                  <div className="flex items-center gap-3 px-5 py-3.5 bg-teal-50 border border-teal-200 rounded-xl">
-                    <div className="w-4 h-4 border-2 border-teal-300 border-t-teal-600 rounded-full animate-spin shrink-0" />
+                  <div className="flex items-center gap-3 px-5 py-3.5 bg-blue-50 border border-blue-200 rounded-xl">
+                    <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-teal-800">
-                        Generating notes &amp; slides — {bgGenStatus.done}/{bgGenStatus.total} sections complete
+                      <p className="text-sm font-semibold text-blue-900">
+                        {bgGenStatus.total === 2
+                          ? `Generating — step ${bgGenStatus.done + 1} of 2`
+                          : `Generating notes & slides — ${bgGenStatus.done}/${bgGenStatus.total} sections complete`}
                       </p>
-                      <p className="text-xs text-teal-600 truncate mt-0.5">Working on: {bgGenStatus.current}</p>
+                      <p className="text-xs text-blue-600 truncate mt-0.5">{bgGenStatus.current}</p>
                     </div>
-                    <div className="w-32 bg-teal-200 rounded-full h-1.5 shrink-0">
+                    <div className="w-28 bg-blue-200 rounded-full h-1.5 shrink-0">
                       <div
-                        className="bg-teal-500 h-1.5 rounded-full transition-all duration-500"
+                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
                         style={{ width: `${Math.round((bgGenStatus.done / bgGenStatus.total) * 100)}%` }}
                       />
                     </div>
@@ -1821,7 +1836,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     onDelete={() => setDeleteTarget({ type: 'section', id: section.id, name: section.title })}
                     onAddLesson={() => { setAddingLessonTo(section.id); setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true }); }}
                     onGenerateDocs={() => handleGenerateSectionDocs(section)}
-                    generatingDocs={!!generatingSectionDocsId || !!bgGenStatus}
+                    generatingDocs={generatingSectionDocsId === section.id}
                   >
                     {editingSectionId === section.id && (
                       <div className="px-4 py-3 bg-sky-50 border-b border-sky-100 flex items-center gap-2">
