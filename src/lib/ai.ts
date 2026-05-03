@@ -228,9 +228,11 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
   if (!response.ok) {
     let errMsg = `AI request failed (HTTP ${response.status})`;
     try {
-      const errBody = await response.json() as { error?: string };
+      const rawText = await response.text();
+      console.error(`[callAI] ${task} HTTP ${response.status} body:`, rawText.slice(0, 500));
+      const errBody = JSON.parse(rawText) as { error?: string };
       if (errBody.error) errMsg = errBody.error;
-    } catch { /* ignore */ }
+    } catch { /* ignore parse failure — errMsg stays as HTTP status */ }
     throw new Error(errMsg);
   }
 

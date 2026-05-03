@@ -762,7 +762,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     setBgGenStatus({ total: sectionBuilds.length, done: 0, current: sectionBuilds[0].sec.title, errors: 0 });
 
     (async () => {
-      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
+      const { generateLessonNotes, generatePresentationSlides } = await import('../../lib/ai');
       const contextSummaries: string[] = [];
       let errors = 0;
 
@@ -771,39 +771,35 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
         setBgGenStatus(prev => prev ? { ...prev, done: i, current: sec.title } : null);
 
-        // Small stagger between sections to avoid rate-limit bursts
-        if (i > 0) await new Promise(r => setTimeout(r, 1000));
+        // Stagger sections to avoid rate-limit bursts
+        if (i > 0) await new Promise(r => setTimeout(r, 1500));
 
-        const callInput = {
+        // Generate per-lesson notes in parallel + one slides call simultaneously
+        const lessonNotePromises = (sec.lessons || []).map(l =>
+          generateLessonNotes({
+            lesson_title: l.title,
+            section_title: sec.title,
+            course_title: courseName,
+            target_audience: aiCurriculumForm.target_audience,
+            difficulty: aiCurriculumForm.difficulty,
+          }).catch(err => { console.warn(`Notes failed for "${l.title}":`, err); return null; })
+        );
+
+        const slidesPromise = generatePresentationSlides({
           section_title: sec.title,
           course_title: courseName,
-          lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
+          lesson_titles: (sec.lessons || []).map(l => l.title).join(', '),
           target_audience: aiCurriculumForm.target_audience,
           difficulty: aiCurriculumForm.difficulty,
-          existing_sections_summary: contextSummaries.length > 0
-            ? contextSummaries.slice(-4).join('\n')
-            : undefined,
-        };
+        }).catch(err => { console.warn(`Slides failed for "${sec.title}":`, err); return null; });
 
-        // Notes and slides are independent — run in parallel, each with its own retry
-        const withRetry = async <T,>(fn: () => Promise<T>, label: string): Promise<T | null> => {
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              return await fn();
-            } catch (err) {
-              console.warn(`${label} attempt ${attempt} failed:`, err);
-              if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 5000));
-            }
-          }
-          return null;
-        };
-
-        const [notesResult, slidesResult] = await Promise.all([
-          withRetry(() => generateSectionNotes(callInput), `Notes "${sec.title}"`),
-          withRetry(() => generateSectionSlides(callInput), `Slides "${sec.title}"`),
+        const [lessonNotesResults, slidesData] = await Promise.all([
+          Promise.all(lessonNotePromises),
+          slidesPromise,
         ]);
 
-        if (!notesResult && !slidesResult) {
+        const allFailed = lessonNotesResults.every(r => !r) && !slidesData;
+        if (allFailed) {
           errors++;
           setBgGenStatus(prev => prev ? { ...prev, done: i + 1, errors } : null);
           continue;
@@ -811,28 +807,23 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
         const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-        if (notesResult) {
-          for (let li = 0; li < lessons.length; li++) {
-            const lessonDb = lessons[li];
-            const lessonContent =
-              notesResult.lessons?.find(lc =>
-                lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
-              ) ?? notesResult.lessons?.[li];
-            if (!lessonDb || !lessonContent?.notes_html) continue;
-            await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
-            docRows.push({
-              lesson_id: lessonDb.id,
-              course_id: courseId,
-              type: 'notes',
-              title: `${lessonDb.title} — Notes`,
-              content_html: lessonContent.notes_html,
-              order_index: 0,
-            });
-          }
+        for (let li = 0; li < lessons.length; li++) {
+          const lessonDb = lessons[li];
+          const notesResult = lessonNotesResults[li];
+          if (!notesResult?.content_html) continue;
+          await supabase.from('lessons').update({ content: notesResult.content_html }).eq('id', lessonDb.id);
+          docRows.push({
+            lesson_id: lessonDb.id,
+            course_id: courseId,
+            type: 'notes',
+            title: `${lessonDb.title} — Notes`,
+            content_html: notesResult.content_html,
+            order_index: 0,
+          });
         }
 
-        if (slidesResult?.slides?.length && lessons.length > 0) {
-          const slidesHtml = slidesResult.slides.map(s =>
+        if (slidesData?.slides?.length && lessons.length > 0) {
+          const slidesHtml = slidesData.slides.map(s =>
             `<section class="slide" data-slide="${s.slide_number}">
               <h2>${s.heading}</h2>
               ${s.content_html}
@@ -843,7 +834,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             lesson_id: lessons[0].id,
             course_id: courseId,
             type: 'slides',
-            title: slidesResult.slides_title || `${sec.title} — Slides`,
+            title: slidesData.title || `${sec.title} — Slides`,
             content_html: `<div class="slides-deck">${slidesHtml}</div>`,
             order_index: 1,
           });
@@ -895,76 +886,85 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     };
 
     try {
-      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
+      const { generateLessonNotes, generatePresentationSlides } = await import('../../lib/ai');
 
-      // Run notes and slides as two independent calls in parallel
-      const [notesResult, slidesResult] = await Promise.allSettled([
-        generateSectionNotes(callInput),
-        generateSectionSlides(callInput),
+      // Generate per-lesson notes individually (proven working task, fast per call)
+      // and slides for the whole section in parallel with the last lesson note call
+      const lessonIds = section.lessons.map(l => l.id);
+
+      // Fire all lesson note calls in parallel, plus one slides call
+      const lessonNotePromises = section.lessons.map(lesson =>
+        generateLessonNotes({
+          lesson_title: lesson.title,
+          section_title: section.title,
+          course_title: courseName,
+          target_audience: 'general',
+          difficulty: 'beginner',
+        }).catch((err) => { console.error(`Notes failed for "${lesson.title}":`, err); return null; })
+      );
+
+      const slidesPromise = generatePresentationSlides({
+        section_title: section.title,
+        course_title: courseName,
+        lesson_titles: section.lessons.map(l => l.title).join(', '),
+        target_audience: 'general',
+        difficulty: 'beginner',
+      }).catch((err) => { console.error(`Slides failed for "${section.title}":`, err); return null; });
+
+      const [lessonNotesResults, slidesData] = await Promise.all([
+        Promise.all(lessonNotePromises),
+        slidesPromise,
       ]);
 
       // Delete old docs then rebuild
-      const lessonIds = section.lessons.map(l => l.id);
       await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
 
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // Process notes
-      if (notesResult.status === 'fulfilled') {
-        const notes = notesResult.value;
-        for (let li = 0; li < section.lessons.length; li++) {
-          const lessonDb = section.lessons[li];
-          const lessonContent =
-            notes.lessons?.find(lc =>
-              lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
-            ) ?? notes.lessons?.[li];
-          if (!lessonDb || !lessonContent?.notes_html) continue;
-          await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
-          docRows.push({
-            lesson_id: lessonDb.id,
-            course_id: courseId,
-            type: 'notes',
-            title: `${lessonDb.title} — Notes`,
-            content_html: lessonContent.notes_html,
-            order_index: 0,
-          });
-        }
-      } else {
-        console.error('Notes generation failed:', notesResult.reason);
-        toast.error('Notes could not be generated — slides may still be available.');
+      let notesCount = 0;
+      for (let li = 0; li < section.lessons.length; li++) {
+        const lessonDb = section.lessons[li];
+        const notesResult = lessonNotesResults[li];
+        if (!notesResult?.content_html) continue;
+        await supabase.from('lessons').update({ content: notesResult.content_html }).eq('id', lessonDb.id);
+        docRows.push({
+          lesson_id: lessonDb.id,
+          course_id: courseId,
+          type: 'notes',
+          title: `${lessonDb.title} — Notes`,
+          content_html: notesResult.content_html,
+          order_index: 0,
+        });
+        notesCount++;
       }
 
-      // Process slides
-      if (slidesResult.status === 'fulfilled') {
-        const slidesData = slidesResult.value;
-        if (slidesData.slides?.length && section.lessons.length > 0) {
-          const slidesHtml = slidesData.slides.map(s =>
-            `<section class="slide" data-slide="${s.slide_number}">
-              <h2>${s.heading}</h2>
-              ${s.content_html}
-              ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-            </section>`
-          ).join('\n');
-          docRows.push({
-            lesson_id: section.lessons[0].id,
-            course_id: courseId,
-            type: 'slides',
-            title: slidesData.slides_title || `${section.title} — Slides`,
-            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-            order_index: 1,
-          });
-        }
-      } else {
-        console.error('Slides generation failed:', slidesResult.reason);
-        toast.error('Slides could not be generated — notes may still be available.');
+      if (slidesData?.slides?.length && section.lessons.length > 0) {
+        const slidesHtml = slidesData.slides.map(s =>
+          `<section class="slide" data-slide="${s.slide_number}">
+            <h2>${s.heading}</h2>
+            ${s.content_html}
+            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+          </section>`
+        ).join('\n');
+        docRows.push({
+          lesson_id: section.lessons[0].id,
+          course_id: courseId,
+          type: 'slides',
+          title: slidesData.title || `${section.title} — Slides`,
+          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+          order_index: 1,
+        });
       }
 
       if (docRows.length > 0) {
         await supabase.from('lesson_documents').insert(docRows);
-        toast.success(`Generated for "${section.title}" — ${notesResult.status === 'fulfilled' ? 'notes' : ''}${notesResult.status === 'fulfilled' && slidesResult.status === 'fulfilled' ? ' & ' : ''}${slidesResult.status === 'fulfilled' ? 'slides' : ''}`);
+        const parts: string[] = [];
+        if (notesCount > 0) parts.push(`${notesCount} lesson note${notesCount > 1 ? 's' : ''}`);
+        if (slidesData?.slides?.length) parts.push('slides');
+        toast.success(`Generated ${parts.join(' & ')} for "${section.title}"`);
         if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
       } else {
-        toast.error('Generation failed for both notes and slides. Please try again.');
+        toast.error('Generation failed — please check your AI configuration and try again.');
       }
     } catch (err) {
       console.error('handleGenerateSectionDocs error:', err);
