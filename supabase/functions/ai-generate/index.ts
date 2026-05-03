@@ -478,9 +478,9 @@ function getMaxTokens(task: string): number {
   if (task === 'full_curriculum') return 10000;
   if (task === 'section_content') return 12000;
   // section_notes: notes only (no slides) — up to 4 lessons × ~1000 words each
-  if (task === 'section_notes') return 5000;
+  if (task === 'section_notes') return 10000;
   // section_slides: slides only (no notes) — 8 slides
-  if (task === 'section_slides') return 3000;
+  if (task === 'section_slides') return 4000;
   if (task === 'lesson_notes') return 4000;
   if (task === 'presentation_slides') return 4000;
   if (task === 'lesson_content') return 10000;
@@ -518,7 +518,7 @@ async function callAnthropic(
     signal: AbortSignal.timeout(
       task === 'full_curriculum' ? 120000
         : task === 'section_content' ? 120000
-        : ['section_notes', 'lesson_notes', 'lesson_content'].includes(task) ? 45000
+        : ['section_notes', 'lesson_notes', 'lesson_content'].includes(task) ? 90000
         : task === 'section_slides' ? 45000
         : ['presentation_slides', 'generate_exam'].includes(task) ? 45000
         : 60000

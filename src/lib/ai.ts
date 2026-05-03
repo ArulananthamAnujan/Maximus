@@ -178,7 +178,7 @@ const FUNCTIONS_BASE = import.meta.env.DEV
 const TASK_TIMEOUT: Record<string, number> = {
   full_curriculum: 130000,
   section_content: 130000,
-  section_notes: 60000,
+  section_notes: 100000,
   section_slides: 60000,
   lesson_notes: 60000,
   presentation_slides: 60000,

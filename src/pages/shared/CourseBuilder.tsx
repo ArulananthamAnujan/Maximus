@@ -866,7 +866,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     setBgGenStatus({ total: 2, done: 0, current: `${section.title} — notes`, errors: 0 });
 
     (async () => {
-      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
+      const { generateSectionNotes, generateSectionSlides, generateLessonNotes } = await import('../../lib/ai');
 
       const sectionInput = {
         section_title: section.title,
@@ -879,20 +879,20 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       const lessonIds = section.lessons.map(l => l.id);
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // ── Step 1: Notes ──────────────────────────────────────────────────────
+      // ── Step 1: Notes (batch, with per-lesson fallback) ────────────────────
       if (!mountedRef.current) return;
       setBgGenStatus(prev => prev ? { ...prev, done: 0, current: `${section.title} — generating notes` } : null);
 
       let notesOk = false;
+      const coveredLessonIds = new Set<string>();
+
+      // Try batch first
       try {
         const notesData = await generateSectionNotes(sectionInput);
         if (notesData?.lessons?.length) {
           for (let i = 0; i < notesData.lessons.length; i++) {
             const lessonNote = notesData.lessons[i];
-            // Always match by index first (most reliable); fall back to title match
-            const lesson = section.lessons[i] ?? section.lessons.find(l =>
-              l.title.toLowerCase().includes((lessonNote.lesson_title || '').toLowerCase().slice(0, 20))
-            );
+            const lesson = section.lessons[i]; // index-based match — always correct
             if (lesson && lessonNote.notes_html?.trim()) {
               docRows.push({
                 lesson_id: lesson.id,
@@ -902,15 +902,48 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                 content_html: lessonNote.notes_html,
                 order_index: 0,
               });
-              // Non-blocking lesson content sync
+              coveredLessonIds.add(lesson.id);
               supabase.from('lessons').update({ content: lessonNote.notes_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
             }
           }
-          notesOk = docRows.length > 0;
         }
       } catch (err) {
-        console.warn(`Notes failed for "${section.title}":`, err);
+        console.warn(`Batch notes failed for "${section.title}", will try per-lesson fallback:`, err);
       }
+
+      // Per-lesson fallback for any lessons the batch missed
+      const missedLessons = section.lessons.filter(l => !coveredLessonIds.has(l.id));
+      if (missedLessons.length > 0) {
+        if (!mountedRef.current) return;
+        setBgGenStatus(prev => prev ? { ...prev, current: `${section.title} — generating notes (${missedLessons.length} remaining)` } : null);
+        for (const lesson of missedLessons) {
+          if (!mountedRef.current) return;
+          try {
+            const r = await generateLessonNotes({
+              lesson_title: lesson.title,
+              section_title: section.title,
+              course_title: courseName,
+              target_audience: 'general',
+              difficulty: 'intermediate',
+            });
+            if (r?.content_html?.trim()) {
+              docRows.push({
+                lesson_id: lesson.id,
+                course_id: courseId,
+                type: 'notes',
+                title: `${lesson.title} — Notes`,
+                content_html: r.content_html,
+                order_index: 0,
+              });
+              supabase.from('lessons').update({ content: r.content_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
+            }
+          } catch (lessonErr) {
+            console.warn(`Per-lesson notes failed for "${lesson.title}":`, lessonErr);
+          }
+        }
+      }
+
+      notesOk = docRows.some(r => r.type === 'notes');
 
       if (!mountedRef.current) return;
       setBgGenStatus(prev => prev ? { ...prev, done: 1, current: `${section.title} — generating slides` } : null);
