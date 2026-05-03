@@ -291,23 +291,22 @@ Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}]
 }
-Standards for notes_html (600-1000 words each):
+Standards for notes_html (300-500 words each):
 - Semantic HTML only: h3, p, ul, ol, li, strong, em, blockquote. No scripts or inline styles.
-- Structure: introduction & context (100w) | theoretical framework (150w) | 2-3 core concept sections with examples (150-200w each) | critical perspectives (100w) | summary with study questions (80w)
+- Structure: brief intro (50w) | 2 core concepts with examples (100-150w each) | summary + 1 study question (50w)
 - Academic register throughout
-- key_points: 6-8 complete sentences covering essential academic content
-If prior section context provided: build directly on it, increase depth, reference connections to earlier content.`,
+- key_points: 4-5 complete sentences covering the lesson's essential content
+Keep each lesson's notes concise and focused — quality over length.`,
 
-    section_slides: `You are a university academic creating a scholarly lecture slide deck for one course section. ${jsonRule}
+    section_slides: `You are a university academic creating a lecture slide deck for one course section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "slides_title": string,
   "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-Generate 10-14 slides. Use h3, p, ul, li, strong in content_html; 120-180 words per slide.
-Slide sequence: section title | learning objectives | one concept/theory slide per major topic | worked example | critical analysis | student activity | section summary.
-speaker_notes: 4-5 sentences per slide with pedagogical tips, student questions to pose, and links to prior/future content.
-If prior section context provided: explicitly build on established concepts and reference connections to earlier content.`,
+Generate exactly 8 slides. Use h3, p, ul, li, strong in content_html; 60-100 words per slide.
+Slide sequence: title | learning objectives | concept 1 | concept 2 | concept 3 | worked example | critical analysis | summary.
+speaker_notes: 1-2 sentences per slide with teaching tips.`,
   };
 
   return prompts[task] || jsonRule;
@@ -479,9 +478,9 @@ function getMaxTokens(task: string): number {
   if (task === 'full_curriculum') return 10000;
   if (task === 'section_content') return 12000;
   // section_notes: notes only (no slides) — up to 4 lessons × ~1000 words each
-  if (task === 'section_notes') return 8000;
-  // section_slides: slides only (no notes) — 10-14 slides
-  if (task === 'section_slides') return 6000;
+  if (task === 'section_notes') return 5000;
+  // section_slides: slides only (no notes) — 8 slides
+  if (task === 'section_slides') return 3000;
   if (task === 'lesson_notes') return 4000;
   if (task === 'presentation_slides') return 4000;
   if (task === 'lesson_content') return 10000;
