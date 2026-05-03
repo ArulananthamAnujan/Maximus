@@ -7,68 +7,50 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-// ─── Zod-like output validators (inline, no external dep) ───────────────────
+// ─── Validators ──────────────────────────────────────────────────────────────
 
 function validateCourseOutline(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.title === 'string' && typeof o.description === 'string' && Array.isArray(o.modules);
 }
-
 function validateLessonContent(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.content_html === 'string' && Array.isArray(o.key_points);
 }
-
 function validateQuizFromContent(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return Array.isArray(o.questions);
+  return Array.isArray((obj as Record<string, unknown>).questions);
 }
-
 function validateFlashcards(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return Array.isArray(o.cards);
+  return Array.isArray((obj as Record<string, unknown>).cards);
 }
-
 function validateSummarize(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.summary === 'string' && Array.isArray(o.key_takeaways);
 }
-
 function validateRewrite(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.rewritten_content === 'string';
+  return typeof (obj as Record<string, unknown>).rewritten_content === 'string';
 }
-
 function validateTranslate(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return typeof o.translated_content === 'string';
+  return typeof (obj as Record<string, unknown>).translated_content === 'string';
 }
-
 function validateActivityIdeas(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return Array.isArray(o.activities);
+  return Array.isArray((obj as Record<string, unknown>).activities);
 }
-
 function validateFullCurriculum(obj: unknown): boolean {
-  const o = obj as Record<string, unknown>;
-  return Array.isArray(o.sections);
+  return Array.isArray((obj as Record<string, unknown>).sections);
 }
-
 function validateLessonNotes(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.content_html === 'string' && typeof o.title === 'string';
 }
-
 function validatePresentationSlides(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.title === 'string' && Array.isArray(o.slides);
 }
-
 function validateSectionContent(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
 }
-
 function validateGenerateExam(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
@@ -94,8 +76,7 @@ const validators: Record<string, (o: unknown) => boolean> = {
 
 function sanitizeField(value: unknown): string {
   if (typeof value !== 'string') return '';
-  // Strip script tags, limit length
-  return value.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').slice(0, 50000);
+  return value.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').slice(0, 100000);
 }
 
 function sanitizeValue(v: unknown): unknown {
@@ -126,36 +107,86 @@ function getSystemPrompt(task: string): string {
   const jsonRule = 'Return ONLY valid JSON. No markdown fences, no preamble, no explanation. Output nothing except the JSON object.';
 
   const prompts: Record<string, string> = {
-    course_outline: `You are an expert curriculum designer. ${jsonRule}
-Output shape: {"title": string, "description": string, "modules": [{"title": string, "description": string, "lessons": [{"title": string, "description": string, "estimated_duration_minutes": number}]}]}`,
 
-    lesson_content: `You are an expert educator creating engaging, clear lesson content. ${jsonRule}
+    course_outline: `You are a senior university curriculum architect with expertise in designing rigorous, research-informed degree-level courses. ${jsonRule}
+Output shape: {"title": string, "description": string, "modules": [{"title": string, "description": string, "lessons": [{"title": string, "description": string, "estimated_duration_minutes": number}]}]}
+Standards:
+- title: A precise, academic course title (e.g. "Advanced Molecular Biology: Gene Expression and Regulation")
+- description: 3-4 sentences. State the course rationale, theoretical framework, learning scope, and expected graduate-level outcomes. Use formal academic register.
+- Each module title: topic-focused, university-level (e.g. "Module 3: Epigenetic Mechanisms and Chromatin Remodelling")
+- Each module description: 2 sentences — what the module covers and its academic significance in the broader discipline
+- Each lesson title: specific and descriptive (e.g. "Histone Modification Patterns and Transcriptional Regulation")
+- Each lesson description: 1-2 sentences covering the specific concept, theory, or skill addressed
+- estimated_duration_minutes: 45-90 minutes per lesson (university lecture/seminar pacing)`,
+
+    lesson_content: `You are a university lecturer and academic content author writing scholarly, comprehensive lesson material for tertiary-level students. ${jsonRule}
 Output shape: {"content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: use clean semantic HTML only — h2, h3, p, ul, ol, strong, em, code tags. No scripts, no inline styles, no external references.`,
+Standards for content_html (target 1200-2000 words):
+- Use semantic HTML: h2 for major sections, h3 for subsections, p for paragraphs, ul/ol/li for lists, strong for key terms, em for emphasis, code for formulas/code, blockquote for definitions or cited material
+- No scripts, no inline styles, no external references
+Structure (all sections required):
+  1. <h2>Introduction</h2> — establish context, theoretical importance, real-world relevance (150-200 words)
+  2. <h2>Learning Objectives</h2> — 4-6 specific, measurable outcomes using Bloom's taxonomy verbs (analyse, evaluate, synthesise, apply, etc.)
+  3. <h2>[Core Concept 1]</h2> — detailed explanation with mechanisms, theory, examples (200-300 words each; include at minimum 3 core concept sections)
+  4. <h2>Worked Example / Case Study</h2> — a concrete, discipline-specific worked example or real-world application (150-200 words)
+  5. <h2>Critical Analysis</h2> — academic debate, limitations, contrasting perspectives or methodological considerations (150-200 words)
+  6. <h2>Summary</h2> — consolidate key insights with reference back to learning objectives (100-150 words)
+key_points: 6-10 academically precise bullet points, each a complete sentence
+estimated_read_time_minutes: realistic estimate at 200 words/min`,
 
-    quiz_from_content: `You are an expert quiz designer. ${jsonRule}
+    quiz_from_content: `You are a university assessment designer creating rigorous academic quiz questions that test deep understanding, critical thinking, and application of knowledge. ${jsonRule}
 Output shape: {"questions": [{"type": "mcq"|"true_false"|"short_answer", "question": string, "options": string[]|null, "correct_answer": string, "explanation": string, "points": number}]}
-For mcq: include 4 options. For true_false: options should be ["True","False"]. For short_answer: options should be null.`,
+Standards:
+- mcq: 4 options. Questions should target analysis/evaluation/application (Bloom's levels 4-6), not mere recall. Distractors must be plausible and reflect common misconceptions. correct_answer must exactly match one option string.
+- true_false: options must be ["True", "False"]. Statements should test nuanced understanding, not obvious facts.
+- short_answer: options must be null. Question should require a 2-4 sentence academic response demonstrating understanding.
+- explanation: 2-3 sentences explaining why the answer is correct, referencing the underlying concept or theory. Must be academically rigorous.
+- points: 1 for true_false, 2 for mcq, 3-5 for short_answer based on complexity
+- Vary cognitive levels across the question set (at least one each of: comprehension, application, analysis)`,
 
-    flashcards: `You are an expert educator creating concise, effective flashcards. ${jsonRule}
+    flashcards: `You are a university academic creating high-quality study flashcards for tertiary-level students. ${jsonRule}
 Output shape: {"cards": [{"front": string, "back": string}]}
-Front: a clear question or term. Back: a concise, complete answer or definition.`,
+Standards:
+- front: A precisely worded question, term definition request, or conceptual prompt using academic language. Avoid trivial recall; test understanding.
+- back: A complete, academically accurate answer (2-5 sentences). For definitions: include the term, its definition, its significance, and an illustrative example. For concepts: explain the mechanism or principle, why it matters, and one application.
+- Cover: key terminology, theoretical frameworks, methodological concepts, critical distinctions, and application scenarios
+- Cards should progress from foundational concepts to advanced synthesis`,
 
-    summarize_lesson: `You are an expert at distilling educational content into clear, actionable summaries. ${jsonRule}
+    summarize_lesson: `You are a university academic writing a scholarly executive summary for tertiary-level students. ${jsonRule}
 Output shape: {"summary": string, "key_takeaways": string[]}
-Summary: 2-4 sentences. Key takeaways: 3-7 bullet points as strings.`,
+Standards:
+- summary: 4-6 sentences in formal academic register. Must cover: (1) the central theoretical argument or framework, (2) the key empirical or conceptual content, (3) how concepts interconnect, and (4) the broader academic or professional significance.
+- key_takeaways: 6-10 items. Each must be a complete sentence. Cover: core concepts and their definitions, theoretical frameworks, methodological insights, critical perspectives, and implications for practice or further study. Use precise academic language.`,
 
-    rewrite_content: `You are an expert content editor. Rewrite the provided content in the requested style. ${jsonRule}
-Output shape: {"rewritten_content": string}`,
+    rewrite_content: `You are a university-level academic editor and educational content specialist. Rewrite the provided content in the requested style while preserving complete academic accuracy, depth, and all factual information. ${jsonRule}
+Output shape: {"rewritten_content": string}
+Standards:
+- Maintain ALL key concepts, data, and academic arguments from the original
+- Adapt register, structure, and vocabulary to match the requested style
+- Do not simplify or omit substantive academic content when rewriting for accessibility
+- Improve clarity, flow, and academic precision in all cases`,
 
-    translate_content: `You are an expert translator for educational content. Translate accurately while preserving formatting and educational clarity. ${jsonRule}
-Output shape: {"translated_content": string}`,
+    translate_content: `You are an expert academic translator specialising in educational and scholarly content. Translate accurately while preserving the complete academic meaning, technical terminology, register, and structural formatting of the original. ${jsonRule}
+Output shape: {"translated_content": string}
+Standards:
+- Preserve all HTML tags and structure exactly
+- Translate technical and discipline-specific terms accurately; do not paraphrase concepts
+- Maintain the formal academic register of the source text
+- Preserve all examples, citations, and specific data points`,
 
-    activity_ideas: `You are an expert instructional designer creating practical learning activities. ${jsonRule}
+    activity_ideas: `You are a university instructional designer creating evidence-based, higher-order learning activities aligned with constructivist and active learning pedagogies. ${jsonRule}
 Output shape: {"activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]}
-Instructions should be 2-4 sentences, actionable, and clearly describe what the student must do.`,
+Standards:
+- Each activity must target Bloom's taxonomy levels 3-6 (apply, analyse, evaluate, create)
+- instructions: 4-6 sentences. Specify: (1) the academic task and its purpose, (2) required inputs/resources, (3) step-by-step process, (4) expected output or deliverable, (5) assessment criteria or success indicators
+- practice: disciplinary problem-solving or skill application with real-world data/scenarios
+- reflection: structured critical self-assessment using academic frameworks (e.g. Gibbs' model)
+- discussion: Socratic seminar or structured academic debate with prescribed positions or frameworks
+- project: multi-stage research or design task with defined scope, methodology, and deliverable
+- research: systematic literature review, data analysis, or empirical investigation task
+- estimated_minutes: 45-180 minutes (university task pacing)`,
 
-    full_curriculum: `You are an expert curriculum designer creating a complete, structured course. ${jsonRule}
+    full_curriculum: `You are a senior university curriculum designer with expertise in academic programme development, following QAA, AQF, or equivalent tertiary education standards. ${jsonRule}
 Output shape: {
   "sections": [{
     "title": string,
@@ -164,23 +195,54 @@ Output shape: {
     "activities": [{"title": string, "type": "practice"|"reflection"|"discussion"|"project"|"research", "instructions": string, "estimated_minutes": number}]
   }]
 }
-Each section must have: 2-4 lessons (mix of article and document types), exactly 1 quiz with 3-4 questions, and exactly 1 activity. Keep lesson descriptions to 1 sentence, activity instructions to 2 sentences, and quiz explanations to 1 sentence — brevity is critical for large courses.
-For quiz mcq questions: include exactly 4 options as strings. correct_answer must exactly match one of the options strings.
-For true_false questions: options must be ["True", "False"] and correct_answer must be "True" or "False".
-If existing sections are provided, build DIRECTLY on top of them — do NOT repeat topics already covered, advance the difficulty progressively, and reference prior concepts where appropriate.`,
+Standards:
+- Each section title: "Week N: [Topic]" or "Module N: [Topic]" — specific, academically precise
+- 3-4 lessons per section: mix of article (theoretical/conceptual) and document (applied/analytical) types
+- Lesson titles: specific and scholarly (not generic headings like "Introduction to X")
+- Lesson description: 1 precise sentence stating the specific theory, concept, or skill covered
+- estimated_duration_minutes: 60-90 per lesson
+- Quiz: exactly 1 per section with 4-5 questions targeting analysis/application/evaluation; mcq options must be 4 strings; correct_answer must exactly match an option; explanation 1-2 sentences
+- Activity: exactly 1 per section; instructions 2-3 sentences; target higher-order thinking
+- PROGRESSION: scaffold from foundational → applied → critical/evaluative across sections
+- If existing sections provided: build directly on covered material — advance complexity, introduce new frameworks, explicitly connect to prior content`,
 
-    lesson_notes: `You are an expert educator writing comprehensive, well-structured lesson notes. ${jsonRule}
+    lesson_notes: `You are a university lecturer authoring comprehensive, scholarly lesson notes for tertiary-level students. These notes function as a primary academic resource equivalent to a textbook chapter. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-For content_html: write 600-1000 words of rich educational content using clean semantic HTML — h2, h3, p, ul, ol, li, strong, em, blockquote tags only. No scripts, no inline styles.
-Include: an introduction, 3-5 main concept sections with explanations and examples, and a summary.`,
+Standards for content_html (target 1500-2500 words):
+- Semantic HTML only: h2, h3, p, ul, ol, li, strong, em, blockquote, code. No scripts, no inline styles.
+- Formal academic register throughout
+Required sections:
+  1. <h2>Introduction and Context</h2> — establish the topic's place within the discipline, its theoretical significance, and connections to prior learning (200-250 words)
+  2. <h2>Learning Objectives</h2> — 5-7 outcomes using Bloom's taxonomy action verbs (analyse, evaluate, synthesise, critique, apply, demonstrate, compare)
+  3. <h2>Theoretical Framework</h2> — the underpinning theory, model, or paradigm with its origins, key proponents, and core assumptions (250-300 words)
+  4. <h2>[Core Concept/Topic 1]</h2> through <h2>[Core Concept/Topic 3-4]</h2> — each 200-350 words; include: definition with academic precision, mechanism or process, empirical evidence or scholarly consensus, worked example or case study, common misconceptions or critical limitations
+  5. <h2>Academic Debate and Critical Perspectives</h2> — present 2-3 contrasting scholarly viewpoints or methodological critiques (200-250 words)
+  6. <h2>Practical Applications</h2> — 3-5 real-world or professional applications with specific examples (150-200 words)
+  7. <h2>Summary and Synthesis</h2> — integrate all concepts with reference to learning objectives; pose 2-3 critical thinking questions for further study (150-200 words)
+key_points: 8-12 academically precise complete sentences covering all major concepts
+estimated_read_time_minutes: at 200 words/min`,
 
-    presentation_slides: `You are an expert educator creating rich, detailed presentation slides for a lesson. ${jsonRule}
+    presentation_slides: `You are a university academic creating a comprehensive, scholarly lecture presentation. These slides should serve as the primary visual teaching aid for a 60-90 minute university lecture. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
-Generate 10-14 slides. Each slide content_html should use: h3, p, ul, ol, li, strong, em, blockquote tags. Aim for 80-180 words of substantive content per slide.
-Include: title slide (with course context and objectives), detailed learning objectives, 1-2 slides per key concept with explanations AND real-world examples, a worked example or case study slide, a practice activity slide, key terms/glossary slide, summary with 5-7 takeaways, and a next steps/resources slide.
-speaker_notes: Write 3-5 sentences of detailed talking points a teacher would say for each slide — include tips, context, and questions to ask students.`,
+Generate 14-18 slides. Use h3, p, ul, ol, li, strong, em, blockquote in content_html. Target 100-200 words of substantive content per slide.
+Required slide sequence:
+  1. Title slide — course name, topic, week/module number, learning context
+  2. Agenda — session outline with time allocation per section
+  3. Learning Objectives — 5-7 Bloom's-aligned outcomes
+  4-5. Theoretical Background — foundational theory, key scholars/models, historical context
+  6-8. Core Content (one concept per slide) — definition, mechanism, evidence, example
+  9. Worked Example / Case Study — step-by-step analysis of a real discipline-specific scenario
+  10. Data / Evidence Slide — statistics, research findings, or empirical data with interpretation
+  11. Critical Analysis — academic debate, limitations, alternative interpretations
+  12. Comparative Analysis — compare 2-3 frameworks, models, or approaches in a structured format
+  13. Practical Applications — professional or real-world use cases
+  14. Student Activity — structured in-class task or discussion prompt with clear instructions
+  15. Key Terminology — glossary of 6-8 essential terms with precise academic definitions
+  16. Summary — 6-8 bullet synthesis of the session's core insights
+  17-18. Further Reading & Assessment — recommended scholarly sources and upcoming assessment guidance
+speaker_notes per slide: 4-6 sentences of detailed lecturer talking points — include pedagogical tips, questions to pose to students, common misconceptions to address, and connections to prior or future content`,
 
-    generate_exam: `You are an expert exam writer for language and academic preparation (IELTS, PTE, academic English, etc.). ${jsonRule}
+    generate_exam: `You are a senior university examinations officer and academic writing a formal assessment instrument meeting tertiary education quality standards. ${jsonRule}
 Output shape: {
   "title": string,
   "description": string,
@@ -189,26 +251,36 @@ Output shape: {
   "time_limit_minutes": number,
   "questions": [{"question": string, "marks": number, "sample_answer": string}]
 }
-Guidelines:
-- passage: Write a well-structured reading text of 250-400 words appropriate to the subject and level. Use formal academic style for IELTS/PTE. Leave empty string if exam_type is "question_only".
-- questions: Generate the number of questions requested. Each question should test reading comprehension, critical thinking, or language skills.
-- sample_answer: Write a concise model answer (2-5 sentences) that would earn full marks. Be specific — this is used by AI to grade students.
-- instructions: Clear, concise instructions for students (e.g. "Read the passage and answer all questions in complete sentences.").
-- time_limit_minutes: Suggest appropriate time based on number of questions and marks (e.g. 20-45 minutes).
-- Vary question types: main idea, detail, inference, vocabulary in context, short essay response.`,
+Standards:
+- title: Formal assessment title (e.g. "LING3201 Academic English: Semestral Assessment — Reading Comprehension and Critical Analysis")
+- description: 2-3 sentences describing the assessment purpose, learning outcomes assessed, and academic level
+- instructions: Formal examination instructions covering: time allocation, answer format requirements, referencing expectations, and academic integrity reminder. 4-6 sentences.
+- passage (if not question_only): 350-500 words of formal academic prose appropriate to the discipline. Must include: a central argument or thesis, supporting evidence or data, technical vocabulary, and at least one nuanced or contested claim. Suitable for critical analysis questions.
+- questions: Vary question types across cognitive levels:
+  * Comprehension (identify, locate, define) — lower marks (2-5)
+  * Application (explain, illustrate, apply a concept) — medium marks (5-10)
+  * Analysis (compare, examine, evaluate, critique) — higher marks (10-20)
+  * Synthesis/Essay (argue, justify, recommend, develop) — highest marks (15-25)
+- sample_answer: A complete model answer demonstrating graduate-level writing. 4-8 sentences for analytical questions; full paragraph(s) for essay questions. Must reference relevant theory, use discipline-specific terminology, and meet the stated mark allocation.
+- time_limit_minutes: Calibrate to 1 minute per mark (standard university exam pacing)`,
 
-    section_content: `You are an expert educator. In ONE response, generate detailed lesson notes for every lesson in the section PLUS rich presentation slides for the entire section. ${jsonRule}
+    section_content: `You are a university academic producing a complete, scholarly teaching package for one section/week of a university course. In ONE response, generate comprehensive lecture notes for every lesson AND a full lecture slide deck for the section. ${jsonRule}
 Output shape: {
   "section_title": string,
   "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}],
   "slides_title": string,
   "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
 }
-LENGTH GUIDELINES:
-- Each lesson notes_html: 300-500 words. Use h3, p, ul, ol, li, strong, blockquote. Cover: intro paragraph, 3-4 key concept sections with examples, summary.
-- Slides: 6-8 slides total for the section. Use h3, p, ul, li, strong per slide. Aim for 80-150 words per slide with real examples and context.
-- speaker_notes: 2-3 sentences of talking points per slide.
-If prior section context is given, build on it — do NOT repeat covered material.`,
+Standards for lesson notes_html (600-1000 words each):
+- Semantic HTML: h3 (subsections), p, ul, ol, li, strong, em, blockquote
+- Structure per lesson: introduction and context (100w) | theoretical framework (150w) | 2-3 core concept sections with examples (150-200w each) | critical perspectives (100w) | summary with study questions (80w)
+- Academic register; cite conceptual sources informally (e.g. "According to schema theory..." or "Research in this field suggests...")
+- key_points: 6-8 complete sentences covering the lesson's essential academic content
+Standards for slides (10-14 slides total for the section):
+- Use h3, p, ul, li, strong in content_html; 120-180 words of substantive content per slide
+- Slide sequence: section title | learning objectives | one concept/theory slide per major topic | worked example | critical analysis | student activity | section summary
+- speaker_notes: 4-5 sentences per slide — detailed lecturer guidance including pedagogical tips, anticipated student questions, connections to assessments, and links to prior/future content
+If prior section context is provided: explicitly build on established concepts, increase theoretical complexity, introduce new frameworks that extend prior learning, and reference connections to earlier content.`,
   };
 
   return prompts[task] || jsonRule;
@@ -217,73 +289,91 @@ If prior section context is given, build on it — do NOT repeat covered materia
 function getUserPrompt(task: string, input: Record<string, unknown>): string {
   switch (task) {
     case 'course_outline':
-      return `Create a detailed course outline for:
-Topic: ${input.topic}
+      return `Design a comprehensive university-level course outline for:
+Topic / Subject Area: ${input.topic}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
+Academic Level / Difficulty: ${input.difficulty}
 Number of Modules: ${input.num_modules}
-Lessons per Module: ${input.lessons_per_module}`;
+Lessons per Module: ${input.lessons_per_module}
+
+Ensure the course meets tertiary education standards with clear academic progression, rigorous content, and measurable learning outcomes aligned with the discipline.`;
 
     case 'lesson_content':
-      return `Create full lesson content for:
+      return `Write comprehensive university-level lesson content for:
 Lesson Title: ${input.lesson_title}
 Course Context: ${input.course_context}
 Target Audience: ${input.target_audience}
-Desired Length: ${input.desired_length}`;
+Desired Length: ${input.desired_length}
+
+Content must be scholarly, detailed, and suitable for tertiary-level study. Include theory, evidence, worked examples, and critical perspectives.`;
 
     case 'quiz_from_content':
-      return `Generate a quiz from this lesson content:
+      return `Create a rigorous university-level academic quiz from the following lesson content:
 Content: ${input.lesson_content}
 Number of Questions: ${input.num_questions}
 Question Types: ${Array.isArray(input.question_types) ? (input.question_types as string[]).join(', ') : input.question_types}
-Difficulty: ${input.difficulty}`;
+Difficulty: ${input.difficulty}
+
+Questions must target higher-order thinking (Bloom's levels 3-6: apply, analyse, evaluate, create). Avoid pure recall questions.`;
 
     case 'flashcards':
-      return `Create flashcards from this lesson content:
+      return `Create university-level study flashcards from this lesson content:
 Content: ${input.lesson_content}
-Number of Cards: ${input.num_cards}`;
+Number of Cards: ${input.num_cards}
+
+Cards must cover key terminology, theoretical frameworks, conceptual distinctions, and application scenarios at tertiary level.`;
 
     case 'summarize_lesson':
-      return `Summarize this lesson content:
-${input.lesson_content}`;
+      return `Write a scholarly executive summary of the following university lesson content:
+${input.lesson_content}
+
+Summary must capture the theoretical framework, core arguments, academic significance, and key insights in formal academic register.`;
 
     case 'rewrite_content':
-      return `Rewrite the following content to be ${input.style}:
+      return `Rewrite the following university-level educational content to be ${input.style}, while preserving all academic accuracy, depth, and substantive content:
 ${input.content}`;
 
     case 'translate_content':
-      return `Translate the following educational content to ${input.target_language}:
+      return `Translate the following university educational content to ${input.target_language}, preserving all academic terminology, register, formatting, and structural precision:
 ${input.content}`;
 
     case 'activity_ideas':
-      return `Create ${input.num_activities} learning activities for:
-Lesson: ${input.lesson_title}
+      return `Design ${input.num_activities} rigorous, higher-order university learning activities for:
+Lesson / Topic: ${input.lesson_title}
 Course Context: ${input.course_context}
-Target Audience: ${input.target_audience}`;
+Target Audience: ${input.target_audience}
+
+Activities must align with Bloom's taxonomy levels 3-6 and reflect active learning, constructivist, or inquiry-based pedagogies appropriate for tertiary education.`;
 
     case 'full_curriculum':
-      return `Create a complete course curriculum for:
-Topic: ${input.topic}
+      return `Design a complete, academically rigorous university course curriculum for:
+Subject / Topic: ${input.topic}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
-Number of Sections: ${input.num_sections}
-Lessons per Section: ${input.lessons_per_section}${input.existing_sections_summary ? `\n\nAlready covered in previous weeks (DO NOT repeat these topics — build on them):\n${input.existing_sections_summary}` : ''}`;
+Academic Level: ${input.difficulty}
+Number of Weeks/Sections: ${input.num_sections}
+Lessons per Section: ${input.lessons_per_section}
+
+The curriculum must reflect university-level standards with clear academic progression, scaffolded complexity, and alignment between lessons, assessments, and activities.${input.existing_sections_summary ? `\n\nAlready covered in previous weeks — DO NOT repeat; build directly on these foundations with increased depth and complexity:\n${input.existing_sections_summary}` : ''}`;
 
     case 'lesson_notes':
-      return `Write comprehensive lesson notes for:
+      return `Write comprehensive, scholarly university lecture notes for:
 Lesson Title: ${input.lesson_title}
-Section: ${input.section_title}
+Section / Module: ${input.section_title}
 Course: ${input.course_title}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}`;
+Academic Level: ${input.difficulty}
+
+Notes must be equivalent to a textbook chapter — detailed, theoretically grounded, with worked examples, critical perspectives, and clear academic structure.`;
 
     case 'presentation_slides':
-      return `Create presentation slides for:
-Section Title: ${input.section_title}
+      return `Create a comprehensive university lecture slide deck for:
+Section / Module Title: ${input.section_title}
 Course: ${input.course_title}
-Lessons in this section: ${input.lesson_titles}
+Lessons covered in this section: ${input.lesson_titles}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}`;
+Academic Level: ${input.difficulty}
+
+Slides must support a 60-90 minute university lecture with scholarly content, worked examples, critical analysis, and student engagement activities.`;
 
     case 'section_content': {
       const lessons = Array.isArray(input.lessons)
@@ -291,25 +381,29 @@ Difficulty: ${input.difficulty}`;
             .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
             .join('\n')
         : String(input.lessons);
-      return `Generate full lesson notes and presentation slides for this section:
+      return `Generate a complete university teaching package — comprehensive lecture notes for every lesson AND a full slide deck — for this section:
 Course: ${input.course_title}
-Section: ${input.section_title}
+Section / Week: ${input.section_title}
 Target Audience: ${input.target_audience}
-Difficulty: ${input.difficulty}
+Academic Level: ${input.difficulty}
 Lessons in this section:
-${lessons}${input.existing_sections_summary ? `\n\nPrevious sections already covered (build on these, do NOT repeat):\n${input.existing_sections_summary}` : ''}`;
+${lessons}
+
+Each lesson's notes must be scholarly and detailed (600-1000 words). The slide deck must cover the full section with academic rigour suitable for a university lecture.${input.existing_sections_summary ? `\n\nPrevious sections already covered — build on these with increased theoretical depth and complexity; explicitly connect new content to prior learning:\n${input.existing_sections_summary}` : ''}`;
     }
 
     case 'generate_exam':
-      return `Generate an exam for:
+      return `Write a formal university examination for:
 Subject / Topic: ${input.topic}
-Course context: ${input.course_context || 'General'}
-Exam type: ${input.exam_type || 'reading_comprehension'} (reading_comprehension = include a passage; question_only = no passage)
-Difficulty / Band level: ${input.difficulty || 'intermediate'}
+Course context: ${input.course_context || 'University course'}
+Exam format: ${input.exam_type || 'reading_comprehension'} (reading_comprehension = include an academic passage; question_only = no passage)
+Academic level / difficulty: ${input.difficulty || 'undergraduate'}
 Number of questions: ${input.num_questions || 5}
 Marks per question: ${input.marks_per_question || 5}
-Target audience: ${input.target_audience || 'Adult learners'}
-${input.extra_instructions ? `Additional instructions: ${input.extra_instructions}` : ''}`;
+Target student cohort: ${input.target_audience || 'Undergraduate students'}
+${input.extra_instructions ? `Additional requirements: ${input.extra_instructions}` : ''}
+
+The examination must meet university assessment standards with questions that vary in cognitive demand (comprehension → analysis → synthesis) and include model answers of graduate calibre.`;
 
     default:
       return JSON.stringify(input);
@@ -322,9 +416,14 @@ function getTemperature(task: string): number {
 }
 
 function getMaxTokens(task: string): number {
-  if (task === 'section_content') return 6000;
-  if (task === 'full_curriculum') return 24000;
-  if (['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task)) return 8192;
+  if (task === 'full_curriculum') return 32000;
+  if (task === 'section_content') return 12000;
+  if (task === 'lesson_notes') return 12000;
+  if (task === 'presentation_slides') return 12000;
+  if (task === 'lesson_content') return 10000;
+  if (task === 'generate_exam') return 8000;
+  if (task === 'activity_ideas') return 6000;
+  if (['quiz_from_content', 'flashcards', 'summarize_lesson'].includes(task)) return 6000;
   return 4096;
 }
 
@@ -337,7 +436,7 @@ async function callAnthropic(
   task: string,
   strict = false
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
-  const strictAddition = strict ? '\n\nCRITICAL: Output ONLY the JSON object. No text before or after. No markdown.' : '';
+  const strictAddition = strict ? '\n\nCRITICAL: Output ONLY the JSON object. No text before or after. No markdown fences.' : '';
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -353,12 +452,17 @@ async function callAnthropic(
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(task === 'full_curriculum' ? 180000 : task === 'section_content' ? 90000 : 60000),
+    signal: AbortSignal.timeout(
+      task === 'full_curriculum' ? 240000
+        : task === 'section_content' ? 180000
+        : ['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task) ? 120000
+        : 90000
+    ),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Anthropic API error ${response.status}: ${body.slice(0, 300)}`);
   }
 
   const data = await response.json() as {
@@ -375,11 +479,18 @@ async function callAnthropic(
 }
 
 function parseJSON(text: string): unknown | null {
-  // Strip markdown fences if present
-  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/, '')
+    .trim();
   try {
     return JSON.parse(cleaned);
   } catch {
+    // Try extracting the first JSON object or array
+    const match = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+    if (match) {
+      try { return JSON.parse(match[1]); } catch { return null; }
+    }
     return null;
   }
 }
@@ -400,16 +511,14 @@ Deno.serve(async (req: Request) => {
   let userId: string | null = null;
 
   try {
-    // ── API key check ────────────────────────────────────────────────────────
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
     if (!apiKey) {
       return new Response(
-        JSON.stringify({ error: 'ANTHROPIC_API_KEY not found in Edge Function secrets. Add it in Supabase Dashboard → Edge Functions → Secrets.' }),
+        JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured. Add it in Supabase Dashboard → Edge Functions → Secrets.' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // ── Auth ─────────────────────────────────────────────────────────────────
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -432,7 +541,6 @@ Deno.serve(async (req: Request) => {
 
     userId = user.id;
 
-    // ── Role check ───────────────────────────────────────────────────────────
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('role')
@@ -445,7 +553,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // ── Rate limit: 15 calls per user per minute ─────────────────────────────
+    // ── Rate limit: 100 calls per user per minute ────────────────────────────
     const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
     const { count } = await supabaseAdmin
       .from('ai_usage_logs')
@@ -453,19 +561,18 @@ Deno.serve(async (req: Request) => {
       .eq('user_id', userId)
       .gte('created_at', oneMinuteAgo);
 
-    if ((count ?? 0) >= 30) {
-      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 30 AI calls per minute.' }), {
+    if ((count ?? 0) >= 100) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Maximum 100 AI calls per minute.' }), {
         status: 429,
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
       });
     }
 
-    // ── Parse body ───────────────────────────────────────────────────────────
     const body = await req.json() as { task: string; input: Record<string, unknown> };
     const { task, input: rawInput } = body;
 
     if (!task || !rawInput || !validators[task]) {
-      return new Response(JSON.stringify({ error: `Unknown task: ${task}` }), {
+      return new Response(JSON.stringify({ error: `Unknown or unsupported task: ${task}` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -474,14 +581,12 @@ Deno.serve(async (req: Request) => {
     const systemPrompt = getSystemPrompt(task);
     const userPrompt = getUserPrompt(task, input);
 
-    // ── Call Anthropic ────────────────────────────────────────────────────────
     let result: { content: string; inputTokens: number; outputTokens: number };
     let parsed: unknown | null;
 
     result = await callAnthropic(apiKey, systemPrompt, userPrompt, task);
     parsed = parseJSON(result.content);
 
-    // Retry once with stricter prompt if parse fails
     if (!parsed) {
       result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, true);
       parsed = parseJSON(result.content);
@@ -497,13 +602,11 @@ Deno.serve(async (req: Request) => {
         success: false,
         error_message: 'Failed to parse JSON response from model',
       });
-
-      return new Response(JSON.stringify({ error: 'AI returned an invalid response. Please try again.' }), {
+      return new Response(JSON.stringify({ error: 'AI returned an unparseable response. Please try again.' }), {
         status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // ── Validate output shape ─────────────────────────────────────────────────
     if (!validators[task](parsed)) {
       await supabaseAdmin.from('ai_usage_logs').insert({
         user_id: userId,
@@ -514,13 +617,11 @@ Deno.serve(async (req: Request) => {
         success: false,
         error_message: 'Response shape validation failed',
       });
-
       return new Response(JSON.stringify({ error: 'AI response did not match expected format. Please try again.' }), {
         status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // ── Log success ───────────────────────────────────────────────────────────
     const costUsd = (result.inputTokens / 1_000_000 * 3) + (result.outputTokens / 1_000_000 * 15);
     await supabaseAdmin.from('ai_usage_logs').insert({
       user_id: userId,
@@ -540,7 +641,6 @@ Deno.serve(async (req: Request) => {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('ai-generate error:', message);
 
-    // Log failure if we have a user
     if (userId) {
       await supabaseAdmin.from('ai_usage_logs').insert({
         user_id: userId,
