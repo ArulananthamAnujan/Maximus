@@ -276,12 +276,30 @@ interface ParsedSlide {
 }
 
 function parseSlidesFromHtml(html: string): ParsedSlide[] {
+  if (!html || !html.trim()) {
+    return [{
+      heading: 'No slides available',
+      bodyHtml: '<p>Slides could not be loaded. Try regenerating notes &amp; slides for this section.</p>',
+      speakerNotes: '',
+      slideType: 'content',
+    }];
+  }
+
   const div = document.createElement('div');
   div.innerHTML = html;
   const slideEls = div.querySelectorAll('.slide');
 
   if (slideEls.length === 0) {
-    // Fallback: treat entire HTML as a single slide
+    // If there's actual text content, show it as one slide; otherwise show placeholder
+    const textContent = div.textContent?.trim() || '';
+    if (!textContent) {
+      return [{
+        heading: 'No slides available',
+        bodyHtml: '<p>Slides could not be loaded. Try regenerating notes &amp; slides for this section.</p>',
+        speakerNotes: '',
+        slideType: 'content',
+      }];
+    }
     return [{
       heading: '',
       bodyHtml: html,
@@ -554,8 +572,12 @@ function NotesViewer({ doc }: { doc: LessonDocument }) {
         </button>
       </div>
       <div className="p-5 bg-white">
-        <div className="prose prose-slate prose-sm max-w-none leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: doc.content_html }} />
+        {doc.content_html?.trim() ? (
+          <div className="prose prose-slate prose-sm max-w-none leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: doc.content_html }} />
+        ) : (
+          <p className="text-sm text-slate-400 text-center py-8">Notes content is empty. Try regenerating notes &amp; slides for this section.</p>
+        )}
       </div>
     </div>
   );

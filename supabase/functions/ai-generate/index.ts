@@ -98,18 +98,24 @@ function sanitizeField(value: unknown): string {
   return value.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').slice(0, 50000);
 }
 
+function sanitizeValue(v: unknown): unknown {
+  if (typeof v === 'string') return sanitizeField(v);
+  if (typeof v === 'number' || typeof v === 'boolean') return v;
+  if (Array.isArray(v)) return v.map(sanitizeValue);
+  if (v !== null && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      out[k] = sanitizeValue(val);
+    }
+    return out;
+  }
+  return v;
+}
+
 function sanitizeInput(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
-    if (typeof v === 'string') {
-      out[k] = sanitizeField(v);
-    } else if (typeof v === 'number' || typeof v === 'boolean') {
-      out[k] = v;
-    } else if (Array.isArray(v)) {
-      out[k] = v.map(item => typeof item === 'string' ? sanitizeField(item) : item);
-    } else {
-      out[k] = v;
-    }
+    out[k] = sanitizeValue(v);
   }
   return out;
 }
@@ -447,8 +453,8 @@ Deno.serve(async (req: Request) => {
       .eq('user_id', userId)
       .gte('created_at', oneMinuteAgo);
 
-    if ((count ?? 0) >= 15) {
-      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 15 AI calls per minute.' }), {
+    if ((count ?? 0) >= 30) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 30 AI calls per minute.' }), {
         status: 429,
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
       });

@@ -603,8 +603,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           }).join('\n')
         : undefined;
 
-      // Track newly inserted sections for rolling context
+      // Track newly inserted sections for rolling context (keep last 4 only to avoid prompt bloat)
       const insertedSectionSummaries: string[] = existingSummary ? [existingSummary] : [];
+      const getContextSummary = () => insertedSectionSummaries.slice(-4).join('\n');
 
       for (let i = 0; i < aiCurriculumPreview.length; i++) {
         const sec = aiCurriculumPreview[i];
@@ -680,8 +681,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         }
 
         // ONE batch AI call per section — generates all lesson notes + slides together
-        // Stagger calls to avoid rate limiting (15 calls/min cap)
-        if (i > 0) await new Promise(r => setTimeout(r, 4500));
+        // Stagger calls to avoid rate limiting (30 calls/min cap — 1 call per ~2.5s is safe)
+        if (i > 0) await new Promise(r => setTimeout(r, 2500));
 
         setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: generating notes & slides for "${sec.title}"...`);
 
@@ -694,7 +695,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               target_audience: aiCurriculumForm.target_audience,
               difficulty: aiCurriculumForm.difficulty,
               existing_sections_summary: insertedSectionSummaries.length > 0
-                ? insertedSectionSummaries.join('\n')
+                ? getContextSummary()
                 : undefined,
             });
 
@@ -752,9 +753,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             );
           } catch (contentErr) {
             if (attempt < 2) {
-              // Wait longer before retry (rate limit backoff)
               setAICurriculumInsertStatus(`Section ${i + 1}/${aiCurriculumPreview.length}: retrying notes & slides for "${sec.title}"...`);
-              await new Promise(r => setTimeout(r, 8000));
+              await new Promise(r => setTimeout(r, 5000));
               return tryGenerateSectionContent(attempt + 1);
             }
             // Both attempts failed — log and continue so other sections still complete
