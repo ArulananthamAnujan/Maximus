@@ -216,41 +216,35 @@ Standards:
 - PROGRESSION: scaffold from foundational → applied → critical/evaluative across sections
 - If existing sections provided: build directly on covered material — advance complexity, introduce new frameworks, explicitly connect to prior content`,
 
-    lesson_notes: `You are a university lecturer authoring comprehensive, scholarly lesson notes for tertiary-level students. These notes function as a primary academic resource equivalent to a textbook chapter. ${jsonRule}
+    lesson_notes: `You are a university lecturer writing clear, scholarly lesson notes for students. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-Standards for content_html (target 1500-2500 words):
-- Semantic HTML only: h2, h3, p, ul, ol, li, strong, em, blockquote, code. No scripts, no inline styles.
-- Formal academic register throughout
-Required sections:
-  1. <h2>Introduction and Context</h2> — establish the topic's place within the discipline, its theoretical significance, and connections to prior learning (200-250 words)
-  2. <h2>Learning Objectives</h2> — 5-7 outcomes using Bloom's taxonomy action verbs (analyse, evaluate, synthesise, critique, apply, demonstrate, compare)
-  3. <h2>Theoretical Framework</h2> — the underpinning theory, model, or paradigm with its origins, key proponents, and core assumptions (250-300 words)
-  4. <h2>[Core Concept/Topic 1]</h2> through <h2>[Core Concept/Topic 3-4]</h2> — each 200-350 words; include: definition with academic precision, mechanism or process, empirical evidence or scholarly consensus, worked example or case study, common misconceptions or critical limitations
-  5. <h2>Academic Debate and Critical Perspectives</h2> — present 2-3 contrasting scholarly viewpoints or methodological critiques (200-250 words)
-  6. <h2>Practical Applications</h2> — 3-5 real-world or professional applications with specific examples (150-200 words)
-  7. <h2>Summary and Synthesis</h2> — integrate all concepts with reference to learning objectives; pose 2-3 critical thinking questions for further study (150-200 words)
-key_points: 8-12 academically precise complete sentences covering all major concepts
+Standards for content_html (target 600-900 words):
+- Semantic HTML only: h2, h3, p, ul, ol, li, strong, em, blockquote. No scripts, no inline styles.
+- Academic register throughout.
+Required sections (keep each concise):
+  1. <h2>Introduction</h2> — topic context and relevance (80-100 words)
+  2. <h2>Learning Objectives</h2> — 4-5 Bloom's-aligned outcomes as a <ul>
+  3. <h2>Core Concepts</h2> — 2-3 subsections (h3), each 120-160 words: definition, key mechanism, brief example
+  4. <h2>Critical Perspectives</h2> — 1-2 contrasting viewpoints or limitations (80-100 words)
+  5. <h2>Summary</h2> — synthesis + 2 study questions (60-80 words)
+key_points: 5-7 precise sentences covering the main concepts
 estimated_read_time_minutes: at 200 words/min`,
 
-    presentation_slides: `You are a university academic creating a comprehensive, scholarly lecture presentation. These slides should serve as the primary visual teaching aid for a 60-90 minute university lecture. ${jsonRule}
+    presentation_slides: `You are a university academic creating a scholarly lecture slide deck. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
-Generate 14-18 slides. Use h3, p, ul, ol, li, strong, em, blockquote in content_html. Target 100-200 words of substantive content per slide.
-Required slide sequence:
-  1. Title slide — course name, topic, week/module number, learning context
-  2. Agenda — session outline with time allocation per section
-  3. Learning Objectives — 5-7 Bloom's-aligned outcomes
-  4-5. Theoretical Background — foundational theory, key scholars/models, historical context
-  6-8. Core Content (one concept per slide) — definition, mechanism, evidence, example
-  9. Worked Example / Case Study — step-by-step analysis of a real discipline-specific scenario
-  10. Data / Evidence Slide — statistics, research findings, or empirical data with interpretation
-  11. Critical Analysis — academic debate, limitations, alternative interpretations
-  12. Comparative Analysis — compare 2-3 frameworks, models, or approaches in a structured format
-  13. Practical Applications — professional or real-world use cases
-  14. Student Activity — structured in-class task or discussion prompt with clear instructions
-  15. Key Terminology — glossary of 6-8 essential terms with precise academic definitions
-  16. Summary — 6-8 bullet synthesis of the session's core insights
-  17-18. Further Reading & Assessment — recommended scholarly sources and upcoming assessment guidance
-speaker_notes per slide: 4-6 sentences of detailed lecturer talking points — include pedagogical tips, questions to pose to students, common misconceptions to address, and connections to prior or future content`,
+Generate exactly 10 slides. Use h3, p, ul, li, strong in content_html. Target 80-120 words per slide.
+Slide sequence:
+  1. Title — topic, course, week
+  2. Learning Objectives — 4-5 outcomes as <ul>
+  3. Key Concept 1 — definition, mechanism, example
+  4. Key Concept 2 — definition, mechanism, example
+  5. Key Concept 3 — definition, mechanism, example
+  6. Worked Example — brief real-world scenario with analysis
+  7. Critical Analysis — 2 contrasting views or limitations
+  8. Practical Applications — 3-4 bullet points
+  9. Student Activity — one focused discussion or task prompt
+  10. Summary — 5-6 bullet key takeaways
+speaker_notes: 2-3 sentences per slide with teaching tips or questions to pose`,
 
     generate_exam: `You are a senior university examinations officer and academic writing a formal assessment instrument meeting tertiary education quality standards. ${jsonRule}
 Output shape: {
@@ -488,8 +482,8 @@ function getMaxTokens(task: string): number {
   if (task === 'section_notes') return 8000;
   // section_slides: slides only (no notes) — 10-14 slides
   if (task === 'section_slides') return 6000;
-  if (task === 'lesson_notes') return 12000;
-  if (task === 'presentation_slides') return 12000;
+  if (task === 'lesson_notes') return 4000;
+  if (task === 'presentation_slides') return 4000;
   if (task === 'lesson_content') return 10000;
   if (task === 'generate_exam') return 8000;
   if (task === 'activity_ideas') return 6000;
@@ -525,9 +519,9 @@ async function callAnthropic(
     signal: AbortSignal.timeout(
       task === 'full_curriculum' ? 120000
         : task === 'section_content' ? 120000
-        : ['section_notes', 'lesson_notes', 'lesson_content'].includes(task) ? 90000
-        : task === 'section_slides' ? 60000
-        : ['presentation_slides', 'generate_exam'].includes(task) ? 90000
+        : ['section_notes', 'lesson_notes', 'lesson_content'].includes(task) ? 45000
+        : task === 'section_slides' ? 45000
+        : ['presentation_slides', 'generate_exam'].includes(task) ? 45000
         : 60000
     ),
   });

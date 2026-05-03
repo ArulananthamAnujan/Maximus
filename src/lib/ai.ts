@@ -178,14 +178,14 @@ const FUNCTIONS_BASE = import.meta.env.DEV
 const TASK_TIMEOUT: Record<string, number> = {
   full_curriculum: 130000,
   section_content: 130000,
-  section_notes: 100000,
-  section_slides: 70000,
-  lesson_notes: 100000,
-  presentation_slides: 100000,
-  lesson_content: 100000,
-  generate_exam: 100000,
+  section_notes: 60000,
+  section_slides: 60000,
+  lesson_notes: 60000,
+  presentation_slides: 60000,
+  lesson_content: 60000,
+  generate_exam: 60000,
 };
-const DEFAULT_TIMEOUT = 90000;
+const DEFAULT_TIMEOUT = 60000;
 
 export async function callAI<T>(task: string, input: object): Promise<T> {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
