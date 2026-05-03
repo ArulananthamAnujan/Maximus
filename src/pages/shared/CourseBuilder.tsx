@@ -762,96 +762,100 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     setBgGenStatus({ total: sectionBuilds.length, done: 0, current: sectionBuilds[0].sec.title, errors: 0 });
 
     (async () => {
-      const { generateSectionContent } = await import('../../lib/ai');
+      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
       const contextSummaries: string[] = [];
       let errors = 0;
 
       for (let i = 0; i < sectionBuilds.length; i++) {
         const { sec, lessons, courseId, courseName } = sectionBuilds[i];
 
-        setBgGenStatus(prev => prev ? {
-          ...prev,
-          done: i,
-          current: sec.title,
-        } : null);
+        setBgGenStatus(prev => prev ? { ...prev, done: i, current: sec.title } : null);
 
-        // Stagger to stay well within rate limits
-        if (i > 0) await new Promise(r => setTimeout(r, 1500));
+        // Small stagger between sections to avoid rate-limit bursts
+        if (i > 0) await new Promise(r => setTimeout(r, 1000));
 
-        const tryGenerate = async (attempt: number): Promise<void> => {
-          try {
-            const sectionContent = await generateSectionContent({
-              section_title: sec.title,
-              course_title: courseName,
-              lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
-              target_audience: aiCurriculumForm.target_audience,
-              difficulty: aiCurriculumForm.difficulty,
-              existing_sections_summary: contextSummaries.length > 0
-                ? contextSummaries.slice(-4).join('\n')
-                : undefined,
-            });
-
-            const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-
-            for (let li = 0; li < lessons.length; li++) {
-              const lessonDb = lessons[li];
-              const lessonContent =
-                sectionContent.lessons?.find(lc =>
-                  lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
-                ) ?? sectionContent.lessons?.[li];
-              if (!lessonDb || !lessonContent) continue;
-
-              const notesHtml = lessonContent.notes_html || '';
-              if (notesHtml) {
-                await supabase.from('lessons').update({ content: notesHtml }).eq('id', lessonDb.id);
-                docRows.push({
-                  lesson_id: lessonDb.id,
-                  course_id: courseId,
-                  type: 'notes',
-                  title: `${lessonDb.title} — Notes`,
-                  content_html: notesHtml,
-                  order_index: 0,
-                });
-              }
-            }
-
-            if (sectionContent.slides?.length && lessons.length > 0) {
-              const slidesHtml = sectionContent.slides.map(s =>
-                `<section class="slide" data-slide="${s.slide_number}">
-                  <h2>${s.heading}</h2>
-                  ${s.content_html}
-                  ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-                </section>`
-              ).join('\n');
-              docRows.push({
-                lesson_id: lessons[0].id,
-                course_id: courseId,
-                type: 'slides',
-                title: sectionContent.slides_title || `${sec.title} — Slides`,
-                content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-                order_index: 1,
-              });
-            }
-
-            if (docRows.length > 0) {
-              await supabase.from('lesson_documents').insert(docRows);
-            }
-
-            contextSummaries.push(
-              `Section ${i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
-            );
-          } catch (err) {
-            if (attempt < 3) {
-              // Exponential back-off: 5s, 15s
-              await new Promise(r => setTimeout(r, attempt === 1 ? 5000 : 15000));
-              return tryGenerate(attempt + 1);
-            }
-            console.warn(`Notes/slides failed for "${sec.title}" after 3 attempts:`, err);
-            errors++;
-          }
+        const callInput = {
+          section_title: sec.title,
+          course_title: courseName,
+          lessons: (sec.lessons || []).map(l => ({ title: l.title, description: l.description || '' })),
+          target_audience: aiCurriculumForm.target_audience,
+          difficulty: aiCurriculumForm.difficulty,
+          existing_sections_summary: contextSummaries.length > 0
+            ? contextSummaries.slice(-4).join('\n')
+            : undefined,
         };
 
-        await tryGenerate(1);
+        // Notes and slides are independent — run in parallel, each with its own retry
+        const withRetry = async <T,>(fn: () => Promise<T>, label: string): Promise<T | null> => {
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              return await fn();
+            } catch (err) {
+              console.warn(`${label} attempt ${attempt} failed:`, err);
+              if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 5000));
+            }
+          }
+          return null;
+        };
+
+        const [notesResult, slidesResult] = await Promise.all([
+          withRetry(() => generateSectionNotes(callInput), `Notes "${sec.title}"`),
+          withRetry(() => generateSectionSlides(callInput), `Slides "${sec.title}"`),
+        ]);
+
+        if (!notesResult && !slidesResult) {
+          errors++;
+          setBgGenStatus(prev => prev ? { ...prev, done: i + 1, errors } : null);
+          continue;
+        }
+
+        const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
+
+        if (notesResult) {
+          for (let li = 0; li < lessons.length; li++) {
+            const lessonDb = lessons[li];
+            const lessonContent =
+              notesResult.lessons?.find(lc =>
+                lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
+              ) ?? notesResult.lessons?.[li];
+            if (!lessonDb || !lessonContent?.notes_html) continue;
+            await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+            docRows.push({
+              lesson_id: lessonDb.id,
+              course_id: courseId,
+              type: 'notes',
+              title: `${lessonDb.title} — Notes`,
+              content_html: lessonContent.notes_html,
+              order_index: 0,
+            });
+          }
+        }
+
+        if (slidesResult?.slides?.length && lessons.length > 0) {
+          const slidesHtml = slidesResult.slides.map(s =>
+            `<section class="slide" data-slide="${s.slide_number}">
+              <h2>${s.heading}</h2>
+              ${s.content_html}
+              ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+            </section>`
+          ).join('\n');
+          docRows.push({
+            lesson_id: lessons[0].id,
+            course_id: courseId,
+            type: 'slides',
+            title: slidesResult.slides_title || `${sec.title} — Slides`,
+            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+            order_index: 1,
+          });
+        }
+
+        if (docRows.length > 0) {
+          await supabase.from('lesson_documents').insert(docRows);
+        }
+
+        contextSummaries.push(
+          `Section ${i + 1}: "${sec.title}" (${(sec.lessons || []).map(l => l.title).join(', ')})`
+        );
 
         setBgGenStatus(prev => prev ? { ...prev, done: i + 1, errors } : null);
       }
@@ -873,74 +877,98 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!selectedCourse || generatingSectionDocsId) return;
     if (!section.lessons?.length) { toast.error('Add lessons to this section before generating.'); return; }
     setGeneratingSectionDocsId(section.id);
+
+    const courseId = selectedCourse;
+    const courseName = courses.find(c => c.id === courseId)?.title || '';
+    const otherSections = sections.filter(s => s.id !== section.id);
+    const existingSummary = otherSections.length > 0
+      ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
+      : undefined;
+
+    const callInput = {
+      section_title: section.title,
+      course_title: courseName,
+      lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+      target_audience: 'general',
+      difficulty: 'beginner',
+      existing_sections_summary: existingSummary,
+    };
+
     try {
-      const { generateSectionContent } = await import('../../lib/ai');
-      const courseName = courses.find(c => c.id === selectedCourse)?.title || '';
+      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
 
-      // Build context from ALL other sections
-      const otherSections = sections.filter(s => s.id !== section.id);
-      const existingSummary = otherSections.length > 0
-        ? otherSections.map((s, i) => `Section ${i + 1}: "${s.title}" (${(s.lessons || []).map(l => l.title).join(', ')})`).join('\n')
-        : undefined;
+      // Run notes and slides as two independent calls in parallel
+      const [notesResult, slidesResult] = await Promise.allSettled([
+        generateSectionNotes(callInput),
+        generateSectionSlides(callInput),
+      ]);
 
-      const result = await generateSectionContent({
-        section_title: section.title,
-        course_title: courseName,
-        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
-        target_audience: 'general',
-        difficulty: 'beginner',
-        existing_sections_summary: existingSummary,
-      });
-
-      // Delete old docs for lessons in this section then re-insert
+      // Delete old docs then rebuild
       const lessonIds = section.lessons.map(l => l.id);
       await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
 
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      for (let li = 0; li < section.lessons.length; li++) {
-        const lessonDb = section.lessons[li];
-        const lessonContent =
-          result.lessons?.find(lc =>
-            lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
-          ) ?? result.lessons?.[li];
-        if (!lessonDb || !lessonContent?.notes_html) continue;
-        await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
-        docRows.push({
-          lesson_id: lessonDb.id,
-          course_id: selectedCourse,
-          type: 'notes',
-          title: `${lessonDb.title} — Notes`,
-          content_html: lessonContent.notes_html,
-          order_index: 0,
-        });
+      // Process notes
+      if (notesResult.status === 'fulfilled') {
+        const notes = notesResult.value;
+        for (let li = 0; li < section.lessons.length; li++) {
+          const lessonDb = section.lessons[li];
+          const lessonContent =
+            notes.lessons?.find(lc =>
+              lc.lesson_title?.toLowerCase().trim() === lessonDb.title?.toLowerCase().trim()
+            ) ?? notes.lessons?.[li];
+          if (!lessonDb || !lessonContent?.notes_html) continue;
+          await supabase.from('lessons').update({ content: lessonContent.notes_html }).eq('id', lessonDb.id);
+          docRows.push({
+            lesson_id: lessonDb.id,
+            course_id: courseId,
+            type: 'notes',
+            title: `${lessonDb.title} — Notes`,
+            content_html: lessonContent.notes_html,
+            order_index: 0,
+          });
+        }
+      } else {
+        console.error('Notes generation failed:', notesResult.reason);
+        toast.error('Notes could not be generated — slides may still be available.');
       }
 
-      if (result.slides?.length && section.lessons.length > 0) {
-        const slidesHtml = result.slides.map(s =>
-          `<section class="slide" data-slide="${s.slide_number}">
-            <h2>${s.heading}</h2>
-            ${s.content_html}
-            ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
-          </section>`
-        ).join('\n');
-        docRows.push({
-          lesson_id: section.lessons[0].id,
-          course_id: selectedCourse,
-          type: 'slides',
-          title: result.slides_title || `${section.title} — Slides`,
-          content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-          order_index: 1,
-        });
+      // Process slides
+      if (slidesResult.status === 'fulfilled') {
+        const slidesData = slidesResult.value;
+        if (slidesData.slides?.length && section.lessons.length > 0) {
+          const slidesHtml = slidesData.slides.map(s =>
+            `<section class="slide" data-slide="${s.slide_number}">
+              <h2>${s.heading}</h2>
+              ${s.content_html}
+              ${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}
+            </section>`
+          ).join('\n');
+          docRows.push({
+            lesson_id: section.lessons[0].id,
+            course_id: courseId,
+            type: 'slides',
+            title: slidesData.slides_title || `${section.title} — Slides`,
+            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+            order_index: 1,
+          });
+        }
+      } else {
+        console.error('Slides generation failed:', slidesResult.reason);
+        toast.error('Slides could not be generated — notes may still be available.');
       }
 
-      if (docRows.length > 0) await supabase.from('lesson_documents').insert(docRows);
-
-      toast.success(`PDF notes and PPT slides generated for "${section.title}"`);
-      // Re-open the first lesson's docs panel so the user can immediately see them
-      if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
+      if (docRows.length > 0) {
+        await supabase.from('lesson_documents').insert(docRows);
+        toast.success(`Generated for "${section.title}" — ${notesResult.status === 'fulfilled' ? 'notes' : ''}${notesResult.status === 'fulfilled' && slidesResult.status === 'fulfilled' ? ' & ' : ''}${slidesResult.status === 'fulfilled' ? 'slides' : ''}`);
+        if (section.lessons.length > 0) setExpandedDocsLessonId(section.lessons[0].id);
+      } else {
+        toast.error('Generation failed for both notes and slides. Please try again.');
+      }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Generation failed');
+      console.error('handleGenerateSectionDocs error:', err);
+      toast.error(err instanceof Error ? err.message : 'Generation failed. Please try again.');
     } finally {
       setGeneratingSectionDocsId(null);
     }

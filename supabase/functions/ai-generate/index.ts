@@ -51,6 +51,14 @@ function validateSectionContent(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.section_title === 'string' && Array.isArray(o.lessons) && Array.isArray(o.slides);
 }
+function validateSectionNotes(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.section_title === 'string' && Array.isArray(o.lessons);
+}
+function validateSectionSlides(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.section_title === 'string' && Array.isArray(o.slides);
+}
 function validateGenerateExam(obj: unknown): boolean {
   const o = obj as Record<string, unknown>;
   return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
@@ -69,6 +77,8 @@ const validators: Record<string, (o: unknown) => boolean> = {
   lesson_notes: validateLessonNotes,
   presentation_slides: validatePresentationSlides,
   section_content: validateSectionContent,
+  section_notes: validateSectionNotes,
+  section_slides: validateSectionSlides,
   generate_exam: validateGenerateExam,
 };
 
@@ -281,6 +291,29 @@ Standards for slides (10-14 slides total for the section):
 - Slide sequence: section title | learning objectives | one concept/theory slide per major topic | worked example | critical analysis | student activity | section summary
 - speaker_notes: 4-5 sentences per slide — detailed lecturer guidance including pedagogical tips, anticipated student questions, connections to assessments, and links to prior/future content
 If prior section context is provided: explicitly build on established concepts, increase theoretical complexity, introduce new frameworks that extend prior learning, and reference connections to earlier content.`,
+
+    section_notes: `You are a university academic writing scholarly lecture notes for every lesson in one course section. ${jsonRule}
+Output shape: {
+  "section_title": string,
+  "lessons": [{"lesson_title": string, "notes_html": string, "key_points": string[]}]
+}
+Standards for notes_html (600-1000 words each):
+- Semantic HTML only: h3, p, ul, ol, li, strong, em, blockquote. No scripts or inline styles.
+- Structure: introduction & context (100w) | theoretical framework (150w) | 2-3 core concept sections with examples (150-200w each) | critical perspectives (100w) | summary with study questions (80w)
+- Academic register throughout
+- key_points: 6-8 complete sentences covering essential academic content
+If prior section context provided: build directly on it, increase depth, reference connections to earlier content.`,
+
+    section_slides: `You are a university academic creating a scholarly lecture slide deck for one course section. ${jsonRule}
+Output shape: {
+  "section_title": string,
+  "slides_title": string,
+  "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]
+}
+Generate 10-14 slides. Use h3, p, ul, li, strong in content_html; 120-180 words per slide.
+Slide sequence: section title | learning objectives | one concept/theory slide per major topic | worked example | critical analysis | student activity | section summary.
+speaker_notes: 4-5 sentences per slide with pedagogical tips, student questions to pose, and links to prior/future content.
+If prior section context provided: explicitly build on established concepts and reference connections to earlier content.`,
   };
 
   return prompts[task] || jsonRule;
@@ -392,6 +425,38 @@ ${lessons}
 Each lesson's notes must be scholarly and detailed (600-1000 words). The slide deck must cover the full section with academic rigour suitable for a university lecture.${input.existing_sections_summary ? `\n\nPrevious sections already covered — build on these with increased theoretical depth and complexity; explicitly connect new content to prior learning:\n${input.existing_sections_summary}` : ''}`;
     }
 
+    case 'section_notes': {
+      const lessons = Array.isArray(input.lessons)
+        ? (input.lessons as Array<{ title: string; description: string }>)
+            .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
+            .join('\n')
+        : String(input.lessons);
+      return `Write comprehensive scholarly lecture notes for every lesson in this section:
+Course: ${input.course_title}
+Section / Week: ${input.section_title}
+Target Audience: ${input.target_audience}
+Academic Level: ${input.difficulty}
+Lessons:
+${lessons}
+${input.existing_sections_summary ? `\nPrevious sections covered — build on these with increased depth:\n${input.existing_sections_summary}` : ''}`;
+    }
+
+    case 'section_slides': {
+      const lessons = Array.isArray(input.lessons)
+        ? (input.lessons as Array<{ title: string; description: string }>)
+            .map((l, i) => `  ${i + 1}. ${l.title}${l.description ? ` — ${l.description}` : ''}`)
+            .join('\n')
+        : String(input.lessons);
+      return `Create a scholarly university lecture slide deck for this section:
+Course: ${input.course_title}
+Section / Week: ${input.section_title}
+Target Audience: ${input.target_audience}
+Academic Level: ${input.difficulty}
+Lessons covered:
+${lessons}
+${input.existing_sections_summary ? `\nPrevious sections covered — build on these; reference connections to prior learning:\n${input.existing_sections_summary}` : ''}`;
+    }
+
     case 'generate_exam':
       return `Write a formal university examination for:
 Subject / Topic: ${input.topic}
@@ -419,6 +484,10 @@ function getMaxTokens(task: string): number {
   // full_curriculum is now called in batches of max 4 sections — 10k is sufficient
   if (task === 'full_curriculum') return 10000;
   if (task === 'section_content') return 12000;
+  // section_notes: notes only (no slides) — up to 4 lessons × ~1000 words each
+  if (task === 'section_notes') return 8000;
+  // section_slides: slides only (no notes) — 10-14 slides
+  if (task === 'section_slides') return 6000;
   if (task === 'lesson_notes') return 12000;
   if (task === 'presentation_slides') return 12000;
   if (task === 'lesson_content') return 10000;
@@ -454,10 +523,12 @@ async function callAnthropic(
       messages: [{ role: 'user', content: userPrompt }],
     }),
     signal: AbortSignal.timeout(
-      task === 'full_curriculum' ? 240000
-        : task === 'section_content' ? 180000
-        : ['lesson_notes', 'presentation_slides', 'lesson_content'].includes(task) ? 120000
-        : 90000
+      task === 'full_curriculum' ? 120000
+        : task === 'section_content' ? 120000
+        : ['section_notes', 'lesson_notes', 'lesson_content'].includes(task) ? 90000
+        : task === 'section_slides' ? 60000
+        : ['presentation_slides', 'generate_exam'].includes(task) ? 90000
+        : 60000
     ),
   });
 

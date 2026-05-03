@@ -176,11 +176,13 @@ const FUNCTIONS_BASE = import.meta.env.DEV
 
 // Timeout per task in ms (client-side safety net — edge function has its own)
 const TASK_TIMEOUT: Record<string, number> = {
-  full_curriculum: 260000,
-  section_content: 200000,
-  lesson_notes: 140000,
-  presentation_slides: 140000,
-  lesson_content: 120000,
+  full_curriculum: 130000,
+  section_content: 130000,
+  section_notes: 100000,
+  section_slides: 70000,
+  lesson_notes: 100000,
+  presentation_slides: 100000,
+  lesson_content: 100000,
   generate_exam: 100000,
 };
 const DEFAULT_TIMEOUT = 90000;
@@ -375,6 +377,25 @@ export interface SectionContentOutput {
 
 export const generateSectionContent = (input: SectionContentInput) =>
   callAI<SectionContentOutput>('section_content', input);
+
+// ─── Split section notes + slides (two fast calls instead of one slow one) ───
+
+export interface SectionNotesOutput {
+  section_title: string;
+  lessons: SectionContentLessonOutput[];
+}
+
+export interface SectionSlidesOutput {
+  section_title: string;
+  slides_title: string;
+  slides: PresentationSlide[];
+}
+
+export const generateSectionNotes = (input: SectionContentInput) =>
+  callAI<SectionNotesOutput>('section_notes', input);
+
+export const generateSectionSlides = (input: SectionContentInput) =>
+  callAI<SectionSlidesOutput>('section_slides', input);
 
 export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
