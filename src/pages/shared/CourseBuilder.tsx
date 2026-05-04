@@ -851,7 +851,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   };
 
   // Generate notes + slides for ALL sections in the course (called from any section's button)
-  // Generate notes (one per lesson, all parallel) + slides for ONE section
+  // Generate notes (one per lesson, sequentially) + slides for ONE section
   const handleGenerateSectionDocs = (section: Section & { lessons: Lesson[] }) => {
     if (!selectedCourse || generatingSectionDocsId) return;
     if (!section.lessons?.length) {
@@ -861,11 +861,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
     const courseId = selectedCourse;
     const courseName = courses.find(c => c.id === courseId)?.title || '';
-    // total = one call per lesson + one slides call
+    // total steps = one per lesson + one slides call
     const total = section.lessons.length + 1;
 
     setGeneratingSectionDocsId(section.id);
-    setBgGenStatus({ total, done: 0, current: `${section.title} — starting`, errors: 0 });
+    setBgGenStatus({ total, done: 0, current: `Starting…`, errors: 0 });
 
     (async () => {
       const { generateLessonNotes, generateSectionSlides } = await import('../../lib/ai');
@@ -874,44 +874,47 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       const lessonIds = section.lessons.map(l => l.id);
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // ── Notes: one call per lesson, all run in parallel ────────────────────
-      setBgGenStatus(prev => prev ? { ...prev, current: `Generating notes for ${section.lessons.length} lesson${section.lessons.length !== 1 ? 's' : ''}…` } : null);
-
-      const noteResults = await Promise.allSettled(
-        section.lessons.map(lesson =>
-          generateLessonNotes({
-            lesson_title: lesson.title,
-            section_title: section.title,
-            course_title: courseName,
-            target_audience: 'general',
-            difficulty: 'intermediate',
-          })
-        )
-      );
-
-      if (!mountedRef.current) return;
-
+      // ── Notes: sequential (one at a time) to avoid concurrent parse failures ─
       let notesGenerated = 0;
-      for (let i = 0; i < noteResults.length; i++) {
-        const r = noteResults[i];
+      for (let i = 0; i < section.lessons.length; i++) {
+        if (!mountedRef.current) return;
         const lesson = section.lessons[i];
-        if (r.status === 'fulfilled' && r.value?.content_html?.trim()) {
+        setBgGenStatus(prev => prev ? { ...prev, done: i, current: `Generating notes: ${lesson.title}` } : null);
+
+        let html: string | null = null;
+        // Try up to 2 times per lesson (once retry on parse failure)
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const r = await generateLessonNotes({
+              lesson_title: lesson.title,
+              section_title: section.title,
+              course_title: courseName,
+              target_audience: 'general',
+              difficulty: 'intermediate',
+            });
+            if (r?.content_html?.trim()) { html = r.content_html; break; }
+          } catch (err) {
+            console.warn(`Notes attempt ${attempt + 1} failed for "${lesson.title}":`, err);
+            if (attempt === 0) await new Promise(res => setTimeout(res, 1500));
+          }
+        }
+
+        if (html) {
           docRows.push({
             lesson_id: lesson.id,
             course_id: courseId,
             type: 'notes',
             title: `${lesson.title} — Notes`,
-            content_html: r.value.content_html,
+            content_html: html,
             order_index: 0,
           });
-          supabase.from('lessons').update({ content: r.value.content_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
+          supabase.from('lessons').update({ content: html }).eq('id', lesson.id).then(() => {}).catch(() => {});
           notesGenerated++;
-        } else if (r.status === 'rejected') {
-          console.warn(`Notes failed for "${lesson.title}":`, r.reason);
         }
       }
 
-      setBgGenStatus(prev => prev ? { ...prev, done: section.lessons.length, current: `Generating slides for ${section.title}…` } : null);
+      if (!mountedRef.current) return;
+      setBgGenStatus(prev => prev ? { ...prev, done: section.lessons.length, current: `Generating slides…` } : null);
 
       // ── Slides: one call covering the whole section ────────────────────────
       let slidesOk = false;
