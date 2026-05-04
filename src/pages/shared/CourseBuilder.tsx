@@ -851,7 +851,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   };
 
   // Generate notes + slides for ALL sections in the course (called from any section's button)
-  // Generate notes + slides for ONE specific section only
+  // Generate notes (one per lesson, all parallel) + slides for ONE section
   const handleGenerateSectionDocs = (section: Section & { lessons: Lesson[] }) => {
     if (!selectedCourse || generatingSectionDocsId) return;
     if (!section.lessons?.length) {
@@ -861,97 +861,68 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
     const courseId = selectedCourse;
     const courseName = courses.find(c => c.id === courseId)?.title || '';
+    // total = one call per lesson + one slides call
+    const total = section.lessons.length + 1;
 
     setGeneratingSectionDocsId(section.id);
-    setBgGenStatus({ total: 2, done: 0, current: `${section.title} — notes`, errors: 0 });
+    setBgGenStatus({ total, done: 0, current: `${section.title} — starting`, errors: 0 });
 
     (async () => {
-      const { generateSectionNotes, generateSectionSlides, generateLessonNotes } = await import('../../lib/ai');
-
-      const sectionInput = {
-        section_title: section.title,
-        course_title: courseName,
-        lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
-        target_audience: 'general',
-        difficulty: 'intermediate',
-      };
+      const { generateLessonNotes, generateSectionSlides } = await import('../../lib/ai');
+      if (!mountedRef.current) return;
 
       const lessonIds = section.lessons.map(l => l.id);
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
 
-      // ── Step 1: Notes (batch, with per-lesson fallback) ────────────────────
+      // ── Notes: one call per lesson, all run in parallel ────────────────────
+      setBgGenStatus(prev => prev ? { ...prev, current: `Generating notes for ${section.lessons.length} lesson${section.lessons.length !== 1 ? 's' : ''}…` } : null);
+
+      const noteResults = await Promise.allSettled(
+        section.lessons.map(lesson =>
+          generateLessonNotes({
+            lesson_title: lesson.title,
+            section_title: section.title,
+            course_title: courseName,
+            target_audience: 'general',
+            difficulty: 'intermediate',
+          })
+        )
+      );
+
       if (!mountedRef.current) return;
-      setBgGenStatus(prev => prev ? { ...prev, done: 0, current: `${section.title} — generating notes` } : null);
 
-      let notesOk = false;
-      const coveredLessonIds = new Set<string>();
-
-      // Try batch first
-      try {
-        const notesData = await generateSectionNotes(sectionInput);
-        if (notesData?.lessons?.length) {
-          for (let i = 0; i < notesData.lessons.length; i++) {
-            const lessonNote = notesData.lessons[i];
-            const lesson = section.lessons[i]; // index-based match — always correct
-            if (lesson && lessonNote.notes_html?.trim()) {
-              docRows.push({
-                lesson_id: lesson.id,
-                course_id: courseId,
-                type: 'notes',
-                title: `${lesson.title} — Notes`,
-                content_html: lessonNote.notes_html,
-                order_index: 0,
-              });
-              coveredLessonIds.add(lesson.id);
-              supabase.from('lessons').update({ content: lessonNote.notes_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`Batch notes failed for "${section.title}", will try per-lesson fallback:`, err);
-      }
-
-      // Per-lesson fallback for any lessons the batch missed
-      const missedLessons = section.lessons.filter(l => !coveredLessonIds.has(l.id));
-      if (missedLessons.length > 0) {
-        if (!mountedRef.current) return;
-        setBgGenStatus(prev => prev ? { ...prev, current: `${section.title} — generating notes (${missedLessons.length} remaining)` } : null);
-        for (const lesson of missedLessons) {
-          if (!mountedRef.current) return;
-          try {
-            const r = await generateLessonNotes({
-              lesson_title: lesson.title,
-              section_title: section.title,
-              course_title: courseName,
-              target_audience: 'general',
-              difficulty: 'intermediate',
-            });
-            if (r?.content_html?.trim()) {
-              docRows.push({
-                lesson_id: lesson.id,
-                course_id: courseId,
-                type: 'notes',
-                title: `${lesson.title} — Notes`,
-                content_html: r.content_html,
-                order_index: 0,
-              });
-              supabase.from('lessons').update({ content: r.content_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
-            }
-          } catch (lessonErr) {
-            console.warn(`Per-lesson notes failed for "${lesson.title}":`, lessonErr);
-          }
+      let notesGenerated = 0;
+      for (let i = 0; i < noteResults.length; i++) {
+        const r = noteResults[i];
+        const lesson = section.lessons[i];
+        if (r.status === 'fulfilled' && r.value?.content_html?.trim()) {
+          docRows.push({
+            lesson_id: lesson.id,
+            course_id: courseId,
+            type: 'notes',
+            title: `${lesson.title} — Notes`,
+            content_html: r.value.content_html,
+            order_index: 0,
+          });
+          supabase.from('lessons').update({ content: r.value.content_html }).eq('id', lesson.id).then(() => {}).catch(() => {});
+          notesGenerated++;
+        } else if (r.status === 'rejected') {
+          console.warn(`Notes failed for "${lesson.title}":`, r.reason);
         }
       }
 
-      notesOk = docRows.some(r => r.type === 'notes');
+      setBgGenStatus(prev => prev ? { ...prev, done: section.lessons.length, current: `Generating slides for ${section.title}…` } : null);
 
-      if (!mountedRef.current) return;
-      setBgGenStatus(prev => prev ? { ...prev, done: 1, current: `${section.title} — generating slides` } : null);
-
-      // ── Step 2: Slides ─────────────────────────────────────────────────────
+      // ── Slides: one call covering the whole section ────────────────────────
       let slidesOk = false;
       try {
-        const slidesData = await generateSectionSlides(sectionInput);
+        const slidesData = await generateSectionSlides({
+          section_title: section.title,
+          course_title: courseName,
+          lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+          target_audience: 'general',
+          difficulty: 'intermediate',
+        });
         if (slidesData?.slides?.length) {
           const slidesHtml = slidesData.slides.map(s =>
             `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
@@ -972,15 +943,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
       if (!mountedRef.current) return;
 
-      // ── Step 3: Persist ────────────────────────────────────────────────────
+      // ── Persist ────────────────────────────────────────────────────────────
       if (docRows.length > 0) {
         try {
           await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
           await supabase.from('lesson_documents').insert(docRows);
           const parts: string[] = [];
-          if (notesOk) parts.push('notes');
+          if (notesGenerated > 0) parts.push(`notes for ${notesGenerated}/${section.lessons.length} lessons`);
           if (slidesOk) parts.push('slides');
-          toast.success(`Generated ${parts.join(' & ')} for "${section.title}"`);
+          toast.success(`Generated ${parts.join(' & ')} — ${section.title}`);
         } catch (dbErr) {
           console.error('Failed to save documents:', dbErr);
           toast.error('Generated content but failed to save — please try again.');
@@ -990,8 +961,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       }
 
       if (mountedRef.current) {
-        setBgGenStatus(null);
-        setGeneratingSectionDocsId(null);
+        setBgGenStatus(prev => prev ? { ...prev, done: total } : null);
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setBgGenStatus(null);
+            setGeneratingSectionDocsId(null);
+          }
+        }, 800);
       }
     })().catch(err => {
       console.error('handleGenerateSectionDocs crashed:', err);
@@ -1541,9 +1517,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-blue-900">
-                        {bgGenStatus.total === 2
-                          ? `Generating — step ${bgGenStatus.done + 1} of 2`
-                          : `Generating notes & slides — ${bgGenStatus.done}/${bgGenStatus.total} sections complete`}
+                        Generating notes &amp; slides — {bgGenStatus.done}/{bgGenStatus.total} complete
                       </p>
                       <p className="text-xs text-blue-600 truncate mt-0.5">{bgGenStatus.current}</p>
                     </div>
