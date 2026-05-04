@@ -882,8 +882,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         setBgGenStatus(prev => prev ? { ...prev, done: i, current: `Generating notes: ${lesson.title}` } : null);
 
         let html: string | null = null;
-        // Try up to 2 times per lesson (once retry on parse failure)
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // Try up to 3 times per lesson
+        for (let attempt = 0; attempt < 3; attempt++) {
           try {
             const r = await generateLessonNotes({
               lesson_title: lesson.title,
@@ -895,7 +895,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             if (r?.content_html?.trim()) { html = r.content_html; break; }
           } catch (err) {
             console.warn(`Notes attempt ${attempt + 1} failed for "${lesson.title}":`, err);
-            if (attempt === 0) await new Promise(res => setTimeout(res, 1500));
+            if (attempt < 2) await new Promise(res => setTimeout(res, 2000));
           }
         }
 

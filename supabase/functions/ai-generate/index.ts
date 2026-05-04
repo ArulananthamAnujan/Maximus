@@ -548,16 +548,32 @@ function parseJSON(text: string): unknown | null {
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```\s*$/, '')
     .trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    // Try extracting the first JSON object or array
-    const match = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    if (match) {
-      try { return JSON.parse(match[1]); } catch { return null; }
+
+  // Direct parse
+  try { return JSON.parse(cleaned); } catch { /* fall through */ }
+
+  // Find the outermost { ... } by scanning for matching braces
+  const start = cleaned.indexOf('{');
+  if (start !== -1) {
+    let depth = 0;
+    for (let i = start; i < cleaned.length; i++) {
+      if (cleaned[i] === '{') depth++;
+      else if (cleaned[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(cleaned.slice(start, i + 1)); } catch { break; }
+        }
+      }
     }
-    return null;
   }
+
+  // Last resort: grab everything between first { and last }
+  const last = cleaned.lastIndexOf('}');
+  if (start !== -1 && last > start) {
+    try { return JSON.parse(cleaned.slice(start, last + 1)); } catch { /* */ }
+  }
+
+  return null;
 }
 
 // ─── Main handler ────────────────────────────────────────────────────────────
@@ -654,6 +670,14 @@ Deno.serve(async (req: Request) => {
 
     if (!parsed) {
       result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, true);
+      parsed = parseJSON(result.content);
+    }
+
+    // 3rd attempt: stripped-down prompt to guarantee clean JSON
+    if (!parsed) {
+      const minimalSystem = 'Return ONLY a valid JSON object. No markdown, no explanation, no text outside the JSON.';
+      const minimalUser = `${userPrompt}\n\nCRITICAL: Output ONLY the raw JSON object. Nothing else.`;
+      result = await callAnthropic(apiKey, minimalSystem, minimalUser, task, true);
       parsed = parseJSON(result.content);
     }
 
