@@ -1018,22 +1018,20 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     e.preventDefault();
     if (!selectedCourse) return;
     setSaving(true);
-    const extData = courseData as { start_date?: string; end_date?: string; duration_weeks?: number };
+    const isFree = Boolean(courseData.is_free);
     const { error } = await supabase.from('courses').update({
       title: courseData.title,
       short_description: courseData.short_description,
       description: courseData.description,
       category: courseData.category,
       level: courseData.level,
-      price: courseData.price,
-      is_free: courseData.is_free,
+      price: isFree ? 0 : (courseData.price ?? 0),
+      is_free: isFree,
+      is_paid: !isFree,
       thumbnail_url: courseData.thumbnail_url,
-      start_date: extData.start_date || null,
-      end_date: extData.end_date || null,
-      duration_weeks: extData.duration_weeks || null,
-    } as Record<string, unknown>).eq('id', selectedCourse);
+    }).eq('id', selectedCourse);
     if (!error) { toast.success('Course details saved successfully'); fetchCourses(); }
-    else toast.error('Failed to save details');
+    else { console.error('Save details error:', error); toast.error('Failed to save details'); }
     setSaving(false);
   };
 
