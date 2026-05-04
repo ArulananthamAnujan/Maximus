@@ -501,15 +501,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [expandedDocsLessonId, setExpandedDocsLessonId] = useState<string | null>(null);
   // Per-section PDF & PPT generation
   const [generatingSectionDocsId, setGeneratingSectionDocsId] = useState<string | null>(null);
+  // Guard against state updates after unmount
   const mountedRef = useRef(true);
-  const abortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      abortRef.current?.abort();
-    };
-  }, []);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   // Inline lesson editing
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
@@ -856,6 +850,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     });
   };
 
+  // Generate notes + slides for ALL sections in the course (called from any section's button)
   // Generate notes (one per lesson, sequentially) + slides for ONE section
   const handleGenerateSectionDocs = (section: Section & { lessons: Lesson[] }) => {
     if (!selectedCourse || generatingSectionDocsId) return;
@@ -864,37 +859,31 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       return;
     }
 
-    // Cancel any previous run
-    abortRef.current?.abort();
-    const abort = new AbortController();
-    abortRef.current = abort;
-
     const courseId = selectedCourse;
     const courseName = courses.find(c => c.id === courseId)?.title || '';
+    // total steps = one per lesson + one slides call
     const total = section.lessons.length + 1;
 
-    const safeSet = <T,>(fn: React.Dispatch<React.SetStateAction<T>>, val: React.SetStateAction<T>) => {
-      if (mountedRef.current && !abort.signal.aborted) fn(val);
-    };
+    setGeneratingSectionDocsId(section.id);
+    setBgGenStatus({ total, done: 0, current: `Starting…`, errors: 0 });
 
-    safeSet(setGeneratingSectionDocsId, section.id);
-    safeSet(setBgGenStatus, { total, done: 0, current: 'Starting…', errors: 0 });
-
-    const run = async () => {
+    (async () => {
       const { generateLessonNotes, generateSectionSlides } = await import('../../lib/ai');
+      if (!mountedRef.current) return;
 
       const lessonIds = section.lessons.map(l => l.id);
       const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-      let notesGenerated = 0;
 
-      // ── Notes: one per lesson, sequential ─────────────────────────────────
+      // ── Notes: sequential (one at a time) to avoid concurrent parse failures ─
+      let notesGenerated = 0;
       for (let i = 0; i < section.lessons.length; i++) {
-        if (abort.signal.aborted) return;
+        if (!mountedRef.current) return;
         const lesson = section.lessons[i];
-        safeSet(setBgGenStatus, prev => prev ? { ...prev, done: i, current: `Generating notes (${i + 1}/${section.lessons.length}): ${lesson.title}` } : null);
+        setBgGenStatus(prev => prev ? { ...prev, done: i, current: `Generating notes: ${lesson.title}` } : null);
 
         let html: string | null = null;
-        for (let attempt = 0; attempt < 3 && !abort.signal.aborted; attempt++) {
+        // Try up to 3 times per lesson
+        for (let attempt = 0; attempt < 3; attempt++) {
           try {
             const r = await generateLessonNotes({
               lesson_title: lesson.title,
@@ -905,79 +894,90 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             });
             if (r?.content_html?.trim()) { html = r.content_html; break; }
           } catch (err) {
-            if (abort.signal.aborted) return;
             console.warn(`Notes attempt ${attempt + 1} failed for "${lesson.title}":`, err);
             if (attempt < 2) await new Promise(res => setTimeout(res, 2000));
           }
         }
 
-        if (html && !abort.signal.aborted) {
-          docRows.push({ lesson_id: lesson.id, course_id: courseId, type: 'notes', title: `${lesson.title} — Notes`, content_html: html, order_index: 0 });
+        if (html) {
+          docRows.push({
+            lesson_id: lesson.id,
+            course_id: courseId,
+            type: 'notes',
+            title: `${lesson.title} — Notes`,
+            content_html: html,
+            order_index: 0,
+          });
           supabase.from('lessons').update({ content: html }).eq('id', lesson.id).then(() => {}).catch(() => {});
           notesGenerated++;
         }
       }
 
-      if (abort.signal.aborted) return;
-      safeSet(setBgGenStatus, prev => prev ? { ...prev, done: section.lessons.length, current: 'Generating slides…' } : null);
+      if (!mountedRef.current) return;
+      setBgGenStatus(prev => prev ? { ...prev, done: section.lessons.length, current: `Generating slides…` } : null);
 
-      // ── Slides ─────────────────────────────────────────────────────────────
+      // ── Slides: one call covering the whole section ────────────────────────
       let slidesOk = false;
       try {
-        if (!abort.signal.aborted) {
-          const slidesData = await generateSectionSlides({
-            section_title: section.title,
-            course_title: courseName,
-            lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
-            target_audience: 'general',
-            difficulty: 'intermediate',
+        const slidesData = await generateSectionSlides({
+          section_title: section.title,
+          course_title: courseName,
+          lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
+          target_audience: 'general',
+          difficulty: 'intermediate',
+        });
+        if (slidesData?.slides?.length) {
+          const slidesHtml = slidesData.slides.map(s =>
+            `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
+          ).join('\n');
+          docRows.push({
+            lesson_id: section.lessons[0].id,
+            course_id: courseId,
+            type: 'slides',
+            title: slidesData.slides_title || `${section.title} — Slides`,
+            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
+            order_index: 1,
           });
-          if (slidesData?.slides?.length && !abort.signal.aborted) {
-            const slidesHtml = slidesData.slides.map(s =>
-              `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
-            ).join('\n');
-            docRows.push({ lesson_id: section.lessons[0].id, course_id: courseId, type: 'slides', title: slidesData.slides_title || `${section.title} — Slides`, content_html: `<div class="slides-deck">${slidesHtml}</div>`, order_index: 1 });
-            slidesOk = true;
-          }
+          slidesOk = true;
         }
       } catch (err) {
-        if (!abort.signal.aborted) console.warn('Slides failed:', err);
+        console.warn(`Slides failed for "${section.title}":`, err);
       }
 
-      if (abort.signal.aborted) return;
+      if (!mountedRef.current) return;
 
       // ── Persist ────────────────────────────────────────────────────────────
       if (docRows.length > 0) {
         try {
           await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
           await supabase.from('lesson_documents').insert(docRows);
-          if (!abort.signal.aborted) {
-            const parts: string[] = [];
-            if (notesGenerated > 0) parts.push(`notes for all ${notesGenerated} lessons`);
-            if (slidesOk) parts.push('slides');
-            toast.success(`Generated ${parts.join(' & ')} — ${section.title}`);
-          }
+          const parts: string[] = [];
+          if (notesGenerated > 0) parts.push(`notes for ${notesGenerated}/${section.lessons.length} lessons`);
+          if (slidesOk) parts.push('slides');
+          toast.success(`Generated ${parts.join(' & ')} — ${section.title}`);
         } catch (dbErr) {
-          if (!abort.signal.aborted) {
-            console.error('Failed to save documents:', dbErr);
-            toast.error('Generated content but failed to save — please try again.');
-          }
+          console.error('Failed to save documents:', dbErr);
+          toast.error('Generated content but failed to save — please try again.');
         }
-      } else if (!abort.signal.aborted) {
+      } else {
         toast.error(`Could not generate content for "${section.title}". Please try again.`);
       }
 
-      safeSet(setBgGenStatus, null);
-      safeSet(setGeneratingSectionDocsId, null);
-    };
-
-    run().catch(err => {
-      if (abort.signal.aborted) return;
+      if (mountedRef.current) {
+        setBgGenStatus(prev => prev ? { ...prev, done: total } : null);
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setBgGenStatus(null);
+            setGeneratingSectionDocsId(null);
+          }
+        }, 800);
+      }
+    })().catch(err => {
       console.error('handleGenerateSectionDocs crashed:', err);
       if (mountedRef.current) {
         setBgGenStatus(null);
         setGeneratingSectionDocsId(null);
-        toast.error('Generation failed — please try again.');
+        toast.error('Generation failed unexpectedly — please try again.');
       }
     });
   };
