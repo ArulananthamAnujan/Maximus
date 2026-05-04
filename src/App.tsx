@@ -81,6 +81,16 @@ const AdminAnnouncements = lazy(() => import('./pages/admin/AdminAnnouncements')
 const AdminActivityLog = lazy(() => import('./pages/admin/AdminActivityLog'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminAIUsage = lazy(() => import('./pages/admin/AdminAIUsage'));
+const AdminOrganizations = lazy(() => import('./pages/admin/AdminOrganizations'));
+const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'));
+const AdminTokenPackages = lazy(() => import('./pages/admin/AdminTokenPackages'));
+
+const OrgDashboard = lazy(() => import('./pages/org/OrgDashboard'));
+const OrgTeachers = lazy(() => import('./pages/org/OrgTeachers'));
+const OrgCourses = lazy(() => import('./pages/org/OrgCourses'));
+const OrgCourseBuilder = lazy(() => import('./pages/org/OrgCourseBuilder'));
+const OrgTokens = lazy(() => import('./pages/org/OrgTokens'));
+const OrgSettings = lazy(() => import('./pages/org/OrgSettings'));
 
 const TeacherDashboard = lazy(() => import('./pages/teacher/TeacherDashboard'));
 const TeacherCourses = lazy(() => import('./pages/teacher/TeacherCourses'));
@@ -113,6 +123,13 @@ function LoadingScreen() {
   );
 }
 
+function roleHome(role: string) {
+  if (role === 'admin') return '/admin';
+  if (role === 'org_admin') return '/org';
+  if (role === 'teacher') return '/teacher';
+  return '/student';
+}
+
 function DashboardRedirect() {
   const { profile, loading, user } = useAuth();
   const navigate = useNavigate();
@@ -120,13 +137,8 @@ function DashboardRedirect() {
   useEffect(() => {
     if (loading) return;
     if (!user) { navigate('/login', { replace: true }); return; }
-    if (profile) {
-      if (profile.role === 'admin') navigate('/admin', { replace: true });
-      else if (profile.role === 'teacher') navigate('/teacher', { replace: true });
-      else navigate('/student', { replace: true });
-    } else {
-      navigate('/student', { replace: true });
-    }
+    if (profile) navigate(roleHome(profile.role), { replace: true });
+    else navigate('/student', { replace: true });
   }, [profile, loading, user, navigate]);
 
   return <LoadingScreen />;
@@ -135,22 +147,17 @@ function DashboardRedirect() {
 function AuthRoute({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
-  if (user && profile) {
-    if (profile.role === 'admin') return <Navigate to="/admin" replace />;
-    if (profile.role === 'teacher') return <Navigate to="/teacher" replace />;
-    return <Navigate to="/student" replace />;
-  }
+  if (user && profile) return <Navigate to={roleHome(profile.role)} replace />;
   return <>{children}</>;
 }
 
-function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: string }) {
+function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: string | string[] }) {
   const { user, profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
-  if (role && profile && profile.role !== role) {
-    if (profile.role === 'admin') return <Navigate to="/admin" replace />;
-    if (profile.role === 'teacher') return <Navigate to="/teacher" replace />;
-    return <Navigate to="/student" replace />;
+  const roles = role ? (Array.isArray(role) ? role : [role]) : null;
+  if (roles && profile && !roles.includes(profile.role)) {
+    return <Navigate to={roleHome(profile.role)} replace />;
   }
   return <>{children}</>;
 }
@@ -195,6 +202,16 @@ export default function App() {
                 <Route path="/admin/activity" element={<ProtectedRoute role="admin"><AdminActivityLog /></ProtectedRoute>} />
                 <Route path="/admin/settings" element={<ProtectedRoute role="admin"><AdminSettings /></ProtectedRoute>} />
                 <Route path="/admin/ai-usage" element={<ProtectedRoute role="admin"><AdminAIUsage /></ProtectedRoute>} />
+                <Route path="/admin/organizations" element={<ProtectedRoute role="admin"><AdminOrganizations /></ProtectedRoute>} />
+                <Route path="/admin/organizations/:orgId" element={<ProtectedRoute role="admin"><AdminOrgDetail /></ProtectedRoute>} />
+                <Route path="/admin/token-packages" element={<ProtectedRoute role="admin"><AdminTokenPackages /></ProtectedRoute>} />
+
+                <Route path="/org" element={<ProtectedRoute role="org_admin"><OrgDashboard /></ProtectedRoute>} />
+                <Route path="/org/teachers" element={<ProtectedRoute role="org_admin"><OrgTeachers /></ProtectedRoute>} />
+                <Route path="/org/courses" element={<ProtectedRoute role="org_admin"><OrgCourses /></ProtectedRoute>} />
+                <Route path="/org/builder" element={<ProtectedRoute role="org_admin"><OrgCourseBuilder /></ProtectedRoute>} />
+                <Route path="/org/tokens" element={<ProtectedRoute role="org_admin"><OrgTokens /></ProtectedRoute>} />
+                <Route path="/org/settings" element={<ProtectedRoute role="org_admin"><OrgSettings /></ProtectedRoute>} />
 
                 <Route path="/teacher" element={<ProtectedRoute role="teacher"><TeacherDashboard /></ProtectedRoute>} />
                 <Route path="/teacher/courses" element={<ProtectedRoute role="teacher"><TeacherCourses /></ProtectedRoute>} />

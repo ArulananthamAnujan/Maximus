@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import type { Profile } from '../types';
+import type { Profile, OrgMember } from '../types';
 
 interface AuthContextType {
   user: User | null;
   profile: Profile | null;
   session: Session | null;
+  orgMembership: OrgMember | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
@@ -17,7 +18,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType>({
-  user: null, profile: null, session: null, loading: true,
+  user: null, profile: null, session: null, orgMembership: null, loading: true,
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signOut: async () => {},
@@ -30,6 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [orgMembership, setOrgMembership] = useState<OrgMember | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
@@ -39,7 +41,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .select('*')
         .eq('id', userId)
         .maybeSingle();
-      if (data && !error) setProfile(data as Profile);
+      if (data && !error) {
+        setProfile(data as Profile);
+        // fetch org membership for org_admin / teacher roles
+        if (data.role === 'org_admin' || data.role === 'teacher') {
+          const { data: mem } = await supabase
+            .from('org_members')
+            .select('*, organization:organizations(*)')
+            .eq('user_id', userId)
+            .maybeSingle();
+          setOrgMembership(mem as OrgMember | null);
+        } else {
+          setOrgMembership(null);
+        }
+      }
     } catch {
       // silently fail — user is still authenticated
     }
@@ -107,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signUp, signOut, signInWithGoogle, signInWithMicrosoft, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, session, orgMembership, loading, signIn, signUp, signOut, signInWithGoogle, signInWithMicrosoft, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

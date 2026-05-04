@@ -634,6 +634,31 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // ── Org token check (for org_admin and teachers belonging to an org) ──────
+    let orgId: string | null = null;
+    if (profile.role === 'org_admin' || profile.role === 'teacher') {
+      const { data: membership } = await supabaseAdmin
+        .from('org_members')
+        .select('org_id, organizations(token_balance, is_active)')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (membership) {
+        orgId = membership.org_id;
+        const org = (membership as { organizations?: { token_balance: number; is_active: boolean } }).organizations;
+        if (!org?.is_active) {
+          return new Response(JSON.stringify({ error: 'Your organisation is inactive. Contact your administrator.' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        if ((org?.token_balance ?? 0) < 1) {
+          return new Response(JSON.stringify({ error: 'Insufficient tokens. Purchase more tokens to continue using AI generation.' }), {
+            status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+    }
+
     // ── Rate limit: 100 calls per user per minute ────────────────────────────
     const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
     const { count } = await supabaseAdmin
@@ -712,14 +737,32 @@ Deno.serve(async (req: Request) => {
     }
 
     const costUsd = (result.inputTokens / 1_000_000 * 3) + (result.outputTokens / 1_000_000 * 15);
-    await supabaseAdmin.from('ai_usage_logs').insert({
+    const { data: logRow } = await supabaseAdmin.from('ai_usage_logs').insert({
       user_id: userId,
       ai_task: task,
       input_tokens: result.inputTokens,
       output_tokens: result.outputTokens,
       cost_estimate_usd: costUsd,
       success: true,
-    });
+    }).select('id').maybeSingle();
+
+    // ── Deduct org tokens if user belongs to an org ───────────────────────────
+    const TOKEN_COSTS: Record<string, number> = {
+      course_outline: 5, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
+      summarize_lesson: 3, rewrite_content: 5, translate_content: 7, activity_ideas: 4,
+      full_curriculum: 20, lesson_notes: 5, presentation_slides: 10,
+      section_content: 8, section_notes: 5, section_slides: 10, generate_exam: 10,
+    };
+    if (orgId) {
+      const tokensToDeduct = TOKEN_COSTS[task] ?? 5;
+      await supabaseAdmin.rpc('deduct_org_tokens', {
+        p_org_id: orgId,
+        p_user_id: userId,
+        p_ai_task: task,
+        p_tokens: tokensToDeduct,
+        p_ai_log_id: logRow?.id ?? null,
+      });
+    }
 
     return new Response(JSON.stringify(parsed), {
       status: 200,

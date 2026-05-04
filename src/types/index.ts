@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'teacher' | 'student';
+export type UserRole = 'admin' | 'teacher' | 'student' | 'org_admin';
 
 export interface Profile {
   id: string;
@@ -282,4 +282,74 @@ export interface Toast {
   type: 'success' | 'error' | 'warning' | 'info';
   message: string;
   duration?: number;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  logo_url: string | null;
+  website: string | null;
+  description: string | null;
+  token_balance: number;
+  plan_tier: 'starter' | 'growth' | 'enterprise';
+  is_active: boolean;
+  stripe_customer_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgMember {
+  id: string;
+  org_id: string;
+  user_id: string;
+  role: 'owner' | 'teacher';
+  invited_by: string | null;
+  joined_at: string;
+  organization?: Organization;
+  profile?: Profile;
+}
+
+export interface TokenPackage {
+  id: string;
+  name: string;
+  description: string | null;
+  token_amount: number;
+  price_cents: number;
+  currency: string;
+  is_active: boolean;
+  is_popular: boolean;
+  stripe_price_id: string | null;
+  created_at: string;
+}
+
+export interface TokenPurchase {
+  id: string;
+  org_id: string;
+  package_id: string | null;
+  purchased_by: string | null;
+  token_amount: number;
+  amount_paid_cents: number;
+  currency: string;
+  stripe_session_id: string | null;
+  stripe_payment_id: string | null;
+  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  notes: string | null;
+  created_at: string;
+  completed_at: string | null;
+  organization?: Organization;
+  buyer?: Profile;
+}
+
+export interface TokenUsageLog {
+  id: string;
+  org_id: string;
+  user_id: string;
+  ai_task: string;
+  tokens_deducted: number;
+  ai_log_id: string | null;
+  created_at: string;
+  profile?: Profile;
+  organization?: Organization;
 }
