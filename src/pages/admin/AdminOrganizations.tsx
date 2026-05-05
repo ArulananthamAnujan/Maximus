@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { adminNavItems } from './adminNav';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import type { Organization } from '../../types';
 
 interface OrgWithStats extends Organization {
@@ -15,17 +16,67 @@ interface OrgWithStats extends Organization {
 
 function CreateOrgModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ name: '', slug: '', website: '', description: '', plan_tier: 'starter', initial_tokens: 500 });
+  const [form, setForm] = useState({ name: '', slug: '', website: '', description: '', plan_tier: 'professional', initial_tokens: 500 });
   const [ownerEmail, setOwnerEmail] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [newUserMode, setNewUserMode] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { session } = useAuth();
+
+  const resolveOrCreateOwner = async (): Promise<{ id: string } | null> => {
+    // First try to find an existing profile
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .eq('email', ownerEmail.trim().toLowerCase())
+      .maybeSingle();
+
+    if (existing) return existing;
+
+    if (!newUserMode) {
+      toast.error(
+        'No account found with that email. Toggle "Create new account" to create one on the spot.',
+        { duration: 6000 }
+      );
+      return null;
+    }
+
+    // Create a new user via the admin-create-user edge function
+    if (!ownerName.trim() || !ownerPassword.trim()) {
+      toast.error('Full name and password are required to create a new account.');
+      return null;
+    }
+    if (ownerPassword.length < 8) {
+      toast.error('Password must be at least 8 characters.');
+      return null;
+    }
+
+    const res = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ email: ownerEmail.trim().toLowerCase(), password: ownerPassword, full_name: ownerName.trim(), role: 'org_admin' }),
+      }
+    );
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      toast.error(json.error ?? 'Failed to create user account.');
+      return null;
+    }
+    return { id: json.user.id };
+  };
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      // Find owner by email
-      const { data: ownerProfile } = await supabase.from('profiles').select('id, role').eq('email', ownerEmail.trim()).maybeSingle();
-      if (!ownerProfile) { toast.error('No user found with that email'); setSaving(false); return; }
+      const ownerProfile = await resolveOrCreateOwner();
+      if (!ownerProfile) { setSaving(false); return; }
 
       // Create org
       const { data: org, error: orgErr } = await supabase.from('organizations').insert({
@@ -35,7 +86,7 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
       }).select().maybeSingle();
       if (orgErr) { toast.error(orgErr.message); setSaving(false); return; }
 
-      // Set owner as org_admin role
+      // Ensure owner has org_admin role
       await supabase.from('profiles').update({ role: 'org_admin' }).eq('id', ownerProfile.id);
 
       // Add as owner member
@@ -76,15 +127,73 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Slug *</label>
             <input required value={form.slug} onChange={e => setForm(f => ({ ...f, slug: slugify(e.target.value) }))} className="input-field font-mono text-sm" placeholder="acme-corp-training" />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Owner Email * <span className="font-normal text-slate-400">(must have existing account)</span></label>
-            <input required type="email" value={ownerEmail} onChange={e => setOwnerEmail(e.target.value)} className="input-field" placeholder="owner@company.com" />
+
+          {/* Owner section */}
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-200">
+              <p className="text-xs font-semibold text-slate-600">Organisation Admin (Owner)</p>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-xs text-slate-500">Create new account</span>
+                <button
+                  type="button"
+                  onClick={() => setNewUserMode(v => !v)}
+                  className={`relative w-9 h-5 rounded-full transition-colors ${newUserMode ? 'bg-sky-500' : 'bg-slate-300'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${newUserMode ? 'translate-x-4' : 'translate-x-0'}`} />
+                </button>
+              </label>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                  Owner Email *
+                  {!newUserMode && <span className="font-normal text-slate-400 ml-1">— must already have an account, or toggle to create one</span>}
+                </label>
+                <input
+                  required
+                  type="email"
+                  value={ownerEmail}
+                  onChange={e => setOwnerEmail(e.target.value)}
+                  className="input-field"
+                  placeholder="owner@company.com"
+                />
+              </div>
+              {newUserMode && (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Full Name *</label>
+                    <input
+                      required={newUserMode}
+                      type="text"
+                      value={ownerName}
+                      onChange={e => setOwnerName(e.target.value)}
+                      className="input-field"
+                      placeholder="Jane Smith"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Temporary Password *</label>
+                    <input
+                      required={newUserMode}
+                      type="password"
+                      value={ownerPassword}
+                      onChange={e => setOwnerPassword(e.target.value)}
+                      className="input-field"
+                      placeholder="Min. 8 characters"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">The admin will use this to log in. Ask them to change it after first sign-in.</p>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1.5">Plan Tier</label>
               <select value={form.plan_tier} onChange={e => setForm(f => ({ ...f, plan_tier: e.target.value }))} className="input-field">
                 <option value="starter">Starter</option>
+                <option value="professional">Professional</option>
                 <option value="growth">Growth</option>
                 <option value="enterprise">Enterprise</option>
               </select>
