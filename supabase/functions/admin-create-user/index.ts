@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
@@ -27,13 +27,13 @@ Deno.serve(async (req: Request) => {
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
 
-    const supabase = createClient(
+    const supabaseUser = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: { user: caller } } = await supabase.auth.getUser();
+    const { data: { user: caller } } = await supabaseUser.auth.getUser();
     if (!caller) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
@@ -41,7 +41,12 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { data: callerProfile } = await supabaseAdmin.from("profiles").select("role").eq("id", caller.id).single();
+    const { data: callerProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", caller.id)
+      .single();
+
     if (!callerProfile || callerProfile.role !== "admin") {
       return new Response(JSON.stringify({ error: "Forbidden: Admin access required" }), {
         status: 403,
@@ -49,6 +54,43 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // ── DELETE: permanently remove user from auth + profile ─────────────────
+    if (req.method === "DELETE") {
+      const { user_id } = await req.json();
+      if (!user_id) {
+        return new Response(JSON.stringify({ error: "Missing user_id" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Prevent admins from deleting themselves
+      if (user_id === caller.id) {
+        return new Response(JSON.stringify({ error: "You cannot delete your own account." }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Delete from auth.users — this cascades to profiles via FK if set, but we
+      // also explicitly delete the profile first to handle any FK constraints.
+      await supabaseAdmin.from("profiles").delete().eq("id", user_id);
+      const { error: authDeleteError } = await supabaseAdmin.auth.admin.deleteUser(user_id);
+
+      if (authDeleteError) {
+        return new Response(JSON.stringify({ error: authDeleteError.message }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ── POST: create new user ────────────────────────────────────────────────
     const { email, password, full_name, role } = await req.json();
 
     if (!email || !password || !full_name || !role) {
@@ -83,6 +125,7 @@ Deno.serve(async (req: Request) => {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }), {
       status: 500,

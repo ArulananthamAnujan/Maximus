@@ -50,12 +50,24 @@ export default function AdminUsers() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    const { error } = await supabase.from('profiles').delete().eq('id', deleteTarget.id);
-    if (!error) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ user_id: deleteTarget.id }),
+      }
+    );
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      toast.error(result.error || 'Failed to delete user');
+    } else {
       toast.success('User deleted');
       fetchUsers();
-    } else {
-      toast.error('Failed to delete user');
     }
     setDeleteTarget(null);
   };
