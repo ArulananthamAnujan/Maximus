@@ -634,23 +634,52 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // ── Org token check (for org_admin and teachers belonging to an org) ──────
+    // ── Org token + feature-flag check (for org_admin and teachers in an org) ─
     let orgId: string | null = null;
     if (profile.role === 'org_admin' || profile.role === 'teacher') {
       const { data: membership } = await supabaseAdmin
         .from('org_members')
-        .select('org_id, organizations(token_balance, is_active)')
+        .select('org_id, organizations(token_balance, is_active, plan_tier, feature_flags)')
         .eq('user_id', userId)
         .maybeSingle();
 
       if (membership) {
         orgId = membership.org_id;
-        const org = (membership as { organizations?: { token_balance: number; is_active: boolean } }).organizations;
+        const org = (membership as { organizations?: { token_balance: number; is_active: boolean; plan_tier: string; feature_flags: Record<string, boolean> } }).organizations;
+
         if (!org?.is_active) {
           return new Response(JSON.stringify({ error: 'Your organisation is inactive. Contact your administrator.' }), {
             status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
+
+        // Map AI task to feature flag key
+        const TASK_FEATURE_MAP: Record<string, string> = {
+          course_outline: 'ai_course_outline',
+          section_content: 'ai_course_outline',
+          lesson_content: 'ai_lesson_content',
+          lesson_notes: 'ai_lesson_content',
+          section_notes: 'ai_lesson_content',
+          summarize_lesson: 'ai_lesson_content',
+          rewrite_content: 'ai_lesson_content',
+          translate_content: 'ai_lesson_content',
+          activity_ideas: 'ai_lesson_content',
+          quiz_from_content: 'ai_quiz_generation',
+          flashcards: 'ai_flashcards',
+          full_curriculum: 'ai_full_curriculum',
+          presentation_slides: 'ai_presentations',
+          section_slides: 'ai_presentations',
+          generate_exam: 'ai_exams',
+        };
+
+        const body_peek = await req.clone().json().catch(() => ({ task: '' })) as { task: string };
+        const featureKey = TASK_FEATURE_MAP[body_peek.task ?? ''];
+        if (featureKey && org?.feature_flags && !org.feature_flags[featureKey]) {
+          return new Response(JSON.stringify({
+            error: `This AI feature (${featureKey.replace(/_/g, ' ')}) is not available on your current plan (${org.plan_tier}). Upgrade your plan to unlock it.`,
+          }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
         if ((org?.token_balance ?? 0) < 1) {
           return new Response(JSON.stringify({ error: 'Insufficient tokens. Purchase more tokens to continue using AI generation.' }), {
             status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' },

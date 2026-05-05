@@ -34,17 +34,31 @@ export default function StudentCourses() {
   useEffect(() => {
     if (!profile) return;
     const fetchData = async () => {
+      // Check if this student belongs to an org — if so, scope courses to that org
+      const { data: orgMembership } = await supabase
+        .from('org_students')
+        .select('org_id')
+        .eq('user_id', profile.id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      let coursesQuery = supabase
+        .from('courses')
+        .select('id,title,short_description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,stripe_payment_link,org_id,teacher:profiles(full_name)')
+        .eq('is_published', true)
+        .eq('is_archived', false)
+        .order('created_at', { ascending: false });
+
+      // Scope to org if student is enrolled in one
+      if (orgMembership?.org_id) {
+        coursesQuery = coursesQuery.eq('org_id', orgMembership.org_id);
+      }
+
       const [coursesRes, legacyEnrollRes] = await Promise.all([
-        supabase
-          .from('courses')
-          .select('id,title,short_description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,stripe_payment_link,teacher:profiles(full_name)')
-          .eq('is_published', true)
-          .eq('is_archived', false)
-          .order('created_at', { ascending: false }),
+        coursesQuery,
         supabase.from('enrollments').select('course_id, progress_percent').eq('student_id', profile.id),
       ]);
 
-      // Build enrollment map from both sources
       const legacyMap = new Map((legacyEnrollRes.data || []).map(e => [e.course_id, { progress: e.progress_percent, paymentStatus: 'not_required' }]));
       const newMap = new Map(newEnrollments.map(e => [e.course_id, { progress: e.progress_percent, paymentStatus: e.payment_status }]));
 

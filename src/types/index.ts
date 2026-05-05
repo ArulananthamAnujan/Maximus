@@ -284,6 +284,46 @@ export interface Toast {
   duration?: number;
 }
 
+export type OrgPlanTier = 'starter' | 'professional' | 'growth' | 'enterprise';
+
+export interface OrgFeatureFlags {
+  ai_course_outline: boolean;
+  ai_lesson_content: boolean;
+  ai_quiz_generation: boolean;
+  ai_flashcards: boolean;
+  ai_full_curriculum: boolean;
+  ai_presentations: boolean;
+  ai_exams: boolean;
+  student_ai_access: boolean;
+}
+
+export const PLAN_FEATURES: Record<OrgPlanTier, OrgFeatureFlags> = {
+  starter: {
+    ai_course_outline: true, ai_lesson_content: true,
+    ai_quiz_generation: false, ai_flashcards: false,
+    ai_full_curriculum: false, ai_presentations: false,
+    ai_exams: false, student_ai_access: false,
+  },
+  professional: {
+    ai_course_outline: true, ai_lesson_content: true,
+    ai_quiz_generation: true, ai_flashcards: true,
+    ai_full_curriculum: false, ai_presentations: false,
+    ai_exams: false, student_ai_access: false,
+  },
+  growth: {
+    ai_course_outline: true, ai_lesson_content: true,
+    ai_quiz_generation: true, ai_flashcards: true,
+    ai_full_curriculum: true, ai_presentations: true,
+    ai_exams: false, student_ai_access: false,
+  },
+  enterprise: {
+    ai_course_outline: true, ai_lesson_content: true,
+    ai_quiz_generation: true, ai_flashcards: true,
+    ai_full_curriculum: true, ai_presentations: true,
+    ai_exams: true, student_ai_access: true,
+  },
+};
+
 export interface Organization {
   id: string;
   name: string;
@@ -292,12 +332,24 @@ export interface Organization {
   website: string | null;
   description: string | null;
   token_balance: number;
-  plan_tier: 'starter' | 'growth' | 'enterprise';
+  plan_tier: OrgPlanTier;
+  feature_flags: OrgFeatureFlags;
   is_active: boolean;
   stripe_customer_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OrgStudent {
+  id: string;
+  org_id: string;
+  user_id: string;
+  enrolled_by: string | null;
+  enrolled_at: string;
+  is_active: boolean;
+  profile?: Profile;
+  organization?: Organization;
 }
 
 export interface OrgMember {
@@ -321,6 +373,7 @@ export interface TokenPackage {
   is_active: boolean;
   is_popular: boolean;
   stripe_price_id: string | null;
+  plan_tier: OrgPlanTier;
   created_at: string;
 }
 

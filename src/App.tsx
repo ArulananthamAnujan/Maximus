@@ -87,6 +87,7 @@ const AdminTokenPackages = lazy(() => import('./pages/admin/AdminTokenPackages')
 
 const OrgDashboard = lazy(() => import('./pages/org/OrgDashboard'));
 const OrgTeachers = lazy(() => import('./pages/org/OrgTeachers'));
+const OrgStudents = lazy(() => import('./pages/org/OrgStudents'));
 const OrgCourses = lazy(() => import('./pages/org/OrgCourses'));
 const OrgCourseBuilder = lazy(() => import('./pages/org/OrgCourseBuilder'));
 const OrgTokens = lazy(() => import('./pages/org/OrgTokens'));
@@ -208,6 +209,7 @@ export default function App() {
 
                 <Route path="/org" element={<ProtectedRoute role="org_admin"><OrgDashboard /></ProtectedRoute>} />
                 <Route path="/org/teachers" element={<ProtectedRoute role="org_admin"><OrgTeachers /></ProtectedRoute>} />
+                <Route path="/org/students" element={<ProtectedRoute role="org_admin"><OrgStudents /></ProtectedRoute>} />
                 <Route path="/org/courses" element={<ProtectedRoute role="org_admin"><OrgCourses /></ProtectedRoute>} />
                 <Route path="/org/builder" element={<ProtectedRoute role="org_admin"><OrgCourseBuilder /></ProtectedRoute>} />
                 <Route path="/org/tokens" element={<ProtectedRoute role="org_admin"><OrgTokens /></ProtectedRoute>} />

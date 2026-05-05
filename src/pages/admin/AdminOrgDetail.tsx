@@ -1,15 +1,27 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Building2, Coins, Users, BookOpen, ArrowLeft, Plus, Trash2,
-  TrendingDown, CheckCircle, Send, AlertTriangle
+  TrendingDown, CheckCircle, Send, AlertTriangle, GraduationCap, Save, Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { adminNavItems } from './adminNav';
 import { supabase } from '../../lib/supabase';
-import type { Organization, OrgMember, TokenPurchase, TokenUsageLog } from '../../types';
+import type { Organization, OrgMember, TokenPurchase, TokenUsageLog, OrgPlanTier, OrgFeatureFlags } from '../../types';
+import { PLAN_FEATURES } from '../../types';
+
+const FEATURE_LABELS: { key: keyof OrgFeatureFlags; label: string; desc: string }[] = [
+  { key: 'ai_course_outline',   label: 'AI Course Outline',    desc: 'Generate course structures with AI' },
+  { key: 'ai_lesson_content',   label: 'AI Lesson Content',    desc: 'Generate lesson text and notes' },
+  { key: 'ai_quiz_generation',  label: 'AI Quiz Generation',   desc: 'Auto-generate quizzes from content' },
+  { key: 'ai_flashcards',       label: 'AI Flashcards',        desc: 'Create flashcard sets automatically' },
+  { key: 'ai_full_curriculum',  label: 'Full Curriculum AI',   desc: 'Generate complete multi-course curricula' },
+  { key: 'ai_presentations',    label: 'AI Presentations',     desc: 'Create presentation slide decks' },
+  { key: 'ai_exams',            label: 'AI Exam Generation',   desc: 'Generate formal exams and assessments' },
+  { key: 'student_ai_access',   label: 'Student AI Access',    desc: 'Allow students to use AI tools' },
+];
 
 interface MemberWithProfile extends OrgMember {
   profile: { id: string; full_name: string; email: string };
@@ -63,6 +75,9 @@ export default function AdminOrgDetail() {
   const qc = useQueryClient();
   const [addMemberEmail, setAddMemberEmail] = useState('');
   const [addingMember, setAddingMember] = useState(false);
+  const [planTier, setPlanTier] = useState<OrgPlanTier>('starter');
+  const [featureFlags, setFeatureFlags] = useState<OrgFeatureFlags>(PLAN_FEATURES.starter);
+  const [savingPlan, setSavingPlan] = useState(false);
 
   const { data: org, isLoading } = useQuery({
     queryKey: ['admin-org', orgId],
@@ -73,12 +88,46 @@ export default function AdminOrgDetail() {
     },
   });
 
+  useEffect(() => {
+    if (org) {
+      setPlanTier(org.plan_tier ?? 'starter');
+      setFeatureFlags(org.feature_flags ?? PLAN_FEATURES.starter);
+    }
+  }, [org]);
+
+  const applyPlanPreset = (tier: OrgPlanTier) => {
+    setPlanTier(tier);
+    setFeatureFlags({ ...PLAN_FEATURES[tier] });
+  };
+
+  const savePlan = async () => {
+    if (!orgId) return;
+    setSavingPlan(true);
+    const { error } = await supabase.from('organizations').update({
+      plan_tier: planTier,
+      feature_flags: featureFlags,
+      updated_at: new Date().toISOString(),
+    }).eq('id', orgId);
+    if (error) toast.error(error.message);
+    else { toast.success('Plan and features updated'); qc.invalidateQueries({ queryKey: ['admin-org', orgId] }); }
+    setSavingPlan(false);
+  };
+
   const { data: members = [] } = useQuery({
     queryKey: ['admin-org-members', orgId],
     enabled: !!orgId,
     queryFn: async () => {
       const { data } = await supabase.from('org_members').select('*, profile:profiles(id, full_name, email)').eq('org_id', orgId!).order('joined_at');
       return (data ?? []) as MemberWithProfile[];
+    },
+  });
+
+  const { data: studentCount = 0 } = useQuery({
+    queryKey: ['admin-org-student-count', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { count } = await supabase.from('org_students').select('*', { count: 'exact', head: true }).eq('org_id', orgId!).eq('is_active', true);
+      return count ?? 0;
     },
   });
 
@@ -144,14 +193,18 @@ export default function AdminOrgDetail() {
         </button>
 
         {/* Stats row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 bg-emerald-100 rounded-xl flex items-center justify-center"><Coins className="w-4 h-4 text-emerald-600" /></div>
             <div><p className="text-lg font-bold text-emerald-600">{org.token_balance.toLocaleString()}</p><p className="text-xs text-slate-400">Tokens</p></div>
           </div>
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 bg-sky-100 rounded-xl flex items-center justify-center"><Users className="w-4 h-4 text-sky-600" /></div>
-            <div><p className="text-lg font-bold text-slate-800">{members.length}</p><p className="text-xs text-slate-400">Members</p></div>
+            <div><p className="text-lg font-bold text-slate-800">{members.length}</p><p className="text-xs text-slate-400">Teachers</p></div>
+          </div>
+          <div className="card p-4 flex items-center gap-3">
+            <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center"><GraduationCap className="w-4 h-4 text-amber-600" /></div>
+            <div><p className="text-lg font-bold text-slate-800">{studentCount}</p><p className="text-xs text-slate-400">Students</p></div>
           </div>
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 bg-violet-100 rounded-xl flex items-center justify-center"><BookOpen className="w-4 h-4 text-violet-600" /></div>
@@ -160,6 +213,51 @@ export default function AdminOrgDetail() {
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 bg-rose-100 rounded-xl flex items-center justify-center"><TrendingDown className="w-4 h-4 text-rose-600" /></div>
             <div><p className="text-lg font-bold text-slate-800">{totalUsed.toLocaleString()}</p><p className="text-xs text-slate-400">Used (Recent)</p></div>
+          </div>
+        </div>
+
+        {/* Plan + Feature Flags */}
+        <div className="card p-5">
+          <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-sky-500" /> Plan & AI Feature Access
+          </h3>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Plan Tier</label>
+                <div className="flex gap-2 flex-wrap">
+                  {(['starter','professional','growth','enterprise'] as OrgPlanTier[]).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => applyPlanPreset(t)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all capitalize ${planTier === t ? 'bg-sky-500 text-white border-sky-500' : 'bg-white text-slate-600 border-slate-200 hover:border-sky-300'}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 mt-1">Selecting a tier auto-fills the feature flags. You can then customise individually.</p>
+              </div>
+              <button onClick={savePlan} disabled={savingPlan} className="btn-primary flex items-center gap-2">
+                <Save className="w-4 h-4" />{savingPlan ? 'Saving...' : 'Save Plan & Features'}
+              </button>
+            </div>
+            <div className="space-y-2">
+              {FEATURE_LABELS.map(({ key, label, desc }) => (
+                <label key={key} className="flex items-start gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={featureFlags[key] ?? false}
+                    onChange={e => setFeatureFlags(f => ({ ...f, [key]: e.target.checked }))}
+                    className="w-4 h-4 rounded mt-0.5 shrink-0"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-slate-700 group-hover:text-slate-900">{label}</p>
+                    <p className="text-xs text-slate-400">{desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
 
