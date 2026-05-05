@@ -307,7 +307,7 @@ export const PLAN_FEATURES: Record<OrgPlanTier, OrgFeatureFlags> = {
   professional: {
     ai_course_outline: true, ai_lesson_content: true,
     ai_quiz_generation: true, ai_flashcards: true,
-    ai_full_curriculum: false, ai_presentations: false,
+    ai_full_curriculum: true, ai_presentations: false,
     ai_exams: false, student_ai_access: false,
   },
   growth: {
