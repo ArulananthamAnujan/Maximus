@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GraduationCap, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, AlertCircle, CheckCircle2, BookOpen, Users } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
 
+type Role = 'student' | 'teacher';
+
 export default function Register() {
   const [formData, setFormData] = useState({ fullName: '', email: '', password: '', confirmPassword: '' });
+  const [role, setRole] = useState<Role>('student');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -37,13 +40,13 @@ export default function Register() {
       setError('Password must be at least 8 characters.'); return;
     }
     setLoading(true);
-    const { error } = await signUp(formData.email, formData.password, formData.fullName);
+    const { error } = await signUp(formData.email, formData.password, formData.fullName, role);
     if (error) {
       setError(error.message || 'Registration failed. Please try again.');
       setLoading(false);
     } else {
       toast.success('Account created! Welcome to Maximus Academy.');
-      navigate('/student');
+      navigate(role === 'teacher' ? '/teacher' : '/student');
     }
   };
 
@@ -96,7 +99,56 @@ export default function Register() {
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="w-full max-w-md">
             <h1 className="text-3xl font-bold text-navy-900 dark:text-white mb-2">Create your account</h1>
-            <p className="text-gray-500 dark:text-gray-400 mb-8">Join thousands of learners across Australia</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-6">Join thousands of learners across Australia</p>
+
+            {/* Role selector */}
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              <button
+                type="button"
+                onClick={() => setRole('student')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                  role === 'student'
+                    ? 'border-gold-500 bg-gold-50 dark:bg-gold-500/10'
+                    : 'border-gray-200 dark:border-navy-600 hover:border-gray-300 dark:hover:border-navy-500'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${role === 'student' ? 'bg-gold-500' : 'bg-gray-100 dark:bg-navy-700'}`}>
+                  <BookOpen className={`w-5 h-5 ${role === 'student' ? 'text-white' : 'text-gray-500 dark:text-gray-400'}`} />
+                </div>
+                <div className="text-center">
+                  <p className={`font-semibold text-sm ${role === 'student' ? 'text-gold-700 dark:text-gold-400' : 'text-gray-700 dark:text-gray-300'}`}>Student</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">I want to learn</p>
+                </div>
+                {role === 'student' && (
+                  <div className="w-4 h-4 rounded-full bg-gold-500 flex items-center justify-center">
+                    <CheckCircle2 className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRole('teacher')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                  role === 'teacher'
+                    ? 'border-navy-600 bg-navy-50 dark:bg-navy-600/20'
+                    : 'border-gray-200 dark:border-navy-600 hover:border-gray-300 dark:hover:border-navy-500'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${role === 'teacher' ? 'bg-navy-700 dark:bg-navy-500' : 'bg-gray-100 dark:bg-navy-700'}`}>
+                  <Users className={`w-5 h-5 ${role === 'teacher' ? 'text-white' : 'text-gray-500 dark:text-gray-400'}`} />
+                </div>
+                <div className="text-center">
+                  <p className={`font-semibold text-sm ${role === 'teacher' ? 'text-navy-700 dark:text-navy-300' : 'text-gray-700 dark:text-gray-300'}`}>Teacher</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">I want to teach</p>
+                </div>
+                {role === 'teacher' && (
+                  <div className="w-4 h-4 rounded-full bg-navy-600 flex items-center justify-center">
+                    <CheckCircle2 className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+            </div>
 
             <div className="flex gap-3 mb-6">
               <button onClick={signInWithGoogle} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-200 dark:border-navy-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
@@ -175,7 +227,7 @@ export default function Register() {
               </div>
 
               <button type="submit" disabled={loading} className="w-full btn-primary text-center disabled:opacity-60 disabled:cursor-not-allowed">
-                {loading ? 'Creating account...' : 'Create Account'}
+                {loading ? 'Creating account...' : `Create ${role === 'teacher' ? 'Teacher' : 'Student'} Account`}
               </button>
             </form>
 

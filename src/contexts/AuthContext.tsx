@@ -10,7 +10,7 @@ interface AuthContextType {
   orgMembership: OrgMember | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string, role?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInWithMicrosoft: () => Promise<void>;
@@ -20,7 +20,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null, profile: null, session: null, orgMembership: null, loading: true,
   signIn: async () => ({ error: null }),
-  signUp: async () => ({ error: null }),
+  signUp: async (_e, _p, _f, _r) => ({ error: null }),
   signOut: async () => {},
   signInWithGoogle: async () => {},
   signInWithMicrosoft: async () => {},
@@ -90,11 +90,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error as Error | null };
   };
 
-  const signUp = async (email: string, password: string, fullName: string) => {
+  const signUp = async (email: string, password: string, fullName: string, role = 'student') => {
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName, role: 'student' } },
+      options: { data: { full_name: fullName, role } },
     });
     return { error: error as Error | null };
   };

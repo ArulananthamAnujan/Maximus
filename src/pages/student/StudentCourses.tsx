@@ -44,14 +44,16 @@ export default function StudentCourses() {
 
       let coursesQuery = supabase
         .from('courses')
-        .select('id,title,short_description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,stripe_payment_link,org_id,teacher:profiles(full_name)')
-        .eq('is_published', true)
+        .select('id,title,short_description,thumbnail_url,price,price_amount,is_free,is_paid,category,level,rating,duration_hours,total_lessons,total_students,stripe_payment_link,org_id,is_published,teacher:profiles(full_name)')
         .eq('is_archived', false)
         .order('created_at', { ascending: false });
 
-      // Scope to org if student is enrolled in one
       if (orgMembership?.org_id) {
-        coursesQuery = coursesQuery.eq('org_id', orgMembership.org_id);
+        // Org students: show their org's courses (published or draft) plus public published courses
+        coursesQuery = coursesQuery.or(`org_id.eq.${orgMembership.org_id},and(is_published.eq.true,org_id.is.null)`);
+      } else {
+        // Independent students: only published courses (no org-scoped ones)
+        coursesQuery = coursesQuery.eq('is_published', true).is('org_id', null);
       }
 
       const [coursesRes, legacyEnrollRes] = await Promise.all([
@@ -81,8 +83,10 @@ export default function StudentCourses() {
     if (!profile) return;
     const price = course.price_amount ?? course.price ?? 0;
     const isFree = course.is_free || (!course.is_paid && price === 0);
+    // Org students get free access to their org's courses
+    const isOrgCourse = !!course.org_id;
 
-    if (!isFree) {
+    if (!isFree && !isOrgCourse) {
       if (course.stripe_payment_link) {
         window.location.href = course.stripe_payment_link;
       } else {
@@ -176,6 +180,8 @@ export default function StudentCourses() {
             {filtered.map(course => {
               const price = course.price_amount ?? course.price ?? 0;
               const isFree = course.is_free || (!course.is_paid && price === 0);
+              const isOrgCourse = !!course.org_id;
+              const effectivelyFree = isFree || isOrgCourse;
               const isPending = course.paymentStatus === 'pending';
               return (
                 <div key={course.id} className="card group hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
@@ -192,8 +198,8 @@ export default function StudentCourses() {
                     <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                     <div className="absolute top-3 left-3 flex gap-2">
                       <span className={`badge ${levelColors[course.level]}`}>{course.level}</span>
-                      {isFree && <span className="badge bg-emerald-500 text-white">Free</span>}
-                      {!isFree && <span className="badge bg-sky-600 text-white">Paid</span>}
+                      {effectivelyFree && <span className="badge bg-emerald-500 text-white">{isOrgCourse && !isFree ? 'Included' : 'Free'}</span>}
+                      {!effectivelyFree && <span className="badge bg-sky-600 text-white">Paid</span>}
                     </div>
                     {course.enrolled && (
                       <div className="absolute top-3 right-3">
@@ -239,15 +245,15 @@ export default function StudentCourses() {
                     ) : (
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-lg text-navy-900 dark:text-white">
-                          {isFree ? 'Free' : `A$${price.toFixed(2)}`}
+                          {effectivelyFree ? (isOrgCourse && !isFree ? 'Included' : 'Free') : `A$${price.toFixed(2)}`}
                         </span>
                         <button
                           onClick={() => handleEnroll(course.id, course)}
                           disabled={enrollMutation.isPending}
-                          className={`text-sm py-2 px-4 disabled:opacity-60 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${isFree ? 'btn-primary' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
+                          className={`text-sm py-2 px-4 disabled:opacity-60 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${effectivelyFree ? 'btn-primary' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
                         >
-                          {isFree ? null : <Lock className="w-3.5 h-3.5" />}
-                          {enrollMutation.isPending ? 'Enrolling...' : isFree ? 'Enrol Free' : 'Buy Now'}
+                          {effectivelyFree ? null : <Lock className="w-3.5 h-3.5" />}
+                          {enrollMutation.isPending ? 'Enrolling...' : effectivelyFree ? 'Enrol Free' : 'Buy Now'}
                         </button>
                       </div>
                     )}
