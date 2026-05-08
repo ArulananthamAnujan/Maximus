@@ -103,6 +103,7 @@ const TeacherDiscussions = lazy(() => import('./pages/teacher/TeacherDiscussions
 const TeacherLiveSessions = lazy(() => import('./pages/teacher/TeacherLiveSessions'));
 const TeacherCertificates = lazy(() => import('./pages/teacher/TeacherCertificates'));
 const TeacherExams = lazy(() => import('./pages/teacher/TeacherExams'));
+const TeacherEarnings = lazy(() => import('./pages/teacher/TeacherEarnings'));
 
 const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard'));
 const StudentCourses = lazy(() => import('./pages/student/StudentCourses'));
@@ -227,6 +228,7 @@ export default function App() {
                 <Route path="/teacher/live-sessions" element={<ProtectedRoute role="teacher"><TeacherLiveSessions /></ProtectedRoute>} />
                 <Route path="/teacher/certificates" element={<ProtectedRoute role="teacher"><TeacherCertificates /></ProtectedRoute>} />
                 <Route path="/teacher/exams" element={<ProtectedRoute role="teacher"><TeacherExams /></ProtectedRoute>} />
+                <Route path="/teacher/earnings" element={<ProtectedRoute role="teacher"><TeacherEarnings /></ProtectedRoute>} />
 
                 <Route path="/student" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
                 <Route path="/student/courses" element={<ProtectedRoute role="student"><StudentCourses /></ProtectedRoute>} />

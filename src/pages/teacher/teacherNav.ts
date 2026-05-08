@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, BookOpen, Layers, HelpCircle, FileText, Users, MessageSquare, Video, Award, ClipboardList,
+  LayoutDashboard, BookOpen, Layers, HelpCircle, FileText, Users, MessageSquare, Video, Award, ClipboardList, DollarSign,
 } from 'lucide-react';
 import type { NavItem } from '../../components/layout/DashboardLayout';
 
@@ -14,4 +14,5 @@ export const teacherNavItems: NavItem[] = [
   { label: 'Discussions', href: '/teacher/discussions', icon: MessageSquare },
   { label: 'Live Sessions', href: '/teacher/live-sessions', icon: Video },
   { label: 'Certificates', href: '/teacher/certificates', icon: Award },
+  { label: 'Earnings & AI', href: '/teacher/earnings', icon: DollarSign },
 ];
