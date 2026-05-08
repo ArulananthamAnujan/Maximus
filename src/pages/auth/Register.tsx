@@ -53,7 +53,8 @@ export default function Register() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-navy-950 flex">
       <div className="hidden lg:flex lg:w-1/2 bg-navy-900 relative overflow-hidden">
-        <div className="absolute inset-0 bg-pattern opacity-30" />
+        <div className="absolute inset-0 bg-pattern opacity-10" />
+        <div className="absolute inset-0 bg-gradient-to-br from-navy-900/80 via-navy-900/60 to-navy-800/80" />
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
             <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
@@ -67,7 +68,7 @@ export default function Register() {
           <h2 className="font-playfair text-4xl font-bold text-white mb-6">
             Start Your Learning Journey Today
           </h2>
-          <p className="text-gray-300 text-lg leading-relaxed mb-8">
+          <p className="text-white/90 text-lg leading-relaxed mb-8">
             Create your free account and access hundreds of professional courses designed for the Australian workforce.
           </p>
           <div className="space-y-4">
@@ -76,7 +77,7 @@ export default function Register() {
                 <div className="w-6 h-6 rounded-full bg-gold-500 flex items-center justify-center shrink-0">
                   <CheckCircle2 className="w-4 h-4 text-white" />
                 </div>
-                <span className="text-gray-300">{item}</span>
+                <span className="text-white/85 font-medium">{item}</span>
               </div>
             ))}
           </div>

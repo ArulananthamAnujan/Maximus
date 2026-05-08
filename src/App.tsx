@@ -112,6 +112,7 @@ const StudentAssignments = lazy(() => import('./pages/student/StudentAssignments
 const StudentCertificates = lazy(() => import('./pages/student/StudentCertificates'));
 const StudentProfile = lazy(() => import('./pages/student/StudentProfile'));
 const StudentExams = lazy(() => import('./pages/student/StudentExams'));
+const StudentAIPlans = lazy(() => import('./pages/student/StudentAIPlans'));
 
 function LoadingScreen() {
   return (
@@ -235,6 +236,7 @@ export default function App() {
                 <Route path="/student/certificates" element={<ProtectedRoute role="student"><StudentCertificates /></ProtectedRoute>} />
                 <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentProfile /></ProtectedRoute>} />
                 <Route path="/student/exams" element={<ProtectedRoute role="student"><StudentExams /></ProtectedRoute>} />
+                <Route path="/student/ai-plans" element={<ProtectedRoute role="student"><StudentAIPlans /></ProtectedRoute>} />
 
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

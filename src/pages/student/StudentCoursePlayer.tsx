@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import {
   ChevronLeft, CheckCircle2, Circle, Play, FileText,
   Link as LinkIcon, BookOpen, Lock, Menu, X, ChevronDown, ChevronUp,
-  BookMarked, Sparkles, ClipboardList, Clock,
+  BookMarked, Sparkles, ClipboardList, Clock, Brain, Zap,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -40,6 +40,8 @@ export default function StudentCoursePlayer() {
   const [flashcards, setFlashcards] = useState<Array<{ id: string; front: string; back: string }>>([]);
   const [showFlashcards, setShowFlashcards] = useState(false);
   const [activities, setActivities] = useState<Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>>([]);
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [generatingAI, setGeneratingAI] = useState<string | null>(null);
 
   // Access gate
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
@@ -85,6 +87,72 @@ export default function StudentCoursePlayer() {
     };
     fetchData();
   }, [courseId, profile]);
+
+  // Fetch student token balance
+  useEffect(() => {
+    if (!profile) return;
+    supabase.from('student_ai_credits').select('token_balance').eq('user_id', profile.id).maybeSingle()
+      .then(({ data }) => setTokenBalance(data?.token_balance ?? 0));
+  }, [profile?.id]);
+
+  const STUDENT_AI_COSTS: Record<string, number> = {
+    summarize_lesson: 3,
+    flashcards: 4,
+    activity_ideas: 4,
+  };
+
+  const generateStudentAI = async (task: string) => {
+    if (!profile || !activeLesson || !courseId) return;
+    const cost = STUDENT_AI_COSTS[task] ?? 3;
+    if ((tokenBalance ?? 0) < cost) {
+      sonnerToast.error(`Not enough tokens. This action costs ${cost} tokens. Purchase more in AI Assistant.`);
+      return;
+    }
+    setGeneratingAI(task);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ task, lesson_id: activeLesson.id, course_id: courseId }),
+      });
+      if (!res.ok) throw new Error('Generation failed');
+
+      // Deduct student tokens
+      const { data: deducted } = await supabase.rpc('deduct_student_tokens', {
+        p_user_id: profile.id,
+        p_tokens: cost,
+        p_ai_task: task,
+        p_course_id: courseId,
+        p_lesson_id: activeLesson.id,
+      });
+      if (deducted) setTokenBalance(b => (b ?? 0) - cost);
+
+      // Refresh the relevant content
+      if (task === 'summarize_lesson') {
+        const { data } = await supabase.from('lessons').select('ai_summary, ai_summary_generated_at').eq('id', activeLesson.id).maybeSingle();
+        if (data?.ai_summary) setLessonSummary({ summary: data.ai_summary, generated_at: data.ai_summary_generated_at });
+        setSummaryOpen(true);
+        sonnerToast.success('Summary generated!');
+      } else if (task === 'flashcards') {
+        const { data } = await supabase.from('flashcards').select('id, front, back').eq('lesson_id', activeLesson.id).order('order_index');
+        setFlashcards((data || []) as Array<{ id: string; front: string; back: string }>);
+        setShowFlashcards(true);
+        sonnerToast.success('Flashcards generated!');
+      } else if (task === 'activity_ideas') {
+        const { data } = await supabase.from('lesson_activities').select('id, title, type, instructions, estimated_minutes').eq('lesson_id', activeLesson.id).order('order_index');
+        setActivities((data || []) as Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>);
+        sonnerToast.success('Activities generated!');
+      }
+    } catch {
+      sonnerToast.error('AI generation failed. Please try again.');
+    } finally {
+      setGeneratingAI(null);
+    }
+  };
 
   // Fetch summary + flashcards + activities when lesson changes
   useEffect(() => {
@@ -538,6 +606,57 @@ export default function StudentCoursePlayer() {
                     <Suspense fallback={null}>
                       <LessonDocumentViewer lessonId={activeLesson.id} courseId={courseId} />
                     </Suspense>
+                  </div>
+                )}
+
+                {/* Student AI toolbar */}
+                {hasAccess && (
+                  <div className="mb-6 rounded-xl border border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/40 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-gold-500" />
+                        <span className="text-sm font-semibold text-gray-800 dark:text-white">AI Learning Tools</span>
+                      </div>
+                      <Link to="/student/ai-plans" className="flex items-center gap-1 text-xs text-gold-600 dark:text-gold-400 hover:underline font-medium">
+                        <span>{tokenBalance ?? 0} tokens</span>
+                        {(tokenBalance ?? 0) < 4 && <span className="ml-1 text-red-500">· Top up</span>}
+                      </Link>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => generateStudentAI('summarize_lesson')}
+                        disabled={!!generatingAI || (tokenBalance ?? 0) < 3}
+                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-white dark:bg-navy-700 border border-gray-200 dark:border-navy-600 hover:border-sky-300 dark:hover:border-sky-700 hover:bg-sky-50 dark:hover:bg-sky-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        {generatingAI === 'summarize_lesson' ? <div className="w-3.5 h-3.5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" /> : <BookOpen className="w-3.5 h-3.5 text-sky-500" />}
+                        Summarise <span className="text-gray-400 font-normal">(3 tokens)</span>
+                      </button>
+                      <button
+                        onClick={() => generateStudentAI('flashcards')}
+                        disabled={!!generatingAI || (tokenBalance ?? 0) < 4}
+                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-white dark:bg-navy-700 border border-gray-200 dark:border-navy-600 hover:border-gold-300 dark:hover:border-gold-700 hover:bg-gold-50 dark:hover:bg-gold-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        {generatingAI === 'flashcards' ? <div className="w-3.5 h-3.5 border-2 border-gold-500 border-t-transparent rounded-full animate-spin" /> : <Brain className="w-3.5 h-3.5 text-gold-500" />}
+                        Flashcards <span className="text-gray-400 font-normal">(4 tokens)</span>
+                      </button>
+                      <button
+                        onClick={() => generateStudentAI('activity_ideas')}
+                        disabled={!!generatingAI || (tokenBalance ?? 0) < 4}
+                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-white dark:bg-navy-700 border border-gray-200 dark:border-navy-600 hover:border-teal-300 dark:hover:border-teal-700 hover:bg-teal-50 dark:hover:bg-teal-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        {generatingAI === 'activity_ideas' ? <div className="w-3.5 h-3.5 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /> : <Zap className="w-3.5 h-3.5 text-teal-500" />}
+                        Activities <span className="text-gray-400 font-normal">(4 tokens)</span>
+                      </button>
+                      {(tokenBalance ?? 0) === 0 && (
+                        <Link
+                          to="/student/ai-plans"
+                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-gold-500 hover:bg-gold-600 text-white transition-colors"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Get AI Tokens
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 )}
 
