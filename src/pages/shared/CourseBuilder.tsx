@@ -1029,6 +1029,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       is_free: isFree,
       is_paid: !isFree,
       thumbnail_url: courseData.thumbnail_url,
+      is_published: Boolean(courseData.is_published),
     }).eq('id', selectedCourse);
     if (!error) { toast.success('Course details saved successfully'); fetchCourses(); }
     else { console.error('Save details error:', error); toast.error('Failed to save details'); }
@@ -1487,24 +1488,40 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                   </div>
                 </div>
 
-                <div className="flex justify-end gap-3 pt-2">
-                  <button type="button" onClick={() => setActiveTab('curriculum')} className="flex items-center gap-2 btn-ghost text-sm">
-                    Go to Curriculum
-                    <ChevronRight className="w-4 h-4" />
+                <div className="flex items-center justify-between gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCourseData(d => ({ ...d, is_published: !d.is_published }))}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${
+                      courseData.is_published
+                        ? 'border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                    }`}
+                  >
+                    {courseData.is_published
+                      ? <><Eye className="w-4 h-4" /> Published — click to unpublish</>
+                      : <><Eye className="w-4 h-4" /> Draft — click to publish</>
+                    }
                   </button>
-                  <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
-                    {saving ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="w-4 h-4" />
-                        Save Changes
-                      </>
-                    )}
-                  </button>
+                  <div className="flex gap-3">
+                    <button type="button" onClick={() => setActiveTab('curriculum')} className="flex items-center gap-2 btn-ghost text-sm">
+                      Go to Curriculum
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
+                      {saving ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          Save Changes
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </form>
             )}

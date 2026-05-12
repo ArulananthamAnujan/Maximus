@@ -49,11 +49,11 @@ export default function StudentCourses() {
         .order('created_at', { ascending: false });
 
       if (orgMembership?.org_id) {
-        // Org students: show their org's courses (published or draft) plus public published courses
-        coursesQuery = coursesQuery.or(`org_id.eq.${orgMembership.org_id},and(is_published.eq.true,org_id.is.null)`);
+        // Org students: see their org's courses (any publish state) plus all other published courses
+        coursesQuery = coursesQuery.or(`org_id.eq.${orgMembership.org_id},is_published.eq.true`);
       } else {
-        // Independent students: only published courses (no org-scoped ones)
-        coursesQuery = coursesQuery.eq('is_published', true).is('org_id', null);
+        // Independent students: all published non-archived courses (from any teacher or org)
+        coursesQuery = coursesQuery.eq('is_published', true);
       }
 
       const [coursesRes, legacyEnrollRes] = await Promise.all([

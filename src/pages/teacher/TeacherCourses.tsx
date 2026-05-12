@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, CreditCard as Edit, Users, Star, Clock } from 'lucide-react';
+import { BookOpen, CreditCard as Edit, Users, Star, Clock, Globe, EyeOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
@@ -14,6 +14,7 @@ export default function TeacherCourses() {
   const [loading, setLoading] = useState(true);
   const [editCourse, setEditCourse] = useState<Course | null>(null);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState<string | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
 
@@ -25,6 +26,19 @@ export default function TeacherCourses() {
   };
 
   useEffect(() => { fetchCourses(); }, [profile]);
+
+  const handleTogglePublish = async (course: Course) => {
+    setPublishing(course.id);
+    const newStatus = !course.is_published;
+    const { error } = await supabase.from('courses').update({ is_published: newStatus }).eq('id', course.id);
+    if (!error) {
+      toast.success(newStatus ? 'Course published — students can now find and enrol.' : 'Course unpublished — hidden from students.');
+      setCourses(prev => prev.map(c => c.id === course.id ? { ...c, is_published: newStatus } : c));
+    } else {
+      toast.error('Failed to update publish status');
+    }
+    setPublishing(null);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,6 +91,23 @@ export default function TeacherCourses() {
                     <Link to={`/teacher/builder?courseId=${course.id}`} className="flex-1 text-center px-3 py-1.5 bg-navy-900 dark:bg-navy-700 text-white text-xs font-medium rounded-lg hover:bg-navy-800 transition-colors">
                       Build Course
                     </Link>
+                    <button
+                      onClick={() => handleTogglePublish(course)}
+                      disabled={publishing === course.id}
+                      title={course.is_published ? 'Unpublish course' : 'Publish course'}
+                      className={`p-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-60 ${
+                        course.is_published
+                          ? 'border border-emerald-200 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                          : 'border border-amber-200 dark:border-amber-700 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                      }`}
+                    >
+                      {publishing === course.id
+                        ? <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        : course.is_published
+                          ? <EyeOff className="w-3.5 h-3.5" />
+                          : <Globe className="w-3.5 h-3.5" />
+                      }
+                    </button>
                     <button onClick={() => setEditCourse(course)} className="p-1.5 border border-gray-200 dark:border-navy-600 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
                       <Edit className="w-3.5 h-3.5" />
                     </button>
