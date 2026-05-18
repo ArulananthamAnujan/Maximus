@@ -3,6 +3,7 @@ import { Save, Upload, Settings, Image, Trash2, CheckCircle2 } from 'lucide-reac
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { adminNavItems } from './adminNav';
 import { supabase } from '../../lib/supabase';
+import { refreshSiteSettings } from '../../hooks/useSiteSettings';
 import { toast } from 'sonner';
 
 interface SiteSettings {
@@ -81,6 +82,7 @@ export default function AdminSettings() {
       const logoUrl = urlData.publicUrl + `?t=${Date.now()}`;
       await saveSetting('logo_url', logoUrl);
       setSettings(s => ({ ...s, logo_url: logoUrl }));
+      await refreshSiteSettings();
       toast.success('Logo updated! Changes are live across the site.');
     } catch (err) {
       console.error(err);
@@ -94,6 +96,7 @@ export default function AdminSettings() {
   const handleRemoveLogo = async () => {
     await saveSetting('logo_url', '');
     setSettings(s => ({ ...s, logo_url: '' }));
+    await refreshSiteSettings();
     toast.success('Logo removed. Default logo will be used.');
   };
 

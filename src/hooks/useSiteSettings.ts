@@ -1,40 +1,45 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
-interface SiteSettingsPublic {
+export interface SiteSettingsPublic {
   logo_url: string;
   platform_name: string;
 }
 
-let cached: SiteSettingsPublic | null = null;
-const listeners: Array<(s: SiteSettingsPublic) => void> = [];
+const DEFAULT: SiteSettingsPublic = { logo_url: '', platform_name: 'Maximus Academy' };
 
-async function fetchAndBroadcast() {
-  const { data } = await supabase.from('site_settings').select('key, value').in('key', ['logo_url', 'platform_name']);
+// Module-level cache so all mounted components share the same value
+// but we always re-fetch on first component mount (cached = null after reload)
+let cached: SiteSettingsPublic | null = null;
+const listeners = new Set<(s: SiteSettingsPublic) => void>();
+
+function broadcast(s: SiteSettingsPublic) {
+  cached = s;
+  listeners.forEach(fn => fn(s));
+}
+
+export async function refreshSiteSettings() {
+  const { data } = await supabase
+    .from('site_settings')
+    .select('key, value')
+    .in('key', ['logo_url', 'platform_name']);
   if (!data) return;
   const map: Record<string, string> = {};
   data.forEach(row => { map[row.key] = row.value ?? ''; });
-  cached = {
+  broadcast({
     logo_url: map['logo_url'] ?? '',
-    platform_name: map['platform_name'] ?? 'Maximus Academy',
-  };
-  listeners.forEach(fn => fn(cached!));
+    platform_name: map['platform_name'] || 'Maximus Academy',
+  });
 }
 
 export function useSiteSettings(): SiteSettingsPublic {
-  const [settings, setSettings] = useState<SiteSettingsPublic>(
-    cached ?? { logo_url: '', platform_name: 'Maximus Academy' }
-  );
+  const [settings, setSettings] = useState<SiteSettingsPublic>(cached ?? DEFAULT);
 
   useEffect(() => {
-    if (!cached) {
-      fetchAndBroadcast();
-    }
-    listeners.push(setSettings);
-    return () => {
-      const idx = listeners.indexOf(setSettings);
-      if (idx !== -1) listeners.splice(idx, 1);
-    };
+    listeners.add(setSettings);
+    // Always refresh from DB on mount
+    refreshSiteSettings();
+    return () => { listeners.delete(setSettings); };
   }, []);
 
   return settings;

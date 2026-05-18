@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GraduationCap, Eye, EyeOff, AlertCircle, Chrome as Google } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, AlertCircle, Chrome as Google, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
+import { useSiteSettings } from '../../hooks/useSiteSettings';
 
 const DEMO_ACCOUNTS = [
   { role: 'Admin', email: 'admin@maximus.edu.au', password: 'Admin1234!', color: 'text-red-600' },
@@ -20,6 +21,7 @@ export default function Login() {
   const { signIn, signInWithGoogle, signInWithMicrosoft } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { logo_url, platform_name } = useSiteSettings();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,11 +57,15 @@ export default function Login() {
         <div className="absolute inset-0 bg-pattern opacity-30" />
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
-            <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
-              <GraduationCap className="w-7 h-7 text-white" />
-            </div>
+            {logo_url ? (
+              <img src={logo_url} alt={platform_name} className="h-12 w-auto object-contain" />
+            ) : (
+              <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
+                <GraduationCap className="w-7 h-7 text-white" />
+              </div>
+            )}
             <div>
-              <p className="font-playfair font-bold text-white text-2xl">Maximus Academy</p>
+              <p className="font-playfair font-bold text-white text-2xl">{platform_name}</p>
               <p className="text-gold-400 text-sm font-medium tracking-widest">AUSTRALIA</p>
             </div>
           </Link>
@@ -82,15 +88,26 @@ export default function Login() {
 
       <div className="flex-1 flex flex-col">
         <div className="flex justify-between items-center p-4">
-          <Link to="/" className="lg:hidden flex items-center gap-2">
-            <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">Maximus Academy</span>
-          </Link>
-          <div className="ml-auto">
-            <DarkModeToggle />
+          <div className="flex items-center gap-3">
+            <Link
+              to="/"
+              className="flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Back to home</span>
+            </Link>
+            <Link to="/" className="lg:hidden flex items-center gap-2 ml-2">
+              {logo_url ? (
+                <img src={logo_url} alt={platform_name} className="h-7 w-auto object-contain" />
+              ) : (
+                <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
+                  <GraduationCap className="w-5 h-5 text-white" />
+                </div>
+              )}
+              <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">{platform_name}</span>
+            </Link>
           </div>
+          <DarkModeToggle />
         </div>
 
         <div className="flex-1 flex items-center justify-center p-8">

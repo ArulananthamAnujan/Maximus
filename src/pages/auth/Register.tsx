@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GraduationCap, Eye, EyeOff, AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { GraduationCap, Eye, EyeOff, AlertCircle, CheckCircle2, Info, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
+import { useSiteSettings } from '../../hooks/useSiteSettings';
 
 export default function Register() {
   const [formData, setFormData] = useState({ fullName: '', email: '', password: '', confirmPassword: '' });
@@ -13,6 +14,7 @@ export default function Register() {
   const { signUp, signInWithGoogle, signInWithMicrosoft } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { logo_url, platform_name } = useSiteSettings();
 
   const passwordChecks = [
     { label: 'At least 8 characters', ok: formData.password.length >= 8 },
@@ -55,11 +57,15 @@ export default function Register() {
         <div className="absolute inset-0 bg-gradient-to-br from-navy-900/80 via-navy-900/60 to-navy-800/80" />
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
-            <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
-              <GraduationCap className="w-7 h-7 text-white" />
-            </div>
+            {logo_url ? (
+              <img src={logo_url} alt={platform_name} className="h-12 w-auto object-contain" />
+            ) : (
+              <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
+                <GraduationCap className="w-7 h-7 text-white" />
+              </div>
+            )}
             <div>
-              <p className="font-playfair font-bold text-white text-2xl">Maximus Academy</p>
+              <p className="font-playfair font-bold text-white text-2xl">{platform_name}</p>
               <p className="text-gold-400 text-sm font-medium tracking-widest">AUSTRALIA</p>
             </div>
           </Link>
@@ -106,15 +112,26 @@ export default function Register() {
       {/* Right panel */}
       <div className="flex-1 flex flex-col bg-white dark:bg-navy-900">
         <div className="flex justify-between items-center p-4">
-          <Link to="/" className="lg:hidden flex items-center gap-2">
-            <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">Maximus Academy</span>
-          </Link>
-          <div className="ml-auto">
-            <DarkModeToggle />
+          <div className="flex items-center gap-3">
+            <Link
+              to="/"
+              className="flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Back to home</span>
+            </Link>
+            <Link to="/" className="lg:hidden flex items-center gap-2 ml-2">
+              {logo_url ? (
+                <img src={logo_url} alt={platform_name} className="h-7 w-auto object-contain" />
+              ) : (
+                <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
+                  <GraduationCap className="w-5 h-5 text-white" />
+                </div>
+              )}
+              <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">{platform_name}</span>
+            </Link>
           </div>
+          <DarkModeToggle />
         </div>
 
         <div className="flex-1 flex items-center justify-center p-8">

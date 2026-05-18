@@ -10,7 +10,6 @@ import ProgressBar from '../../components/ui/ProgressBar';
 import { toast as sonnerToast } from 'sonner';
 import type { Course } from '../../types';
 
-const CATEGORIES = ['All', 'Business', 'Technology', 'Marketing', 'Finance', 'Management', 'Leadership'];
 const LEVELS = ['All', 'beginner', 'intermediate', 'advanced'];
 
 interface CourseWithEnrollment extends Course {
@@ -27,9 +26,16 @@ export default function StudentCourses() {
   const [level, setLevel] = useState('All');
   const [tab, setTab] = useState<'browse' | 'enrolled'>('browse');
   const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<string[]>(['All']);
 
   const { data: newEnrollments = [] } = useMyEnrollments();
   const enrollMutation = useEnrollInFreeCourse();
+
+  useEffect(() => {
+    supabase.from('course_categories').select('name').eq('is_active', true).order('sort_order').then(({ data }) => {
+      if (data) setCategories(['All', ...data.map(c => c.name)]);
+    });
+  }, []);
 
   useEffect(() => {
     if (!profile) return;
@@ -87,11 +93,8 @@ export default function StudentCourses() {
     const isOrgCourse = !!course.org_id;
 
     if (!isFree && !isOrgCourse) {
-      if (course.stripe_payment_link) {
-        window.location.href = course.stripe_payment_link;
-      } else {
-        sonnerToast.info('Paid enrolment coming soon. Contact us to enrol in this course.');
-      }
+      // Redirect to course preview page which handles Stripe checkout
+      window.location.href = `/courses/${courseId}`;
       return;
     }
 
@@ -150,7 +153,7 @@ export default function StudentCourses() {
             />
           </div>
           <select value={category} onChange={e => setCategory(e.target.value)} className="input-field sm:w-44">
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select value={level} onChange={e => setLevel(e.target.value)} className="input-field sm:w-36">
             {LEVELS.map(l => <option key={l} value={l}>{l === 'All' ? 'All Levels' : l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
