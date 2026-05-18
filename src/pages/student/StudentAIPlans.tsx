@@ -72,7 +72,7 @@ export default function StudentAIPlans() {
       );
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        window.open(data.url, '_blank', 'noopener,noreferrer');
       } else if (data.error === 'Stripe not configured') {
         toast.error('Payment is not yet configured. Please contact support.');
       } else {

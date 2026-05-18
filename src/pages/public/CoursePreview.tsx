@@ -99,11 +99,10 @@ export default function CoursePreview() {
       );
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        window.open(data.url, '_blank', 'noopener,noreferrer');
       } else if (data.error === 'Stripe not configured') {
-        // Fall back to static payment link if one is set on the course
         if (course.stripe_payment_link) {
-          window.location.href = course.stripe_payment_link;
+          window.open(course.stripe_payment_link, '_blank', 'noopener,noreferrer');
         } else {
           setShowPaymentModal(true);
         }
@@ -111,9 +110,8 @@ export default function CoursePreview() {
         sonnerToast.error(data.error || 'Failed to start checkout. Please try again.');
       }
     } catch {
-      // Network error — try direct payment link
       if (course.stripe_payment_link) {
-        window.location.href = course.stripe_payment_link;
+        window.open(course.stripe_payment_link, '_blank', 'noopener,noreferrer');
       } else {
         sonnerToast.error('Failed to connect to payment service.');
       }
