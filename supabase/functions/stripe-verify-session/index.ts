@@ -27,7 +27,6 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify the calling user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -55,7 +54,6 @@ Deno.serve(async (req: Request) => {
     const stripe = new Stripe(stripeKey, { apiVersion: "2024-11-20.acacia" });
     const session = await stripe.checkout.sessions.retrieve(session_id);
 
-    // Only process completed payments
     if (session.payment_status !== "paid") {
       return new Response(JSON.stringify({ enrolled: false, reason: "Payment not completed" }), {
         status: 200,
@@ -65,9 +63,9 @@ Deno.serve(async (req: Request) => {
 
     const metadata = session.metadata || {};
     const amountCents = session.amount_total || 0;
-    const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : "";
+    const stripeSessionId = session.id;
+    const stripePaymentId = typeof session.payment_intent === "string" ? session.payment_intent : "";
 
-    // Ensure the session belongs to this user
     if (metadata.student_id !== user.id) {
       return new Response(JSON.stringify({ error: "Session does not belong to this user" }), {
         status: 403,
@@ -85,18 +83,19 @@ Deno.serve(async (req: Request) => {
         await supabase.rpc("add_student_tokens", {
           p_user_id: user.id,
           p_tokens: tokens,
-        });
+        }).catch(() => {});
 
         await supabase.from("payments").upsert({
-          student_id: user.id,
+          user_id: user.id,
           amount: amountCents / 100,
           currency: "AUD",
           status: "completed",
-          payment_method: "stripe",
-          transaction_id: paymentIntentId || `ai_plan_${session_id}`,
-          notes: `AI plan purchase: ${tokens} tokens (plan ${plan_id})`,
-        }, { onConflict: "transaction_id" }).catch(() => {});
+          stripe_session_id: stripeSessionId,
+          stripe_payment_id: stripePaymentId || null,
+        }, { onConflict: "stripe_session_id" }).catch(() => {});
       }
+
+      console.log(`AI plan ${plan_id}: ${tokens} tokens for user ${user.id}`);
 
       return new Response(JSON.stringify({ enrolled: true, type: "ai_plan", tokens_added: tokens }), {
         status: 200,
@@ -113,24 +112,27 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Enroll student (upsert so re-visiting success URL is idempotent)
-    await supabase.from("course_enrollments").upsert({
+    // Enroll in course_enrollments (idempotent)
+    const { error: enrollError } = await supabase.from("course_enrollments").upsert({
       user_id: user.id,
       course_id,
       enrollment_type: "paid",
       payment_status: "completed",
-      payment_id: paymentIntentId,
+      payment_id: stripePaymentId,
       amount_paid: amountCents / 100,
       currency: "AUD",
       enrolled_at: new Date().toISOString(),
     }, { onConflict: "user_id,course_id" });
 
+    if (enrollError) console.error("course_enrollments upsert error:", enrollError);
+
+    // Legacy enrollments table
     await supabase.from("enrollments").upsert({
       student_id: user.id,
       course_id,
       progress_percent: 0,
       enrolled_at: new Date().toISOString(),
-    }, { onConflict: "student_id,course_id" });
+    }, { onConflict: "student_id,course_id" }).catch(() => {});
 
     // Teacher earning
     if (teacher_id && amountCents > 0) {
@@ -139,20 +141,22 @@ Deno.serve(async (req: Request) => {
         p_course_id: course_id,
         p_student_id: user.id,
         p_gross_cents: amountCents,
-        p_stripe_payment_intent: paymentIntentId,
+        p_stripe_payment_intent: stripePaymentId,
       }).catch(() => {});
     }
 
-    // Payment record (idempotent)
+    // Payment record using correct column names
     await supabase.from("payments").upsert({
-      student_id: user.id,
+      user_id: user.id,
       course_id,
       amount: amountCents / 100,
       currency: "AUD",
       status: "completed",
-      payment_method: "stripe",
-      transaction_id: paymentIntentId || `course_${session_id}`,
-    }, { onConflict: "transaction_id" }).catch(() => {});
+      stripe_session_id: stripeSessionId,
+      stripe_payment_id: stripePaymentId || null,
+    }, { onConflict: "stripe_session_id" }).catch(() => {});
+
+    console.log(`Enrolled user ${user.id} in course ${course_id} via session ${stripeSessionId}`);
 
     return new Response(JSON.stringify({ enrolled: true, type: "course", course_id }), {
       status: 200,
