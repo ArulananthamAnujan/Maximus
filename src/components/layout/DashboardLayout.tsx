@@ -123,7 +123,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
   );
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden">
+    <div className="flex h-screen bg-slate-50 dark:bg-navy-950 overflow-hidden">
       <aside className="hidden lg:flex flex-col w-64 bg-sky-gradient shrink-0">
         <SidebarContent />
       </aside>
@@ -138,64 +138,64 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
       )}
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center gap-3 px-4 sm:px-6 shrink-0 shadow-sm">
+        <header className="h-16 bg-white dark:bg-navy-800 border-b border-slate-200 dark:border-navy-700 flex items-center gap-3 px-4 sm:px-6 shrink-0 shadow-sm">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            className="lg:hidden p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-navy-700 rounded-lg transition-colors"
           >
             <Menu className="w-5 h-5" />
           </button>
 
           <div className="flex-1 min-w-0">
-            <h1 className="text-base font-bold text-slate-900 truncate">{title}</h1>
+            <h1 className="text-base font-bold text-slate-900 dark:text-white truncate">{title}</h1>
             {subtitle && (
-              <p className="text-xs text-slate-400 hidden sm:block truncate">{subtitle}</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 hidden sm:block truncate">{subtitle}</p>
             )}
           </div>
 
           <div className="flex items-center gap-1.5">
             <DarkModeToggle />
 
-            <button className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+            <button className="relative p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-navy-700 rounded-lg transition-colors">
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-sky-500 rounded-full ring-2 ring-white" />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-sky-500 rounded-full ring-2 ring-white dark:ring-navy-800" />
             </button>
 
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-slate-100 transition-colors"
+                className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-navy-700 transition-colors"
               >
                 <div className="w-8 h-8 rounded-full bg-sky-500 flex items-center justify-center text-xs font-bold text-white">
                   {initials}
                 </div>
-                <span className="hidden sm:block text-sm font-medium text-slate-700 max-w-[120px] truncate">
+                <span className="hidden sm:block text-sm font-medium text-slate-700 dark:text-slate-200 max-w-[120px] truncate">
                   {profile?.full_name?.split(' ')[0] || 'User'}
                 </span>
-                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-4 h-4 text-slate-400 dark:text-slate-500 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>
 
               {userMenuOpen && (
-                <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 animate-fade-in">
-                  <div className="px-4 py-3 border-b border-slate-100">
-                    <p className="text-sm font-semibold text-slate-900 truncate">{profile?.full_name || 'User'}</p>
-                    <p className="text-xs text-slate-500 truncate mt-0.5">{profile?.email}</p>
-                    <span className="inline-flex mt-1.5 text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full font-medium capitalize">
+                <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-navy-800 rounded-xl shadow-xl border border-slate-200 dark:border-navy-700 py-1.5 z-50 animate-fade-in">
+                  <div className="px-4 py-3 border-b border-slate-100 dark:border-navy-700">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{profile?.full_name || 'User'}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">{profile?.email}</p>
+                    <span className="inline-flex mt-1.5 text-xs bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 px-2 py-0.5 rounded-full font-medium capitalize">
                       {profile?.role}
                     </span>
                   </div>
                   <Link
                     to="/"
                     onClick={() => setUserMenuOpen(false)}
-                    className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                    className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-navy-700 transition-colors"
                   >
-                    <ExternalLink className="w-4 h-4 text-slate-400" />
+                    <ExternalLink className="w-4 h-4 text-slate-400 dark:text-slate-500" />
                     View Website
                   </Link>
-                  <div className="border-t border-slate-100 mt-1 pt-1">
+                  <div className="border-t border-slate-100 dark:border-navy-700 mt-1 pt-1">
                     <button
                       onClick={handleSignOut}
-                      className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                      className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                     >
                       <LogOut className="w-4 h-4" />
                       Sign Out
@@ -207,7 +207,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto bg-slate-50 dark:bg-navy-950">
           <div className="p-4 sm:p-6 max-w-screen-2xl mx-auto w-full">
             {children}
           </div>

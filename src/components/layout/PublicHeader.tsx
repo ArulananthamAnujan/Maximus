@@ -114,17 +114,17 @@ export default function PublicHeader() {
                   <ChevronDown className={`w-4 h-4 text-white/70 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {userMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-2xl border border-slate-100 py-1.5 animate-fade-in z-50">
-                    <div className="px-4 py-3 border-b border-slate-100">
-                      <p className="text-sm font-bold text-slate-900 truncate">{profile.full_name || 'User'}</p>
-                      <p className="text-xs text-slate-500 truncate mt-0.5">{profile.email}</p>
-                      <span className="inline-flex mt-1.5 text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full font-semibold capitalize">{profile.role}</span>
+                  <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-navy-800 rounded-xl shadow-2xl border border-slate-100 dark:border-navy-700 py-1.5 animate-fade-in z-50">
+                    <div className="px-4 py-3 border-b border-slate-100 dark:border-navy-700">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{profile.full_name || 'User'}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">{profile.email}</p>
+                      <span className="inline-flex mt-1.5 text-xs bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 px-2 py-0.5 rounded-full font-semibold capitalize">{profile.role}</span>
                     </div>
-                    <button onClick={handleDashboard} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
-                      <User className="w-4 h-4 text-slate-400" /> My Dashboard
+                    <button onClick={handleDashboard} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-navy-700 transition-colors">
+                      <User className="w-4 h-4 text-slate-400 dark:text-slate-500" /> My Dashboard
                     </button>
-                    <div className="border-t border-slate-100 mt-1 pt-1">
-                      <button onClick={handleSignOut} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
+                    <div className="border-t border-slate-100 dark:border-navy-700 mt-1 pt-1">
+                      <button onClick={handleSignOut} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                         <LogOut className="w-4 h-4" /> Sign Out
                       </button>
                     </div>

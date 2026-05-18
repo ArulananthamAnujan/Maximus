@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, BookOpen, HelpCircle, FileText, Award, User, Compass, ClipboardList, Sparkles,
+  LayoutDashboard, BookOpen, HelpCircle, FileText, Award, User, Compass, ClipboardList, Sparkles, Video,
 } from 'lucide-react';
 import type { NavItem } from '../../components/layout/DashboardLayout';
 
@@ -12,5 +12,6 @@ export const studentNavItems: NavItem[] = [
   { label: 'Assignments', href: '/student/assignments', icon: FileText },
   { label: 'Certificates', href: '/student/certificates', icon: Award },
   { label: 'AI Assistant', href: '/student/ai-plans', icon: Sparkles },
+  { label: 'Face-to-Face', href: '/student/f2f', icon: Video },
   { label: 'My Profile', href: '/student/profile', icon: User },
 ];
