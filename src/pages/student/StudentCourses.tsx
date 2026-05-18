@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Search, Filter, BookOpen, Star, Clock, Users, CheckCircle2, Lock } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -20,6 +20,7 @@ interface CourseWithEnrollment extends Course {
 
 export default function StudentCourses() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
   const [courses, setCourses] = useState<CourseWithEnrollment[]>([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -27,9 +28,47 @@ export default function StudentCourses() {
   const [tab, setTab] = useState<'browse' | 'enrolled'>('browse');
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<string[]>(['All']);
+  const verifiedRef = useRef(false);
 
-  const { data: newEnrollments = [] } = useMyEnrollments();
+  const { data: newEnrollments = [], refetch: refetchEnrollments } = useMyEnrollments();
   const enrollMutation = useEnrollInFreeCourse();
+
+  // Handle Stripe payment success redirect
+  useEffect(() => {
+    if (verifiedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    const sessionId = params.get('session_id');
+    if (payment !== 'success' || !sessionId) return;
+    verifiedRef.current = true;
+
+    (async () => {
+      try {
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const token = authSession?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-verify-session`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ session_id: sessionId }),
+          }
+        );
+        const data = await res.json();
+        if (data.enrolled) {
+          sonnerToast.success('Payment successful! You now have access to the course.');
+          await refetchEnrollments();
+          setTab('enrolled');
+        } else {
+          sonnerToast.error(data.error || 'Could not verify payment. Please contact support.');
+        }
+      } catch {
+        sonnerToast.error('Could not verify payment. Please contact support.');
+      }
+      // Clean up URL params
+      navigate('/student/courses', { replace: true });
+    })();
+  }, [navigate, refetchEnrollments]);
 
   useEffect(() => {
     supabase.from('course_categories').select('name').eq('is_active', true).order('sort_order').then(({ data }) => {

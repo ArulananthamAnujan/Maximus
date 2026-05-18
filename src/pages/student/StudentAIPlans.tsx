@@ -88,19 +88,41 @@ export default function StudentAIPlans() {
   // Handle return from Stripe (success/cancelled)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('payment') === 'success') {
-      toast.success('Payment successful! Your tokens will be credited shortly.');
-      window.history.replaceState({}, '', window.location.pathname);
-      // Reload credits after short delay for webhook processing
-      setTimeout(async () => {
-        const { data } = await supabase.from('student_ai_credits').select('*').eq('user_id', profile?.id ?? '').maybeSingle();
-        if (data) setCredits(data);
-      }, 3000);
-    } else if (params.get('payment') === 'cancelled') {
+    const payment = params.get('payment');
+    const sessionId = params.get('session_id');
+    window.history.replaceState({}, '', window.location.pathname);
+
+    if (payment === 'cancelled') {
       toast.info('Payment cancelled.');
-      window.history.replaceState({}, '', window.location.pathname);
+      return;
     }
-  }, []);
+    if (payment !== 'success' || !sessionId) return;
+
+    (async () => {
+      try {
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const token = authSession?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-verify-session`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ session_id: sessionId }),
+          }
+        );
+        const data = await res.json();
+        if (data.enrolled) {
+          toast.success(`Payment successful! ${data.tokens_added ?? ''} tokens added to your account.`);
+          const { data: updated } = await supabase.from('student_ai_credits').select('*').eq('user_id', profile?.id ?? '').maybeSingle();
+          if (updated) setCredits(updated);
+        } else {
+          toast.error(data.error || 'Could not verify payment. Please contact support.');
+        }
+      } catch {
+        toast.error('Could not verify payment. Please contact support.');
+      }
+    })();
+  }, [profile?.id]);
 
   const balancePercent = credits && credits.total_purchased > 0
     ? Math.round((credits.token_balance / credits.total_purchased) * 100)

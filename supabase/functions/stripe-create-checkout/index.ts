@@ -132,7 +132,7 @@ Deno.serve(async (req: Request) => {
           teacher_id: course.teacher_id || "",
           type: "course",
         },
-        success_url: `${siteUrl}/student/courses?payment=success&course_id=${course_id}`,
+        success_url: `${siteUrl}/student/courses?payment=success&course_id=${course_id}&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${siteUrl}/courses/${course_id}?payment=cancelled`,
       });
 
@@ -185,7 +185,7 @@ Deno.serve(async (req: Request) => {
           token_amount: String(plan.token_amount),
           type: "ai_plan",
         },
-        success_url: `${siteUrl}/student/ai-plans?payment=success`,
+        success_url: `${siteUrl}/student/ai-plans?payment=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${siteUrl}/student/ai-plans?payment=cancelled`,
       });
 
