@@ -57,22 +57,50 @@ export default function StudentAIPlans() {
   const handlePurchase = async (plan: StudentAIPlan) => {
     if (!profile) return;
     setPurchasing(plan.id);
-    // In production this would redirect to a Stripe payment link.
-    // For demo: directly add tokens to show the flow.
-    const { error } = await supabase.rpc('add_student_tokens', {
-      p_user_id: profile.id,
-      p_tokens: plan.token_amount,
-    });
-    if (error) {
-      toast.error('Purchase failed. Please try again.');
-    } else {
-      toast.success(`${plan.token_amount} AI tokens added to your account!`);
-      // Refresh credits
-      const { data } = await supabase.from('student_ai_credits').select('*').eq('user_id', profile.id).maybeSingle();
-      if (data) setCredits(data);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({ type: 'ai_plan', plan_id: plan.id }),
+        }
+      );
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else if (data.error === 'Stripe not configured') {
+        toast.error('Payment is not yet configured. Please contact support.');
+      } else {
+        toast.error(data.error || 'Failed to start checkout. Please try again.');
+      }
+    } catch {
+      toast.error('Failed to connect to payment service.');
+    } finally {
+      setPurchasing(null);
     }
-    setPurchasing(null);
   };
+
+  // Handle return from Stripe (success/cancelled)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment') === 'success') {
+      toast.success('Payment successful! Your tokens will be credited shortly.');
+      window.history.replaceState({}, '', window.location.pathname);
+      // Reload credits after short delay for webhook processing
+      setTimeout(async () => {
+        const { data } = await supabase.from('student_ai_credits').select('*').eq('user_id', profile?.id ?? '').maybeSingle();
+        if (data) setCredits(data);
+      }, 3000);
+    } else if (params.get('payment') === 'cancelled') {
+      toast.info('Payment cancelled.');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   const balancePercent = credits && credits.total_purchased > 0
     ? Math.round((credits.token_balance / credits.total_purchased) * 100)

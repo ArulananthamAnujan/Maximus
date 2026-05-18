@@ -7,7 +7,6 @@ import { supabase } from '../../lib/supabase';
 import type { Course } from '../../types';
 import { CourseCardSkeleton } from '../../components/ui/LoadingSkeleton';
 
-const CATEGORIES = ['All', 'IELTS', 'PTE', 'Language', 'Business', 'Technology', 'Finance', 'Xero', 'General'];
 const LEVELS = ['All', 'Beginner', 'Intermediate', 'Advanced'];
 const PRICE_FILTERS = ['All', 'Free', 'Paid'];
 
@@ -20,6 +19,13 @@ export default function Courses() {
   const [priceFilter, setPriceFilter] = useState('All');
   const [sortBy, setSortBy] = useState('popular');
   const [showFilters, setShowFilters] = useState(false);
+  const [categories, setCategories] = useState<string[]>(['All']);
+
+  useEffect(() => {
+    supabase.from('course_categories').select('name').eq('is_active', true).order('sort_order').then(({ data }) => {
+      if (data) setCategories(['All', ...data.map(c => c.name)]);
+    });
+  }, []);
 
   useEffect(() => {
     const fetchCourses = async () => {
@@ -80,7 +86,7 @@ export default function Courses() {
                 <div className="mb-5">
                   <p className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wide">Category</p>
                   <div className="space-y-1">
-                    {CATEGORIES.map(cat => (
+                    {categories.map(cat => (
                       <button key={cat} onClick={() => setCategory(cat)} className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${category === cat ? 'bg-sky-600 text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
                         {cat}
                       </button>

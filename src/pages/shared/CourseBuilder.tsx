@@ -468,6 +468,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [flashcardsList, setFlashcardsList] = useState<Array<{ id: string; front: string; back: string; order_index: number }>>([]);
   const [aiQuizTarget, setAiQuizTarget] = useState<string | null>(null);
 
+  // Dynamic categories
+  const [categories, setCategories] = useState<string[]>([]);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [showNewCategory, setShowNewCategory] = useState(false);
+
   // AI Curriculum Generator
   const [showAICurriculumPanel, setShowAICurriculumPanel] = useState(false);
   const [aiCurriculumStep, setAICurriculumStep] = useState<'form' | 'loading' | 'preview'>('form');
@@ -1009,7 +1014,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (c) setCourseData(c as typeof courseData);
   };
 
-  useEffect(() => { fetchCourses(); }, [profile]);
+  useEffect(() => {
+    fetchCourses();
+    supabase.from('course_categories').select('name').eq('is_active', true).order('sort_order').then(({ data }) => {
+      if (data) setCategories(data.map(c => c.name));
+    });
+  }, [profile]);
   useEffect(() => {
     if (selectedCourse) { fetchSections(); fetchQuizzes(); fetchExams(); loadCourseData(); }
   }, [selectedCourse, courses]);
@@ -1323,10 +1333,53 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                       <div className="p-5 space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Category</label>
-                            <select value={courseData.category || ''} onChange={e => setCourseData(d => ({ ...d, category: e.target.value }))} className="input-field">
-                              {['IELTS', 'PTE', 'Language', 'Business', 'Technology', 'Marketing', 'Finance', 'Xero', 'General'].map(cat => <option key={cat}>{cat}</option>)}
-                            </select>
+                            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Category</label>
+                            {showNewCategory ? (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={newCategoryInput}
+                                  onChange={e => setNewCategoryInput(e.target.value)}
+                                  placeholder="New category name..."
+                                  className="input-field flex-1 text-sm"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const name = newCategoryInput.trim();
+                                    if (!name) return;
+                                    const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                                    await supabase.from('course_categories').insert({ name, slug });
+                                    setCategories(prev => [...prev, name]);
+                                    setCourseData(d => ({ ...d, category: name }));
+                                    setNewCategoryInput('');
+                                    setShowNewCategory(false);
+                                  }}
+                                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                                >Save</button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setShowNewCategory(false); setNewCategoryInput(''); }}
+                                  className="px-3 py-2 bg-slate-100 dark:bg-navy-700 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-lg hover:bg-slate-200 dark:hover:bg-navy-600 transition-colors"
+                                >Cancel</button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <select
+                                  value={courseData.category || ''}
+                                  onChange={e => {
+                                    if (e.target.value === '__new__') { setShowNewCategory(true); return; }
+                                    setCourseData(d => ({ ...d, category: e.target.value }));
+                                  }}
+                                  className="input-field flex-1"
+                                >
+                                  {categories.length === 0 && <option value="">Select category...</option>}
+                                  {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                  <option value="__new__">+ Create new category...</option>
+                                </select>
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Difficulty Level</label>

@@ -77,12 +77,36 @@ export default function CoursePreview() {
     });
   };
 
-  const handleBuyNow = () => {
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  const handleBuyNow = async () => {
     if (!user || !profile) { navigate('/login'); return; }
-    if (course?.stripe_payment_link) {
-      window.location.href = course.stripe_payment_link;
-    } else {
-      setShowPaymentModal(true);
+    if (!id) return;
+    setCheckoutLoading(true);
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ type: 'course', course_id: id }),
+        }
+      );
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else if (data.error === 'Stripe not configured') {
+        setShowPaymentModal(true);
+      } else {
+        sonnerToast.error(data.error || 'Failed to start checkout. Please try again.');
+      }
+    } catch {
+      sonnerToast.error('Failed to connect to payment service.');
+    } finally {
+      setCheckoutLoading(false);
     }
   };
 
@@ -125,12 +149,6 @@ export default function CoursePreview() {
     </div>
   );
 
-  const enrollButtonContent = () => {
-    if (enrollMutation.isPending) return 'Processing...';
-    if (isFree) return 'Enrol for Free';
-    if (course.stripe_payment_link) return `Buy Now — A$${finalPrice.toFixed(2)}`;
-    return `Buy Now — A$${finalPrice.toFixed(2)}`;
-  };
 
   const renderEnrollmentCard = () => {
     if (accessLoading) {
@@ -201,10 +219,14 @@ export default function CoursePreview() {
         {/* Buy Now button */}
         <button
           onClick={handleBuyNow}
-          className="w-full py-4 bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-base rounded-xl transition-all duration-150 flex items-center justify-center gap-2.5 shadow-lg shadow-sky-600/30 hover:shadow-sky-600/40 mb-4"
+          disabled={checkoutLoading}
+          className="w-full py-4 bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-base rounded-xl transition-all duration-150 flex items-center justify-center gap-2.5 shadow-lg shadow-sky-600/30 hover:shadow-sky-600/40 mb-4 disabled:opacity-70 disabled:cursor-not-allowed"
         >
-          <ShoppingCart className="w-5 h-5 shrink-0" />
-          <span>Enrol Now</span>
+          {checkoutLoading ? (
+            <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>Redirecting...</span></>
+          ) : (
+            <><ShoppingCart className="w-5 h-5 shrink-0" /><span>Enrol Now</span></>
+          )}
         </button>
 
         {/* Promo code */}
@@ -219,11 +241,6 @@ export default function CoursePreview() {
           <button onClick={applyPromo} className="px-4 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-800 transition-colors font-semibold whitespace-nowrap">Apply</button>
         </div>
 
-        {!course.stripe_payment_link && (
-          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 text-center">
-            Payment not yet configured. Contact us to enrol.
-          </p>
-        )}
       </div>
     );
   };

@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, BookOpen, GraduationCap, CreditCard, Award,
-  Tag, Bell, Settings, Activity, Layers, Sparkles, Building2, Coins,
+  Tag, Bell, Settings, Activity, Layers, Sparkles, Building2, Coins, FolderOpen,
 } from 'lucide-react';
 import type { NavItem } from '../../components/layout/DashboardLayout';
 
@@ -11,6 +11,7 @@ export const adminNavItems: NavItem[] = [
   { label: 'Token Packages', href: '/admin/token-packages',    icon: Coins,           group: 'Platform' },
   { label: 'Courses',        href: '/admin/courses',           icon: BookOpen,        group: 'Learning' },
   { label: 'Course Builder', href: '/admin/builder',           icon: Layers,          group: 'Learning' },
+  { label: 'Categories',     href: '/admin/categories',        icon: FolderOpen,      group: 'Learning' },
   { label: 'Enrolments',     href: '/admin/enrollments',       icon: GraduationCap,   group: 'Learning' },
   { label: 'Certificates',   href: '/admin/certificates',      icon: Award,           group: 'Learning' },
   { label: 'Payments',       href: '/admin/payments',          icon: CreditCard,      group: 'Finance' },

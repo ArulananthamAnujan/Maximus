@@ -80,6 +80,7 @@ const AdminPromoCodes = lazy(() => import('./pages/admin/AdminPromoCodes'));
 const AdminAnnouncements = lazy(() => import('./pages/admin/AdminAnnouncements'));
 const AdminActivityLog = lazy(() => import('./pages/admin/AdminActivityLog'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
+const AdminCategories = lazy(() => import('./pages/admin/AdminCategories'));
 const AdminAIUsage = lazy(() => import('./pages/admin/AdminAIUsage'));
 const AdminOrganizations = lazy(() => import('./pages/admin/AdminOrganizations'));
 const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'));
@@ -206,6 +207,7 @@ export default function App() {
                 <Route path="/admin/announcements" element={<ProtectedRoute role="admin"><AdminAnnouncements /></ProtectedRoute>} />
                 <Route path="/admin/activity" element={<ProtectedRoute role="admin"><AdminActivityLog /></ProtectedRoute>} />
                 <Route path="/admin/settings" element={<ProtectedRoute role="admin"><AdminSettings /></ProtectedRoute>} />
+                <Route path="/admin/categories" element={<ProtectedRoute role="admin"><AdminCategories /></ProtectedRoute>} />
                 <Route path="/admin/ai-usage" element={<ProtectedRoute role="admin"><AdminAIUsage /></ProtectedRoute>} />
                 <Route path="/admin/organizations" element={<ProtectedRoute role="admin"><AdminOrganizations /></ProtectedRoute>} />
                 <Route path="/admin/organizations/:orgId" element={<ProtectedRoute role="admin"><AdminOrgDetail /></ProtectedRoute>} />

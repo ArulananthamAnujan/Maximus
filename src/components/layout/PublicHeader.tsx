@@ -2,12 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, User, LogOut, Bell, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSiteSettings } from '../../hooks/useSiteSettings';
 
 export default function PublicHeader() {
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { user, profile, signOut } = useAuth();
+  const { logo_url, platform_name } = useSiteSettings();
   const location = useLocation();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -67,7 +69,11 @@ export default function PublicHeader() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 lg:h-[70px]">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
-            <img src="/image.png" alt="Maximus Academy" className="h-9 w-auto brightness-0 invert" />
+            {logo_url ? (
+              <img src={logo_url} alt={platform_name} className="h-9 w-auto object-contain" />
+            ) : (
+              <img src="/image.png" alt={platform_name} className="h-9 w-auto brightness-0 invert" />
+            )}
           </Link>
 
           <nav className="hidden lg:flex items-center gap-0.5">

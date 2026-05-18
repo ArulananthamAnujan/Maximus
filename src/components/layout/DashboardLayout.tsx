@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, LogOut, Bell, ChevronDown, ExternalLink } from 'lucide-react';
 import DarkModeToggle from '../ui/DarkModeToggle';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSiteSettings } from '../../hooks/useSiteSettings';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -24,6 +25,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { profile, signOut } = useAuth();
+  const { logo_url, platform_name } = useSiteSettings();
   const location = useLocation();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -58,7 +60,11 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-4 h-16 border-b border-white/10 shrink-0">
         <Link to="/" className="flex items-center gap-2.5 min-w-0">
-          <img src="/image.png" alt="Maximus Academy" className="h-8 w-auto brightness-0 invert shrink-0" />
+          {logo_url ? (
+            <img src={logo_url} alt={platform_name} className="h-8 w-auto object-contain shrink-0" />
+          ) : (
+            <img src="/image.png" alt={platform_name} className="h-8 w-auto brightness-0 invert shrink-0" />
+          )}
         </Link>
         {mobile && (
           <button
