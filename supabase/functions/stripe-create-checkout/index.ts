@@ -8,6 +8,27 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+function getSiteUrl(req: Request): string {
+  // Use Origin header first (most reliable when called from browser)
+  const origin = req.headers.get("origin");
+  if (origin && origin.startsWith("http")) return origin;
+
+  // Fall back to SITE_URL env var if configured
+  const envUrl = Deno.env.get("SITE_URL");
+  if (envUrl) return envUrl;
+
+  // Last resort: derive from Referer
+  const referer = req.headers.get("referer");
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      return `${u.protocol}//${u.host}`;
+    } catch { /* ignore */ }
+  }
+
+  return "https://pwnlfbbssvywynffkksd.supabase.co";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -29,7 +50,6 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify the JWT to get the user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -37,6 +57,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
     const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -48,11 +69,9 @@ Deno.serve(async (req: Request) => {
 
     const body = await req.json();
     const { type, course_id, plan_id } = body;
-
-    const siteUrl = req.headers.get("origin") || Deno.env.get("SUPABASE_URL")!.replace("supabase.co", "bolt.new");
+    const siteUrl = getSiteUrl(req);
 
     if (type === "course") {
-      // Course purchase checkout
       if (!course_id) {
         return new Response(JSON.stringify({ error: "course_id required" }), {
           status: 400,
@@ -73,7 +92,7 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      const price = course.price_amount ?? course.price ?? 0;
+      const price = Number(course.price_amount ?? course.price ?? 0);
       if (course.is_free || price === 0) {
         return new Response(JSON.stringify({ error: "This course is free" }), {
           status: 400,
@@ -81,16 +100,26 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      // Only include images if the URL is publicly accessible (not a data URL or blob)
+      const images: string[] = [];
+      if (
+        course.thumbnail_url &&
+        (course.thumbnail_url.startsWith("https://") || course.thumbnail_url.startsWith("http://"))
+      ) {
+        images.push(course.thumbnail_url);
+      }
+
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         mode: "payment",
+        customer_email: user.email,
         line_items: [
           {
             price_data: {
               currency: "aud",
               product_data: {
                 name: course.title,
-                images: course.thumbnail_url ? [course.thumbnail_url] : [],
+                ...(images.length > 0 ? { images } : {}),
               },
               unit_amount: Math.round(price * 100),
             },
@@ -103,7 +132,7 @@ Deno.serve(async (req: Request) => {
           teacher_id: course.teacher_id || "",
           type: "course",
         },
-        success_url: `${siteUrl}/student/courses/${course_id}?payment=success`,
+        success_url: `${siteUrl}/student/courses?payment=success&course_id=${course_id}`,
         cancel_url: `${siteUrl}/courses/${course_id}?payment=cancelled`,
       });
 
@@ -114,7 +143,6 @@ Deno.serve(async (req: Request) => {
     }
 
     if (type === "ai_plan") {
-      // AI token plan purchase checkout
       if (!plan_id) {
         return new Response(JSON.stringify({ error: "plan_id required" }), {
           status: 400,
@@ -138,6 +166,7 @@ Deno.serve(async (req: Request) => {
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         mode: "payment",
+        customer_email: user.email,
         line_items: [
           {
             price_data: {
@@ -170,10 +199,12 @@ Deno.serve(async (req: Request) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (err) {
-    console.error("Checkout error:", err);
+    const message = err instanceof Error ? err.message : "Internal error";
+    console.error("Checkout error:", message, err);
     return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }),
+      JSON.stringify({ error: message }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
