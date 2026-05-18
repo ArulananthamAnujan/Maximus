@@ -12,6 +12,7 @@ import type { Course, Profile } from '../../types';
 export default function AdminCourses() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [teachers, setTeachers] = useState<Profile[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(['Business', 'Technology', 'Finance', 'General']);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -40,6 +41,12 @@ export default function AdminCourses() {
 
   useEffect(() => { fetchData(); }, [debouncedSearch]);
 
+  useEffect(() => {
+    supabase.from('course_categories').select('name').eq('is_active', true).order('sort_order').then(({ data }) => {
+      if (data && data.length > 0) setCategoryOptions(data.map(c => c.name));
+    });
+  }, []);
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     const { error } = await supabase.from('courses').delete().eq('id', deleteTarget.id);
@@ -65,15 +72,18 @@ export default function AdminCourses() {
     if (!editCourse) return;
     setSaving(true);
     const coursePayload = editCourse as Partial<Course>;
+    const price = coursePayload.is_free ? 0 : (coursePayload.price || 0);
     const payload = {
       title: coursePayload.title,
       description: coursePayload.description,
       short_description: coursePayload.short_description,
-      price: coursePayload.price || 0,
+      price,
+      price_amount: price,
       category: coursePayload.category || 'General',
       level: coursePayload.level || 'beginner',
       teacher_id: coursePayload.teacher_id || null,
       is_free: coursePayload.is_free || false,
+      is_paid: !coursePayload.is_free && price > 0,
       stripe_payment_link: coursePayload.stripe_payment_link || null,
     };
     if (editCourse.id) {
@@ -140,7 +150,7 @@ export default function AdminCourses() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white hidden lg:table-cell">
-                      {course.is_free ? 'Free' : `A$${course.price}`}
+                      {course.is_free ? 'Free' : `A$${(course.price_amount ?? course.price ?? 0)}`}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -196,8 +206,8 @@ export default function AdminCourses() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Category</label>
-                  <select value={editCourse.category || 'Business'} onChange={e => setEditCourse(c => ({ ...c!, category: e.target.value }))} className="input-field">
-                    {['Business', 'Technology', 'Marketing', 'Finance', 'Management', 'Leadership'].map(cat => <option key={cat}>{cat}</option>)}
+                  <select value={editCourse.category || ''} onChange={e => setEditCourse(c => ({ ...c!, category: e.target.value }))} className="input-field">
+                    {categoryOptions.map(cat => <option key={cat}>{cat}</option>)}
                   </select>
                 </div>
                 <div>
@@ -212,11 +222,11 @@ export default function AdminCourses() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Price (AUD)</label>
-                  <input type="number" min="0" step="0.01" value={editCourse.price || 0} onChange={e => setEditCourse(c => ({ ...c!, price: Number(e.target.value) }))} className="input-field" disabled={editCourse.is_free} />
+                  <input type="number" min="0" step="0.01" value={editCourse.price_amount ?? editCourse.price ?? 0} onChange={e => { const v = Number(e.target.value); setEditCourse(c => ({ ...c!, price: v, price_amount: v })); }} className="input-field" disabled={editCourse.is_free} />
                 </div>
                 <div className="flex items-end pb-1">
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={editCourse.is_free || false} onChange={e => setEditCourse(c => ({ ...c!, is_free: e.target.checked, price: e.target.checked ? 0 : c?.price }))} className="w-4 h-4 accent-gold-500" />
+                    <input type="checkbox" checked={editCourse.is_free || false} onChange={e => setEditCourse(c => ({ ...c!, is_free: e.target.checked, price: e.target.checked ? 0 : (c?.price ?? 0), price_amount: e.target.checked ? 0 : (c?.price_amount ?? c?.price ?? 0) }))} className="w-4 h-4 accent-gold-500" />
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Free course</span>
                   </label>
                 </div>

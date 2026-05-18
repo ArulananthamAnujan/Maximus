@@ -189,7 +189,7 @@ function CourseCard({ course }: { course: Course }) {
           <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{course.total_lessons} lessons</span>
         </div>
         <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-          <span className="font-bold text-slate-900 text-sm">{course.is_free ? 'Free' : `A$${course.price}`}</span>
+          <span className="font-bold text-slate-900 text-sm">{course.is_free ? 'Free' : `A$${Number(course.price_amount ?? course.price ?? 0).toFixed(2)}`}</span>
           <Link to={`/courses/${course.id}`} className="px-4 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition-colors">View Course</Link>
         </div>
       </div>

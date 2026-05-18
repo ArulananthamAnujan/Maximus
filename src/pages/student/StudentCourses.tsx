@@ -87,8 +87,8 @@ export default function StudentCourses() {
 
   const handleEnroll = async (courseId: string, course: CourseWithEnrollment) => {
     if (!profile) return;
-    const price = course.price_amount ?? course.price ?? 0;
-    const isFree = course.is_free || (!course.is_paid && price === 0);
+    const price = Number(course.price_amount ?? course.price ?? 0);
+    const isFree = course.is_free || price === 0;
     // Org students get free access to their org's courses
     const isOrgCourse = !!course.org_id;
 

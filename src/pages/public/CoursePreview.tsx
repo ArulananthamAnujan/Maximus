@@ -81,7 +81,7 @@ export default function CoursePreview() {
 
   const handleBuyNow = async () => {
     if (!user || !profile) { navigate('/login'); return; }
-    if (!id) return;
+    if (!id || !course) return;
     setCheckoutLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -101,12 +101,22 @@ export default function CoursePreview() {
       if (data.url) {
         window.location.href = data.url;
       } else if (data.error === 'Stripe not configured') {
-        setShowPaymentModal(true);
+        // Fall back to static payment link if one is set on the course
+        if (course.stripe_payment_link) {
+          window.location.href = course.stripe_payment_link;
+        } else {
+          setShowPaymentModal(true);
+        }
       } else {
         sonnerToast.error(data.error || 'Failed to start checkout. Please try again.');
       }
     } catch {
-      sonnerToast.error('Failed to connect to payment service.');
+      // Network error — try direct payment link
+      if (course.stripe_payment_link) {
+        window.location.href = course.stripe_payment_link;
+      } else {
+        sonnerToast.error('Failed to connect to payment service.');
+      }
     } finally {
       setCheckoutLoading(false);
     }
@@ -121,8 +131,8 @@ export default function CoursePreview() {
     });
   };
 
-  const price = course?.price_amount ?? course?.price ?? 0;
-  const isFree = course?.is_free || (!course?.is_paid && price === 0);
+  const price = Number(course?.price_amount ?? course?.price ?? 0);
+  const isFree = course?.is_free || price === 0;
   const finalPrice = price * (1 - discount / 100);
 
   if (loading) {
