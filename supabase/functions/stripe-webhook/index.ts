@@ -8,6 +8,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, stripe-signature",
 };
 
+async function safeUpsert(supabase: ReturnType<typeof createClient>, table: string, data: Record<string, unknown>, opts: { onConflict: string }) {
+  try {
+    await supabase.from(table).upsert(data, opts);
+  } catch (e) {
+    console.error(`safeUpsert ${table} failed:`, e);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -76,24 +84,22 @@ Deno.serve(async (req: Request) => {
       }
 
       const tokens = parseInt(token_amount, 10);
+      try {
+        await supabase.rpc("add_student_tokens", { p_user_id: student_id, p_tokens: tokens });
+      } catch (e) {
+        console.error("Token add error:", e);
+      }
 
-      const { error: tokenError } = await supabase.rpc("add_student_tokens", {
-        p_user_id: student_id,
-        p_tokens: tokens,
-      });
-      if (tokenError) console.error("Token add error:", tokenError);
-
-      await supabase.from("payments").upsert({
+      await safeUpsert(supabase, "payments", {
         user_id: student_id,
         amount: amountCents / 100,
         currency: "AUD",
         status: "completed",
         stripe_session_id: stripeSessionId,
         stripe_payment_id: stripePaymentId || null,
-      }, { onConflict: "stripe_session_id" }).catch(() => {});
+      }, { onConflict: "stripe_session_id" });
 
       console.log(`Added ${tokens} AI tokens to student ${student_id} (plan ${plan_id})`);
-
       return new Response(
         JSON.stringify({ received: true, type: "ai_plan", tokens_added: tokens }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -102,7 +108,6 @@ Deno.serve(async (req: Request) => {
 
     // --- Course Purchase ---
     const { student_id, course_id, teacher_id } = metadata;
-
     if (!student_id || !course_id) {
       console.error("Missing student_id or course_id in Stripe metadata");
       return new Response(JSON.stringify({ received: true, warning: "Missing metadata" }), {
@@ -112,9 +117,8 @@ Deno.serve(async (req: Request) => {
     }
 
     // 1. Enroll in course_enrollments
-    const { error: enrollError } = await supabase
-      .from("course_enrollments")
-      .upsert({
+    try {
+      const { error } = await supabase.from("course_enrollments").upsert({
         user_id: student_id,
         course_id,
         enrollment_type: "paid",
@@ -124,30 +128,36 @@ Deno.serve(async (req: Request) => {
         currency: "AUD",
         enrolled_at: new Date().toISOString(),
       }, { onConflict: "user_id,course_id" });
-
-    if (enrollError) console.error("Enrollment error:", enrollError);
+      if (error) console.error("Enrollment error:", error);
+    } catch (e) {
+      console.error("Enrollment exception:", e);
+    }
 
     // 2. Legacy enrollments table
-    await supabase.from("enrollments").upsert({
+    await safeUpsert(supabase, "enrollments", {
       student_id,
       course_id,
       progress_percent: 0,
       enrolled_at: new Date().toISOString(),
-    }, { onConflict: "student_id,course_id" }).catch(() => {});
+    }, { onConflict: "student_id,course_id" });
 
     // 3. Teacher earning
     if (teacher_id && amountCents > 0) {
-      await supabase.rpc("record_teacher_earning", {
-        p_teacher_id: teacher_id,
-        p_course_id: course_id,
-        p_student_id: student_id,
-        p_gross_cents: amountCents,
-        p_stripe_payment_intent: stripePaymentId,
-      }).catch(() => {});
+      try {
+        await supabase.rpc("record_teacher_earning", {
+          p_teacher_id: teacher_id,
+          p_course_id: course_id,
+          p_student_id: student_id,
+          p_gross_cents: amountCents,
+          p_stripe_payment_intent: stripePaymentId,
+        });
+      } catch (e) {
+        console.error("Teacher earning error:", e);
+      }
     }
 
-    // 4. Payment record using correct column names
-    await supabase.from("payments").upsert({
+    // 4. Payment record
+    await safeUpsert(supabase, "payments", {
       user_id: student_id,
       course_id,
       amount: amountCents / 100,
@@ -155,10 +165,9 @@ Deno.serve(async (req: Request) => {
       status: "completed",
       stripe_session_id: stripeSessionId,
       stripe_payment_id: stripePaymentId || null,
-    }, { onConflict: "stripe_session_id" }).catch(() => {});
+    }, { onConflict: "stripe_session_id" });
 
     console.log(`Enrolled student ${student_id} in course ${course_id}`);
-
     return new Response(
       JSON.stringify({ received: true, type: "course", enrolled: true }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

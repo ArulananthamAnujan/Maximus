@@ -8,6 +8,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+async function safeUpsert(supabase: ReturnType<typeof createClient>, table: string, data: Record<string, unknown>, opts: { onConflict: string }) {
+  try {
+    await supabase.from(table).upsert(data, opts);
+  } catch (e) {
+    console.error(`safeUpsert ${table} failed:`, e);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -80,23 +88,23 @@ Deno.serve(async (req: Request) => {
       const tokens = parseInt(token_amount || "0", 10);
 
       if (tokens > 0) {
-        await supabase.rpc("add_student_tokens", {
-          p_user_id: user.id,
-          p_tokens: tokens,
-        }).catch(() => {});
+        try {
+          await supabase.rpc("add_student_tokens", { p_user_id: user.id, p_tokens: tokens });
+        } catch (e) {
+          console.error("Token add error:", e);
+        }
 
-        await supabase.from("payments").upsert({
+        await safeUpsert(supabase, "payments", {
           user_id: user.id,
           amount: amountCents / 100,
           currency: "AUD",
           status: "completed",
           stripe_session_id: stripeSessionId,
           stripe_payment_id: stripePaymentId || null,
-        }, { onConflict: "stripe_session_id" }).catch(() => {});
+        }, { onConflict: "stripe_session_id" });
       }
 
       console.log(`AI plan ${plan_id}: ${tokens} tokens for user ${user.id}`);
-
       return new Response(JSON.stringify({ enrolled: true, type: "ai_plan", tokens_added: tokens }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -113,40 +121,47 @@ Deno.serve(async (req: Request) => {
     }
 
     // Enroll in course_enrollments (idempotent)
-    const { error: enrollError } = await supabase.from("course_enrollments").upsert({
-      user_id: user.id,
-      course_id,
-      enrollment_type: "paid",
-      payment_status: "completed",
-      payment_id: stripePaymentId,
-      amount_paid: amountCents / 100,
-      currency: "AUD",
-      enrolled_at: new Date().toISOString(),
-    }, { onConflict: "user_id,course_id" });
-
-    if (enrollError) console.error("course_enrollments upsert error:", enrollError);
+    try {
+      const { error: enrollError } = await supabase.from("course_enrollments").upsert({
+        user_id: user.id,
+        course_id,
+        enrollment_type: "paid",
+        payment_status: "completed",
+        payment_id: stripePaymentId,
+        amount_paid: amountCents / 100,
+        currency: "AUD",
+        enrolled_at: new Date().toISOString(),
+      }, { onConflict: "user_id,course_id" });
+      if (enrollError) console.error("course_enrollments upsert error:", enrollError);
+    } catch (e) {
+      console.error("Enrollment exception:", e);
+    }
 
     // Legacy enrollments table
-    await supabase.from("enrollments").upsert({
+    await safeUpsert(supabase, "enrollments", {
       student_id: user.id,
       course_id,
       progress_percent: 0,
       enrolled_at: new Date().toISOString(),
-    }, { onConflict: "student_id,course_id" }).catch(() => {});
+    }, { onConflict: "student_id,course_id" });
 
     // Teacher earning
     if (teacher_id && amountCents > 0) {
-      await supabase.rpc("record_teacher_earning", {
-        p_teacher_id: teacher_id,
-        p_course_id: course_id,
-        p_student_id: user.id,
-        p_gross_cents: amountCents,
-        p_stripe_payment_intent: stripePaymentId,
-      }).catch(() => {});
+      try {
+        await supabase.rpc("record_teacher_earning", {
+          p_teacher_id: teacher_id,
+          p_course_id: course_id,
+          p_student_id: user.id,
+          p_gross_cents: amountCents,
+          p_stripe_payment_intent: stripePaymentId,
+        });
+      } catch (e) {
+        console.error("Teacher earning error:", e);
+      }
     }
 
-    // Payment record using correct column names
-    await supabase.from("payments").upsert({
+    // Payment record
+    await safeUpsert(supabase, "payments", {
       user_id: user.id,
       course_id,
       amount: amountCents / 100,
@@ -154,10 +169,9 @@ Deno.serve(async (req: Request) => {
       status: "completed",
       stripe_session_id: stripeSessionId,
       stripe_payment_id: stripePaymentId || null,
-    }, { onConflict: "stripe_session_id" }).catch(() => {});
+    }, { onConflict: "stripe_session_id" });
 
     console.log(`Enrolled user ${user.id} in course ${course_id} via session ${stripeSessionId}`);
-
     return new Response(JSON.stringify({ enrolled: true, type: "course", course_id }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
