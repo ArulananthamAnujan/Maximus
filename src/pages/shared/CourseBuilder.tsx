@@ -1488,7 +1488,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setCourseData(d => ({ ...d, is_free: true, price: 0 }))}
+                            onClick={() => setCourseData(d => ({ ...d, is_free: true, price: 0, price_amount: 0 }))}
                             className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${courseData.is_free ? 'border-success-500 bg-success-50 text-success-700' : 'border-slate-200 text-slate-600 hover:border-success-200'}`}
                           >
                             <Globe className="w-4 h-4" />
@@ -1500,7 +1500,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Price (AUD)</label>
                             <div className="relative">
                               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">$</span>
-                              <input type="number" min="0" step="0.01" value={courseData.price || 0} onChange={e => setCourseData(d => ({ ...d, price: Number(e.target.value) }))} className="input-field pl-7" />
+                              <input type="number" min="0" step="0.01" value={courseData.price_amount ?? courseData.price ?? ''} onChange={e => { const v = e.target.value === '' ? 0 : Number(e.target.value); setCourseData(d => ({ ...d, price: v, price_amount: v })); }} className="input-field pl-7" placeholder="0.00" />
                             </div>
                           </div>
                         )}

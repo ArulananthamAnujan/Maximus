@@ -72,7 +72,8 @@ export default function AdminCourses() {
     if (!editCourse) return;
     setSaving(true);
     const coursePayload = editCourse as Partial<Course>;
-    const price = coursePayload.is_free ? 0 : (coursePayload.price || 0);
+    const rawPrice = Number(coursePayload.price_amount ?? coursePayload.price ?? 0);
+    const price = coursePayload.is_free ? 0 : rawPrice;
     const payload = {
       title: coursePayload.title,
       description: coursePayload.description,
@@ -222,7 +223,7 @@ export default function AdminCourses() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Price (AUD)</label>
-                  <input type="number" min="0" step="0.01" value={editCourse.price_amount ?? editCourse.price ?? 0} onChange={e => { const v = Number(e.target.value); setEditCourse(c => ({ ...c!, price: v, price_amount: v })); }} className="input-field" disabled={editCourse.is_free} />
+                  <input type="number" min="0" step="0.01" value={editCourse.price_amount ?? editCourse.price ?? ''} onChange={e => { const v = e.target.value === '' ? 0 : Number(e.target.value); setEditCourse(c => ({ ...c!, price: v, price_amount: v })); }} className="input-field" placeholder="0.00" disabled={editCourse.is_free} />
                 </div>
                 <div className="flex items-end pb-1">
                   <label className="flex items-center gap-2 cursor-pointer">
