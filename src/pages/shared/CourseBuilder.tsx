@@ -1036,6 +1036,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       category: courseData.category,
       level: courseData.level,
       price: isFree ? 0 : (courseData.price ?? 0),
+      price_amount: isFree ? 0 : (courseData.price ?? 0),
       is_free: isFree,
       is_paid: !isFree,
       thumbnail_url: courseData.thumbnail_url,
@@ -1407,7 +1408,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                             </div>
                             <div>
                               <label className="block text-xs font-semibold text-slate-500 mb-1.5">Duration (weeks)</label>
-                              <input type="number" min="1" value={extData.duration_weeks || ''} onChange={e => setCourseData(d => ({ ...d, duration_weeks: parseInt(e.target.value) || undefined }))} className="input-field text-sm" placeholder="e.g. 12" />
+                              <input type="number" min="1" step="1" value={extData.duration_weeks || ''} onChange={e => setCourseData(d => ({ ...d, duration_weeks: parseInt(e.target.value) || undefined }))} className="input-field text-sm" placeholder="e.g. 12" />
                             </div>
                             {extData.start_date && extData.end_date && (
                               <div className="col-span-3 flex items-center gap-2 text-xs text-sky-600 bg-sky-50 px-3 py-2 rounded-lg">
@@ -2087,7 +2088,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                   <div className="flex items-center gap-2">
                                     <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                                     <label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Duration</label>
-                                    <input type="number" min="1" value={editLessonForm.duration_minutes} onChange={e => setEditLessonForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 1 }))} className="input-field text-sm py-1.5 w-16" />
+                                    <input type="number" min="1" step="1" value={editLessonForm.duration_minutes} onChange={e => setEditLessonForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 1 }))} className="input-field text-sm py-1.5 w-24" />
                                     <span className="text-xs text-slate-400">min</span>
                                   </div>
                                   <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -2265,7 +2266,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                             <div className="flex items-center gap-2">
                               <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                               <label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Duration</label>
-                              <input type="number" min="1" value={lessonForm.duration_minutes} onChange={e => setLessonForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 1 }))} className="input-field text-sm py-1.5 w-16" />
+                              <input type="number" min="1" step="1" value={lessonForm.duration_minutes} onChange={e => setLessonForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 1 }))} className="input-field text-sm py-1.5 w-24" />
                               <span className="text-xs text-slate-400">min</span>
                             </div>
                             <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -2469,7 +2470,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Time Limit (minutes, 0 = no limit)</label>
-                            <input type="number" min={0} value={examForm.time_limit_minutes} onChange={e => setExamForm(f => ({ ...f, time_limit_minutes: e.target.value }))} className="input-field text-sm w-full" />
+                            <input type="number" min={0} step="1" value={examForm.time_limit_minutes} onChange={e => setExamForm(f => ({ ...f, time_limit_minutes: e.target.value }))} className="input-field text-sm w-full" />
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Instructions for Students</label>
@@ -2515,7 +2516,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                     </div>
                                     <div className="w-20 shrink-0">
                                       <label className="block text-xs font-semibold text-slate-500 mb-1">Marks</label>
-                                      <input type="number" min={1} value={q.marks} onChange={e => setExamQuestions(qs => qs.map((x, i) => i === idx ? { ...x, marks: parseInt(e.target.value) || 1 } : x))} className="input-field text-sm w-full" />
+                                      <input type="number" min={1} step="1" value={q.marks} onChange={e => setExamQuestions(qs => qs.map((x, i) => i === idx ? { ...x, marks: parseInt(e.target.value) || 1 } : x))} className="input-field text-sm w-full" />
                                     </div>
                                   </div>
                                   <div>
@@ -3050,11 +3051,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Pass Mark (%)</label>
-                  <input type="number" min="1" max="100" value={quizForm.pass_mark} onChange={e => setQuizForm(f => ({ ...f, pass_mark: parseInt(e.target.value) }))} className="input-field text-sm" required />
+                  <input type="number" min="1" max="100" step="1" value={quizForm.pass_mark} onChange={e => setQuizForm(f => ({ ...f, pass_mark: parseInt(e.target.value) }))} className="input-field text-sm" required />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Max Attempts</label>
-                  <input type="number" min="1" value={quizForm.max_attempts} onChange={e => setQuizForm(f => ({ ...f, max_attempts: parseInt(e.target.value) }))} className="input-field text-sm" required />
+                  <input type="number" min="1" step="1" value={quizForm.max_attempts} onChange={e => setQuizForm(f => ({ ...f, max_attempts: parseInt(e.target.value) }))} className="input-field text-sm" required />
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
