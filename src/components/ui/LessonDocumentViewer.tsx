@@ -399,8 +399,10 @@ function SlidesViewer({ doc }: { doc: LessonDocument }) {
             </div>
           </div>
         ) : (
-          <div className={`${fullscreen ? 'flex-1 overflow-hidden' : 'min-h-80'}`}>
-            <SlideDisplay slide={current} index={slide} total={total} fullscreen={fullscreen} />
+          <div className={fullscreen ? 'flex-1 overflow-hidden' : 'aspect-[16/9] relative overflow-hidden'}>
+            <div className={fullscreen ? 'h-full' : 'absolute inset-0'}>
+              <SlideDisplay slide={current} index={slide} total={total} fullscreen={fullscreen} />
+            </div>
           </div>
         )}
 
