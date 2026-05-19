@@ -4,7 +4,7 @@ import {
   BookOpen, Award, TrendingUp, ChevronRight,
   FileText, AlertCircle, PlayCircle, CheckCircle2,
   Sparkles, Clock, Zap, Target, BarChart2, Bell,
-  ArrowRight, Calendar,
+  ArrowRight, Calendar, Video, ExternalLink, CalendarDays,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -46,12 +46,17 @@ export default function StudentDashboard() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [confirmedSessions, setConfirmedSessions] = useState<Array<{
+    id: string; meeting_link: string | null; scheduled_at: string | null;
+    duration_minutes: number; teacher_notes: string | null;
+    course: { title: string } | null; teacher: { full_name: string } | null;
+  }>>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!profile) return;
     const fetchData = async () => {
-      const [enrollRes, certRes, assignRes, annRes, tokensRes] = await Promise.all([
+      const [enrollRes, certRes, assignRes, annRes, tokensRes, f2fRes] = await Promise.all([
         supabase
           .from('enrollments')
           .select('id,course_id,progress_percent,enrolled_at,course:courses(id,title,thumbnail_url,total_lessons,category)')
@@ -71,13 +76,20 @@ export default function StudentDashboard() {
           .limit(4),
         supabase.from('announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(3),
         supabase.from('student_ai_credits').select('token_balance').eq('user_id', profile.id).maybeSingle(),
+        supabase
+          .from('f2f_requests')
+          .select('id, meeting_link, scheduled_at, duration_minutes, teacher_notes, course:courses(title), teacher:profiles!f2f_requests_teacher_id_fkey(full_name)')
+          .eq('student_id', profile.id)
+          .eq('status', 'approved')
+          .order('scheduled_at', { ascending: true }),
       ]);
 
-      if (enrollRes.data) setLegacyEnrollments(enrollRes.data as LegacyEnrollmentWithCourse[]);
+      if (enrollRes.data) setLegacyEnrollments(enrollRes.data as unknown as LegacyEnrollmentWithCourse[]);
       setCertificates(certRes.count || 0);
       if (assignRes.data) setAssignments(assignRes.data as Assignment[]);
       if (annRes.data) setAnnouncements(annRes.data as Announcement[]);
       setTokenBalance(tokensRes.data?.token_balance ?? 0);
+      if (f2fRes.data) setConfirmedSessions(f2fRes.data as unknown as typeof confirmedSessions);
       setLoading(false);
     };
     fetchData();
@@ -129,6 +141,53 @@ export default function StudentDashboard() {
       subtitle={getGreeting(firstName)}
     >
       <div className="space-y-6">
+
+        {/* Confirmed F2F session banner */}
+        {confirmedSessions.length > 0 && (
+          <div className="rounded-2xl overflow-hidden border border-emerald-300 dark:border-emerald-700 shadow-md">
+            <div className="flex items-center gap-3 px-5 py-3 bg-emerald-600">
+              <Video className="w-5 h-5 text-white shrink-0" />
+              <p className="text-sm font-bold text-white flex-1">
+                {confirmedSessions.length === 1
+                  ? 'You have a confirmed face-to-face session!'
+                  : `${confirmedSessions.length} confirmed face-to-face sessions`}
+              </p>
+              <Link to="/student/face-to-face" className="text-xs font-semibold text-emerald-100 hover:text-white underline shrink-0">
+                View all
+              </Link>
+            </div>
+            {confirmedSessions.slice(0, 2).map(session => (
+              <div key={session.id} className="px-5 py-4 bg-emerald-50 dark:bg-emerald-900/20 flex flex-col sm:flex-row sm:items-center gap-3 border-t border-emerald-200 dark:border-emerald-800 first:border-t-0">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">{session.course?.title}</p>
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    <span className="text-xs text-emerald-700 dark:text-emerald-400">with {session.teacher?.full_name}</span>
+                    {session.scheduled_at && (
+                      <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                        <CalendarDays className="w-3 h-3" />
+                        {new Date(session.scheduled_at).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' })}
+                        · {session.duration_minutes} min
+                      </span>
+                    )}
+                  </div>
+                  {session.teacher_notes && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 italic">"{session.teacher_notes}"</p>
+                  )}
+                </div>
+                {session.meeting_link && (
+                  <a
+                    href={session.meeting_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm shrink-0"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Join Session
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Hero Welcome Banner */}
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-sky-600 via-sky-500 to-blue-600 text-white shadow-lg">

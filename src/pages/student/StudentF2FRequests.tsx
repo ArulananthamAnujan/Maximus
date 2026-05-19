@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Video, Clock, CheckCircle2, XCircle, CalendarDays, Link as LinkIcon, MessageSquare, Plus, X } from 'lucide-react';
+import { Video, Clock, CheckCircle2, XCircle, CalendarDays, MessageSquare, Plus, X, ExternalLink } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
 import { supabase } from '../../lib/supabase';
@@ -27,20 +27,20 @@ interface Course {
 }
 
 const STATUS_CONFIG = {
-  pending: { label: 'Pending Review', color: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', icon: Clock },
-  approved: { label: 'Approved', color: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300', icon: CheckCircle2 },
-  rejected: { label: 'Not Available', color: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400', icon: XCircle },
-  cancelled: { label: 'Cancelled', color: 'bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400', icon: XCircle },
+  pending:   { label: 'Pending Review', color: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',   icon: Clock        },
+  approved:  { label: 'Confirmed',      color: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300', icon: CheckCircle2 },
+  rejected:  { label: 'Not Available',  color: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400',           icon: XCircle      },
+  cancelled: { label: 'Cancelled',      color: 'bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400',          icon: XCircle      },
 };
 
 export default function StudentF2FRequests() {
   const { profile } = useAuth();
-  const [requests, setRequests] = useState<F2FRequest[]>([]);
+  const [requests, setRequests]           = useState<F2FRequest[]>([]);
   const [enrolledCourses, setEnrolledCourses] = useState<Course[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ course_id: '', message: '', preferred_times: '' });
+  const [loading, setLoading]             = useState(true);
+  const [showForm, setShowForm]           = useState(false);
+  const [submitting, setSubmitting]       = useState(false);
+  const [form, setForm]                   = useState({ course_id: '', message: '', preferred_times: '' });
 
   const fetchRequests = async () => {
     if (!profile) return;
@@ -56,16 +56,34 @@ export default function StudentF2FRequests() {
     if (!profile) return;
     const load = async () => {
       await fetchRequests();
-      // Get enrolled courses
-      const { data: enrolData } = await supabase
-        .from('course_enrollments')
-        .select('course_id, course:courses(id, title, teacher_id)')
-        .eq('user_id', profile.id);
-      if (enrolData) {
-        const courses = enrolData.map(e => e.course as unknown as Course).filter(Boolean);
-        setEnrolledCourses(courses);
-        if (courses.length > 0) setForm(f => ({ ...f, course_id: courses[0].id }));
+
+      // Merge both enrollment tables to get all enrolled courses with teacher_id
+      const [ceRes, eRes] = await Promise.all([
+        supabase.from('course_enrollments').select('course_id').eq('user_id', profile.id),
+        supabase.from('enrollments').select('course_id').eq('student_id', profile.id),
+      ]);
+
+      const allCourseIds = [
+        ...new Set([
+          ...(ceRes.data || []).map(r => r.course_id),
+          ...(eRes.data  || []).map(r => r.course_id),
+        ]),
+      ];
+
+      if (allCourseIds.length > 0) {
+        const { data: coursesData } = await supabase
+          .from('courses')
+          .select('id, title, teacher_id')
+          .in('id', allCourseIds)
+          .not('teacher_id', 'is', null); // only courses that have a teacher
+
+        if (coursesData && coursesData.length > 0) {
+          const courses = coursesData as Course[];
+          setEnrolledCourses(courses);
+          setForm(f => ({ ...f, course_id: courses[0].id }));
+        }
       }
+
       setLoading(false);
     };
     load();
@@ -75,13 +93,15 @@ export default function StudentF2FRequests() {
     e.preventDefault();
     if (!profile || !form.course_id || !form.message.trim()) return;
     const course = enrolledCourses.find(c => c.id === form.course_id);
-    if (!course) return;
+    if (!course) { toast.error('Selected course not found.'); return; }
+    if (!course.teacher_id) { toast.error('This course has no teacher assigned yet.'); return; }
+
     setSubmitting(true);
     const { error } = await supabase.from('f2f_requests').insert({
-      student_id: profile.id,
-      teacher_id: course.teacher_id,
-      course_id: form.course_id,
-      message: form.message.trim(),
+      student_id:      profile.id,
+      teacher_id:      course.teacher_id,
+      course_id:       form.course_id,
+      message:         form.message.trim(),
       preferred_times: form.preferred_times.trim() || null,
     });
     if (error) {
@@ -96,16 +116,61 @@ export default function StudentF2FRequests() {
   };
 
   const handleCancel = async (id: string) => {
-    const { error } = await supabase.from('f2f_requests').update({ status: 'cancelled' }).eq('id', id);
+    const { error } = await supabase
+      .from('f2f_requests')
+      .update({ status: 'cancelled' })
+      .eq('id', id);
     if (!error) {
       toast.success('Request cancelled.');
       await fetchRequests();
     }
   };
 
+  const approvedRequests = requests.filter(r => r.status === 'approved');
+
   return (
     <DashboardLayout navItems={studentNavItems} title="Face-to-Face Sessions" subtitle="Request live sessions with your teachers">
       <div className="space-y-6">
+
+        {/* Confirmed session banner — shown at the top whenever there's an approved session */}
+        {approvedRequests.length > 0 && (
+          <div className="rounded-2xl overflow-hidden border border-emerald-300 dark:border-emerald-700 shadow-sm">
+            <div className="flex items-center gap-3 px-5 py-3 bg-emerald-600">
+              <Video className="w-5 h-5 text-white shrink-0" />
+              <p className="text-sm font-bold text-white flex-1">
+                {approvedRequests.length === 1
+                  ? 'You have a confirmed session!'
+                  : `${approvedRequests.length} confirmed sessions`}
+              </p>
+            </div>
+            {approvedRequests.map(req => (
+              <div key={req.id} className="px-5 py-4 bg-emerald-50 dark:bg-emerald-900/20 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">{req.course?.title}</p>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
+                    with {req.teacher?.full_name}
+                    {req.scheduled_at && (
+                      <> · {new Date(req.scheduled_at).toLocaleString('en-AU', { dateStyle: 'full', timeStyle: 'short' })} ({req.duration_minutes} min)</>
+                    )}
+                  </p>
+                  {req.teacher_notes && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 italic">"{req.teacher_notes}"</p>
+                  )}
+                </div>
+                {req.meeting_link && (
+                  <a
+                    href={req.meeting_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm shrink-0"
+                  >
+                    <ExternalLink className="w-4 h-4" /> Join Session
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Header action */}
         <div className="flex items-center justify-between">
@@ -199,7 +264,7 @@ export default function StudentF2FRequests() {
               const cfg = STATUS_CONFIG[req.status];
               const StatusIcon = cfg.icon;
               return (
-                <div key={req.id} className="card p-5">
+                <div key={req.id} className={`card p-5 ${req.status === 'approved' ? 'ring-2 ring-emerald-300 dark:ring-emerald-700' : ''}`}>
                   <div className="flex items-start justify-between gap-4 mb-3">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-gray-900 dark:text-white truncate">{req.course?.title ?? '—'}</p>
@@ -226,29 +291,29 @@ export default function StudentF2FRequests() {
                   )}
 
                   {req.status === 'approved' && (
-                    <div className="mt-3 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 space-y-2">
-                      <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4" /> Session Approved
+                    <div className="mt-3 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 space-y-3">
+                      <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4" /> Session Confirmed
                       </p>
                       {req.scheduled_at && (
                         <p className="text-sm text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
-                          <CalendarDays className="w-4 h-4" />
+                          <CalendarDays className="w-4 h-4 shrink-0" />
                           {new Date(req.scheduled_at).toLocaleString('en-AU', { dateStyle: 'full', timeStyle: 'short' })}
-                          {' '}({req.duration_minutes} min)
+                          {' '}· {req.duration_minutes} min
                         </p>
+                      )}
+                      {req.teacher_notes && (
+                        <p className="text-xs text-emerald-600 dark:text-emerald-400 italic">"{req.teacher_notes}"</p>
                       )}
                       {req.meeting_link && (
                         <a
                           href={req.meeting_link}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                          className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
                         >
-                          <LinkIcon className="w-4 h-4" /> Join Session
+                          <ExternalLink className="w-4 h-4" /> Join Session
                         </a>
-                      )}
-                      {req.teacher_notes && (
-                        <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">{req.teacher_notes}</p>
                       )}
                     </div>
                   )}
