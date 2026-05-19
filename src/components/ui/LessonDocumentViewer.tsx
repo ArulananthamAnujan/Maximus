@@ -413,11 +413,8 @@ function SlidesViewer({ doc }: { doc: LessonDocument }) {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-30 border border-gray-700">
               <ChevronLeft className="w-3.5 h-3.5" /> Prev
             </button>
-            <div className="flex-1 flex items-center gap-1 justify-center flex-wrap">
-              {Array.from({ length: total }).map((_, idx) => (
-                <button key={idx} onClick={() => setSlide(idx)} title={slides[idx]?.heading || `Slide ${idx + 1}`}
-                  className={`h-1.5 rounded-full transition-all duration-200 ${idx === slide ? 'w-6 bg-blue-500' : 'w-1.5 bg-gray-600 hover:bg-gray-400'}`} />
-              ))}
+            <div className="flex-1 text-center text-xs text-slate-400 font-mono select-none">
+              Slide {slide + 1} of {total}
             </div>
             <button onClick={() => setSlide(s => Math.min(total - 1, s + 1))} disabled={slide === total - 1}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-30 border border-gray-700">

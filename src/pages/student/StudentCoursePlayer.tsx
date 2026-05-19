@@ -4,7 +4,8 @@ import {
   ChevronLeft, CheckCircle2, Circle, Play, FileText,
   Link as LinkIcon, BookOpen, Lock, Menu, X, ChevronDown, ChevronUp,
   BookMarked, Sparkles, ClipboardList, Clock, Brain, Zap,
-  ChevronRight, ListVideo, Award, AlignLeft, Presentation,
+  ChevronRight, ListVideo, Award, AlignLeft, HelpCircle, ExternalLink,
+  Trophy,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -14,13 +15,25 @@ import { useToast } from '../../contexts/ToastContext';
 import { useHasCourseAccess } from '../../hooks/useAccess';
 import { useCourseProgress, useUpdateLessonProgress } from '../../hooks/useProgress';
 import { toast as sonnerToast } from 'sonner';
-import type { Course, Section, Lesson } from '../../types';
+import type { Course, Section, Lesson, Quiz, QuizAttempt } from '../../types';
 
 const FlashcardStudyModal = lazy(() => import('../../components/ai/FlashcardStudyModal'));
 const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocumentViewer').then(m => ({ default: m.default })));
 
 interface SectionWithLessons extends Section {
   lessons: Lesson[];
+}
+
+interface Activity {
+  id: string;
+  title: string;
+  type: string;
+  instructions: string;
+  estimated_minutes: number;
+}
+
+interface QuizWithAttempt extends Quiz {
+  bestAttempt: QuizAttempt | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -34,7 +47,7 @@ const TYPE_COLORS: Record<string, string> = {
   link: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400',
 };
 
-type TabId = 'lesson' | 'materials' | 'ai-tools';
+type TabId = 'lesson' | 'materials' | 'activities' | 'ai-tools';
 
 export default function StudentCoursePlayer() {
   const { courseId } = useParams<{ courseId: string }>();
@@ -52,7 +65,8 @@ export default function StudentCoursePlayer() {
   const [lessonSummary, setLessonSummary] = useState<{ summary: string; generated_at: string | null } | null>(null);
   const [flashcards, setFlashcards] = useState<Array<{ id: string; front: string; back: string }>>([]);
   const [showFlashcards, setShowFlashcards] = useState(false);
-  const [activities, setActivities] = useState<Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [quizzes, setQuizzes] = useState<QuizWithAttempt[]>([]);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
@@ -65,7 +79,6 @@ export default function StudentCoursePlayer() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressSaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartTime = useRef<number>(Date.now());
-  const lastSavedPosition = useRef<number>(0);
 
   useEffect(() => {
     const completed = new Set(
@@ -77,11 +90,15 @@ export default function StudentCoursePlayer() {
   useEffect(() => {
     if (!courseId || !profile) return;
     const fetchData = async () => {
-      const [courseRes, sectionsRes] = await Promise.all([
+      const [courseRes, sectionsRes, quizRes, attemptRes] = await Promise.all([
         supabase.from('courses').select('*, teacher:profiles(full_name, avatar_url)').eq('id', courseId).maybeSingle(),
         supabase.from('sections').select('*, lessons(*)').eq('course_id', courseId).order('order_index'),
+        supabase.from('quizzes').select('*').eq('course_id', courseId).order('created_at'),
+        supabase.from('quiz_attempts').select('*').eq('student_id', profile.id),
       ]);
+
       if (courseRes.data) setCourse(courseRes.data as Course);
+
       if (sectionsRes.data) {
         const secs = sectionsRes.data.map(s => ({
           ...s,
@@ -91,10 +108,20 @@ export default function StudentCoursePlayer() {
         const firstLesson = secs[0]?.lessons[0];
         if (firstLesson) {
           setActiveLesson(firstLesson);
-          // Only expand the first section by default
           if (secs[0]) setExpandedSections(new Set([secs[0].id]));
         }
       }
+
+      if (quizRes.data) {
+        const attempts = (attemptRes.data || []) as QuizAttempt[];
+        const quizzesWithAttempts: QuizWithAttempt[] = (quizRes.data as Quiz[]).map(q => {
+          const qAttempts = attempts.filter(a => a.quiz_id === q.id);
+          const best = qAttempts.sort((a, b) => b.score - a.score)[0] || null;
+          return { ...q, bestAttempt: best };
+        });
+        setQuizzes(quizzesWithAttempts);
+      }
+
       setLoading(false);
     };
     fetchData();
@@ -147,9 +174,9 @@ export default function StudentCoursePlayer() {
         sonnerToast.success('Flashcards generated!');
       } else if (task === 'activity_ideas') {
         const { data } = await supabase.from('lesson_activities').select('id, title, type, instructions, estimated_minutes').eq('lesson_id', activeLesson.id).order('order_index');
-        setActivities((data || []) as Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>);
+        setActivities((data || []) as Activity[]);
         sonnerToast.success('Activities generated!');
-        setActiveTab('ai-tools');
+        setActiveTab('activities');
       }
     } catch {
       sonnerToast.error('AI generation failed. Please try again.');
@@ -166,15 +193,13 @@ export default function StudentCoursePlayer() {
     setActiveTab('lesson');
 
     supabase.from('lessons').select('ai_summary, ai_summary_generated_at').eq('id', activeLesson.id).maybeSingle()
-      .then(({ data }) => {
-        setLessonSummary(data?.ai_summary ? { summary: data.ai_summary, generated_at: data.ai_summary_generated_at } : null);
-      });
+      .then(({ data }) => setLessonSummary(data?.ai_summary ? { summary: data.ai_summary, generated_at: data.ai_summary_generated_at } : null));
 
     supabase.from('flashcards').select('id, front, back').eq('lesson_id', activeLesson.id).order('order_index')
       .then(({ data }) => setFlashcards((data || []) as Array<{ id: string; front: string; back: string }>));
 
     supabase.from('lesson_activities').select('id, title, type, instructions, estimated_minutes').eq('lesson_id', activeLesson.id).order('order_index')
-      .then(({ data }) => setActivities((data || []) as Array<{ id: string; title: string; type: string; instructions: string; estimated_minutes: number }>));
+      .then(({ data }) => setActivities((data || []) as Activity[]));
   }, [activeLesson?.id]);
 
   useEffect(() => {
@@ -184,7 +209,6 @@ export default function StudentCoursePlayer() {
       videoRef.current.currentTime = row.last_position_seconds;
     }
     sessionStartTime.current = Date.now();
-    lastSavedPosition.current = row?.last_position_seconds ?? 0;
   }, [activeLesson?.id]);
 
   const saveVideoProgress = useCallback(() => {
@@ -201,7 +225,6 @@ export default function StudentCoursePlayer() {
       progressPercent: percent, status: isCompleted ? 'completed' : 'in_progress',
       completedAt: isCompleted ? new Date().toISOString() : null,
     });
-    lastSavedPosition.current = position;
   }, [activeLesson, courseId, hasAccess, updateProgressMutation]);
 
   useEffect(() => {
@@ -245,11 +268,8 @@ export default function StudentCoursePlayer() {
     }
     setActiveLesson(lesson);
     setSidebarOpen(false);
-    // Auto-expand the section this lesson belongs to
     const owningSection = sections.find(s => s.lessons.some(l => l.id === lesson.id));
-    if (owningSection) {
-      setExpandedSections(prev => new Set([...prev, owningSection.id]));
-    }
+    if (owningSection) setExpandedSections(prev => new Set([...prev, owningSection.id]));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -282,10 +302,8 @@ export default function StudentCoursePlayer() {
     );
   }
 
-  // Course sidebar
   const CourseSidebar = () => (
     <div className="flex flex-col h-full">
-      {/* Progress header */}
       <div className="p-4 bg-gray-50 dark:bg-navy-900/60 border-b border-gray-100 dark:border-navy-700 shrink-0">
         <div className="flex items-center gap-2 mb-3">
           <ListVideo className="w-4 h-4 text-sky-500 shrink-0" />
@@ -307,7 +325,6 @@ export default function StudentCoursePlayer() {
         )}
       </div>
 
-      {/* Sections — collapsed by default, only active section open */}
       <div className="flex-1 overflow-y-auto">
         {sections.map((section, si) => {
           const isExpanded = expandedSections.has(section.id);
@@ -324,9 +341,7 @@ export default function StudentCoursePlayer() {
                   return next;
                 })}
                 className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-100 dark:hover:bg-navy-800/50 transition-colors text-left ${
-                  hasActiveLesson
-                    ? 'bg-sky-50 dark:bg-sky-900/10'
-                    : 'bg-gray-50 dark:bg-navy-900/30'
+                  hasActiveLesson ? 'bg-sky-50 dark:bg-sky-900/10' : 'bg-gray-50 dark:bg-navy-900/30'
                 }`}
               >
                 <div className="flex-1 min-w-0">
@@ -364,27 +379,19 @@ export default function StudentCoursePlayer() {
                         }`}
                       >
                         <div className={`mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
-                          isCompleted
-                            ? 'bg-emerald-500 text-white'
-                            : isActive
-                              ? 'border-2 border-sky-500 text-sky-500'
-                              : canAccess
-                                ? 'border-2 border-gray-200 dark:border-navy-600 text-gray-300'
-                                : 'bg-gray-100 dark:bg-navy-700 text-gray-300'
+                          isCompleted ? 'bg-emerald-500 text-white'
+                            : isActive ? 'border-2 border-sky-500 text-sky-500'
+                            : canAccess ? 'border-2 border-gray-200 dark:border-navy-600 text-gray-300'
+                            : 'bg-gray-100 dark:bg-navy-700 text-gray-300'
                         }`}>
-                          {isCompleted
-                            ? <CheckCircle2 className="w-3 h-3" />
-                            : !canAccess
-                              ? <Lock className="w-2.5 h-2.5" />
-                              : isActive
-                                ? <Play className="w-2.5 h-2.5 ml-0.5" />
-                                : <Circle className="w-2.5 h-2.5" />}
+                          {isCompleted ? <CheckCircle2 className="w-3 h-3" />
+                            : !canAccess ? <Lock className="w-2.5 h-2.5" />
+                            : isActive ? <Play className="w-2.5 h-2.5 ml-0.5" />
+                            : <Circle className="w-2.5 h-2.5" />}
                         </div>
 
                         <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-medium leading-snug ${
-                            isActive ? 'text-sky-700 dark:text-sky-400' : 'text-gray-700 dark:text-gray-300'
-                          }`}>
+                          <p className={`text-xs font-medium leading-snug ${isActive ? 'text-sky-700 dark:text-sky-400' : 'text-gray-700 dark:text-gray-300'}`}>
                             {lesson.title}
                           </p>
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -416,11 +423,27 @@ export default function StudentCoursePlayer() {
     </div>
   );
 
-  const tabs: { id: TabId; label: string; icon: typeof BookOpen }[] = [
+  const tabs: { id: TabId; label: string; icon: typeof BookOpen; count?: number }[] = [
     { id: 'lesson', label: 'Lesson', icon: BookOpen },
     { id: 'materials', label: 'Notes & Slides', icon: AlignLeft },
+    { id: 'activities', label: 'Activities', icon: ClipboardList, count: activities.length + quizzes.length },
     { id: 'ai-tools', label: 'AI Tools', icon: Sparkles },
   ];
+
+  const activityTypeColors: Record<string, string> = {
+    practice: 'border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800',
+    reflection: 'border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800',
+    discussion: 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-800',
+    project: 'border-sky-200 bg-sky-50 dark:bg-sky-900/20 dark:border-sky-800',
+    research: 'border-slate-200 bg-slate-50 dark:bg-slate-800 dark:border-slate-700',
+  };
+  const activityTypeText: Record<string, string> = {
+    practice: 'text-blue-700 dark:text-blue-300',
+    reflection: 'text-amber-700 dark:text-amber-300',
+    discussion: 'text-emerald-700 dark:text-emerald-300',
+    project: 'text-sky-700 dark:text-sky-300',
+    research: 'text-slate-700 dark:text-slate-300',
+  };
 
   return (
     <DashboardLayout navItems={studentNavItems} title={course?.title || 'Course'} subtitle="">
@@ -511,28 +534,33 @@ export default function StudentCoursePlayer() {
                 </div>
 
                 {/* Tab bar */}
-                <div className="flex items-center gap-1 bg-gray-100 dark:bg-navy-800 p-1 rounded-xl border border-gray-200 dark:border-navy-700">
+                <div className="flex items-center bg-gray-100 dark:bg-navy-800 p-1 rounded-xl border border-gray-200 dark:border-navy-700 gap-1">
                   {tabs.map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`flex items-center gap-2 flex-1 justify-center px-4 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+                      className={`flex items-center gap-1.5 flex-1 justify-center px-3 py-2.5 text-xs sm:text-sm font-semibold rounded-lg transition-all ${
                         activeTab === tab.id
                           ? 'bg-white dark:bg-navy-700 text-gray-900 dark:text-white shadow-sm'
                           : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                       }`}
                     >
-                      <tab.icon className="w-4 h-4 shrink-0" />
-                      <span className="hidden sm:inline">{tab.label}</span>
+                      <tab.icon className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden sm:inline truncate">{tab.label}</span>
+                      {tab.count !== undefined && tab.count > 0 && (
+                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full leading-none ${
+                          activeTab === tab.id ? 'bg-sky-100 text-sky-700' : 'bg-gray-200 dark:bg-navy-600 text-gray-600 dark:text-gray-400'
+                        }`}>{tab.count}</span>
+                      )}
                     </button>
                   ))}
                 </div>
 
-                {/* ── Tab: Lesson content ── */}
+                {/* ── Tab: Lesson ── */}
                 {activeTab === 'lesson' && (
                   <div className="space-y-5">
 
-                    {/* AI Summary collapsible */}
+                    {/* AI Summary */}
                     {lessonSummary && (
                       <div className="rounded-2xl overflow-hidden border border-sky-200 dark:border-sky-800/50 shadow-sm">
                         <button onClick={() => setSummaryOpen(o => !o)}
@@ -546,17 +574,12 @@ export default function StudentCoursePlayer() {
                         {summaryOpen && (
                           <div className="p-5 bg-white dark:bg-navy-800">
                             <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">{lessonSummary.summary}</p>
-                            {lessonSummary.generated_at && (
-                              <p className="text-xs text-slate-400 mt-3">
-                                Generated {new Date(lessonSummary.generated_at).toLocaleDateString('en-AU', { dateStyle: 'medium' })}
-                              </p>
-                            )}
                           </div>
                         )}
                       </div>
                     )}
 
-                    {/* Flashcards CTA */}
+                    {/* Flashcards quick-access */}
                     {flashcards.length > 0 && (
                       <button onClick={() => setShowFlashcards(true)}
                         className="flex items-center gap-3 w-full px-4 py-3.5 bg-white dark:bg-navy-800 border border-amber-200 dark:border-amber-800/50 hover:bg-amber-50 dark:hover:bg-amber-900/10 rounded-2xl transition-colors text-left shadow-sm group">
@@ -571,11 +594,10 @@ export default function StudentCoursePlayer() {
                       </button>
                     )}
 
-                    {/* Video */}
+                    {/* Video content */}
                     {activeLesson.type === 'video' && activeLesson.url && (() => {
                       const url = activeLesson.url;
                       const ytMatch = url.match(/(?:v=|youtu\.be\/)([^&?\s]+)/);
-                      const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
                       if (ytMatch) {
                         const thumbnail = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
                         return (
@@ -588,17 +610,6 @@ export default function StudentCoursePlayer() {
                               </div>
                               <span className="text-white text-sm font-bold bg-black/50 px-4 py-1.5 rounded-full backdrop-blur-sm">Watch on YouTube</span>
                             </div>
-                          </a>
-                        );
-                      }
-                      if (vimeoMatch) {
-                        return (
-                          <a href={url} target="_blank" rel="noopener noreferrer"
-                            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-gray-900 aspect-video group cursor-pointer hover:bg-gray-800 transition-colors shadow-lg">
-                            <div className="w-16 h-16 bg-blue-500 group-hover:bg-blue-600 rounded-full flex items-center justify-center shadow-2xl transition-all group-hover:scale-110">
-                              <svg className="w-7 h-7 text-white ml-1" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                            </div>
-                            <span className="text-white text-sm font-bold">Watch on Vimeo</span>
                           </a>
                         );
                       }
@@ -616,8 +627,7 @@ export default function StudentCoursePlayer() {
                                   timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
                                   progressPercent: 100, status: 'completed', completedAt: new Date().toISOString(),
                                 });
-                                const newCompleted = new Set(completedLessons).add(activeLesson.id);
-                                setCompletedLessons(newCompleted);
+                                setCompletedLessons(prev => new Set([...prev, activeLesson.id]));
                                 sonnerToast.success('Lesson completed!');
                               }
                             }}
@@ -635,17 +645,38 @@ export default function StudentCoursePlayer() {
                       </div>
                     )}
 
+                    {/* Text / Article content — rich reading experience */}
                     {(activeLesson.type === 'article' || activeLesson.type === 'text') && (
-                      activeLesson.content
-                        ? <div className="prose dark:prose-invert prose-sm max-w-none bg-white dark:bg-navy-800 rounded-2xl p-7 border border-gray-100 dark:border-navy-700 shadow-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: activeLesson.content }} />
-                        : <div className="bg-white dark:bg-navy-800 rounded-2xl p-7 border border-gray-100 dark:border-navy-700 shadow-sm">
-                            <div className="flex flex-col items-center py-8 text-center">
-                              <BookOpen className="w-10 h-10 text-gray-200 dark:text-navy-600 mb-3" />
-                              <p className="text-gray-500 dark:text-gray-400 text-sm">No content available for this lesson yet.</p>
+                      <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm overflow-hidden">
+                        {activeLesson.content ? (
+                          <>
+                            {/* Reading header */}
+                            <div className="px-8 pt-8 pb-4 border-b border-gray-50 dark:border-navy-700">
+                              <div className="flex items-center gap-2 mb-1">
+                                <FileText className="w-4 h-4 text-blue-400" />
+                                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Reading</span>
+                              </div>
+                              <h2 className="text-lg font-bold text-gray-900 dark:text-white">{activeLesson.title}</h2>
+                              {activeLesson.duration_minutes > 0 && (
+                                <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                                  <Clock className="w-3 h-3" /> Estimated {activeLesson.duration_minutes} min read
+                                </p>
+                              )}
                             </div>
+                            {/* Content */}
+                            <div className="lesson-text-content px-8 py-8"
+                              dangerouslySetInnerHTML={{ __html: activeLesson.content }} />
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center py-16 px-8 text-center">
+                            <BookOpen className="w-10 h-10 text-gray-200 dark:text-navy-600 mb-3" />
+                            <p className="text-gray-500 dark:text-gray-400 text-sm">No content available for this lesson yet.</p>
                           </div>
+                        )}
+                      </div>
                     )}
 
+                    {/* Link content */}
                     {activeLesson.type === 'link' && activeLesson.url && (
                       <div className="bg-white dark:bg-navy-800 rounded-2xl p-6 border border-teal-100 dark:border-teal-800/50 shadow-sm">
                         <div className="flex items-center gap-3 mb-4">
@@ -659,11 +690,12 @@ export default function StudentCoursePlayer() {
                         </div>
                         <a href={activeLesson.url} target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-xl transition-colors w-fit">
-                          <LinkIcon className="w-4 h-4" /> Open Resource
+                          <ExternalLink className="w-4 h-4" /> Open Resource
                         </a>
                       </div>
                     )}
 
+                    {/* PDF content */}
                     {activeLesson.type === 'pdf' && activeLesson.url && (
                       <div className="bg-white dark:bg-navy-800 rounded-2xl border border-orange-100 dark:border-orange-800/40 shadow-sm overflow-hidden">
                         <div className="flex items-center justify-between px-5 py-3.5 border-b border-orange-100 dark:border-orange-800/40 bg-orange-50/50 dark:bg-orange-900/10">
@@ -675,7 +707,7 @@ export default function StudentCoursePlayer() {
                           </div>
                           <a href={activeLesson.url} target="_blank" rel="noopener noreferrer"
                             className="text-xs font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 flex items-center gap-1">
-                            <LinkIcon className="w-3.5 h-3.5" /> Open
+                            <ExternalLink className="w-3.5 h-3.5" /> Open
                           </a>
                         </div>
                         <a href={activeLesson.url} target="_blank" rel="noopener noreferrer"
@@ -701,9 +733,7 @@ export default function StudentCoursePlayer() {
                           <span className="hidden sm:inline">Previous</span>
                         </button>
                       ) : <div />}
-                      <div className="text-xs text-gray-400 font-medium">
-                        {currentIndex + 1} / {allLessons.length}
-                      </div>
+                      <div className="text-xs text-gray-400 font-medium">{currentIndex + 1} / {allLessons.length}</div>
                       {nextLesson ? (
                         <button onClick={() => goToLesson(nextLesson)}
                           className="flex items-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
@@ -732,6 +762,122 @@ export default function StudentCoursePlayer() {
                   <Suspense fallback={<div className="h-24 rounded-2xl bg-gray-50 dark:bg-navy-800 animate-pulse" />}>
                     <LessonDocumentViewer lessonId={activeLesson.id} courseId={courseId} />
                   </Suspense>
+                )}
+
+                {/* ── Tab: Activities & Quizzes ── */}
+                {activeTab === 'activities' && (
+                  <div className="space-y-6">
+
+                    {/* Quizzes for this course */}
+                    {quizzes.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="w-4 h-4 text-sky-600" />
+                            <h3 className="text-sm font-bold text-gray-800 dark:text-white">Course Quizzes</h3>
+                            <span className="text-xs bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 px-2 py-0.5 rounded-full font-semibold">{quizzes.length}</span>
+                          </div>
+                          <Link to="/student/quizzes" className="text-xs text-sky-600 dark:text-sky-400 font-semibold hover:underline flex items-center gap-1">
+                            All quizzes <ChevronRight className="w-3.5 h-3.5" />
+                          </Link>
+                        </div>
+                        <div className="space-y-2">
+                          {quizzes.map(quiz => {
+                            const attempt = quiz.bestAttempt;
+                            const passed = attempt?.passed;
+                            const score = attempt ? Math.round((attempt.score / attempt.total_points) * 100) : null;
+                            return (
+                              <div key={quiz.id}
+                                className="flex items-center gap-4 p-4 bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                                  passed ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-sky-100 dark:bg-sky-900/20'
+                                }`}>
+                                  {passed
+                                    ? <Trophy className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                                    : <HelpCircle className="w-5 h-5 text-sky-600 dark:text-sky-400" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{quiz.title}</p>
+                                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                                    {quiz.time_limit_minutes && (
+                                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                                        <Clock className="w-3 h-3" /> {quiz.time_limit_minutes} min
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-gray-400">Pass: {quiz.pass_mark}%</span>
+                                    {score !== null && (
+                                      <span className={`text-xs font-semibold ${passed ? 'text-emerald-600' : 'text-amber-500'}`}>
+                                        Best: {score}% {passed ? '✓' : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <Link to="/student/quizzes"
+                                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-colors ${
+                                    passed
+                                      ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100'
+                                      : 'bg-sky-600 text-white hover:bg-sky-700'
+                                  }`}>
+                                  {passed ? 'Retake' : 'Start'}
+                                  <ChevronRight className="w-3 h-3" />
+                                </Link>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Lesson activities */}
+                    {activities.length > 0 ? (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <ClipboardList className="w-4 h-4 text-teal-600" />
+                          <h3 className="text-sm font-bold text-gray-800 dark:text-white">Practice Activities</h3>
+                          <span className="text-xs bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-400 px-2 py-0.5 rounded-full font-semibold">{activities.length}</span>
+                        </div>
+                        <div className="space-y-3">
+                          {activities.map(activity => (
+                            <div key={activity.id}
+                              className={`rounded-2xl border p-5 ${activityTypeColors[activity.type] || activityTypeColors.practice}`}>
+                              <div className="flex items-start justify-between gap-3 mb-3">
+                                <h4 className={`text-sm font-bold leading-snug ${activityTypeText[activity.type] || activityTypeText.practice}`}>
+                                  {activity.title}
+                                </h4>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className={`text-xs font-semibold capitalize px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 ${activityTypeText[activity.type] || activityTypeText.practice}`}>
+                                    {activity.type}
+                                  </span>
+                                  {activity.estimated_minutes > 0 && (
+                                    <span className={`flex items-center gap-1 text-xs font-medium ${activityTypeText[activity.type] || activityTypeText.practice} opacity-75`}>
+                                      <Clock className="w-3 h-3" />{activity.estimated_minutes}m
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              {activity.instructions && (
+                                <p className={`text-sm leading-relaxed ${activityTypeText[activity.type] || activityTypeText.practice} opacity-90`}>
+                                  {activity.instructions}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : quizzes.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-navy-800 rounded-2xl border border-dashed border-gray-200 dark:border-navy-600">
+                        <div className="w-14 h-14 rounded-2xl bg-gray-100 dark:bg-navy-700 flex items-center justify-center mb-3">
+                          <ClipboardList className="w-7 h-7 text-gray-300 dark:text-gray-500" />
+                        </div>
+                        <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">No activities yet</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-xs">Use AI Tools to generate practice activities for this lesson.</p>
+                        <button onClick={() => setActiveTab('ai-tools')}
+                          className="mt-4 flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-xl transition-colors">
+                          <Sparkles className="w-4 h-4" /> Generate Activities
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 )}
 
                 {/* ── Tab: AI Tools ── */}
@@ -787,7 +933,22 @@ export default function StudentCoursePlayer() {
                       ))}
                     </div>
 
-                    {/* AI Summary */}
+                    {/* Generated flashcards */}
+                    {flashcards.length > 0 && (
+                      <button onClick={() => setShowFlashcards(true)}
+                        className="flex items-center gap-3 w-full px-4 py-3.5 bg-white dark:bg-navy-800 border border-amber-200 dark:border-amber-800/50 hover:bg-amber-50 dark:hover:bg-amber-900/10 rounded-2xl transition-colors text-left shadow-sm group">
+                        <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
+                          <BookMarked className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-gray-800 dark:text-white">Study Flashcards</p>
+                          <p className="text-xs text-gray-400">{flashcards.length} cards ready to study</p>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-amber-500 transition-colors" />
+                      </button>
+                    )}
+
+                    {/* AI summary */}
                     {lessonSummary && (
                       <div className="rounded-2xl overflow-hidden border border-sky-200 dark:border-sky-800/50 shadow-sm">
                         <button onClick={() => setSummaryOpen(o => !o)}
@@ -805,65 +966,9 @@ export default function StudentCoursePlayer() {
                         )}
                       </div>
                     )}
-
-                    {/* Flashcards */}
-                    {flashcards.length > 0 && (
-                      <button onClick={() => setShowFlashcards(true)}
-                        className="flex items-center gap-3 w-full px-4 py-3.5 bg-white dark:bg-navy-800 border border-amber-200 dark:border-amber-800/50 hover:bg-amber-50 dark:hover:bg-amber-900/10 rounded-2xl transition-colors text-left shadow-sm group">
-                        <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
-                          <BookMarked className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-gray-800 dark:text-white">Study Flashcards</p>
-                          <p className="text-xs text-gray-400">{flashcards.length} cards ready to study</p>
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-amber-500 transition-colors" />
-                      </button>
-                    )}
-
-                    {/* Activities */}
-                    {activities.length > 0 && (
-                      <div>
-                        <div className="flex items-center gap-2 mb-3">
-                          <ClipboardList className="w-4 h-4 text-teal-600" />
-                          <h3 className="text-sm font-bold text-gray-800 dark:text-white">Practice Activities</h3>
-                          <span className="text-xs bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-400 px-2 py-0.5 rounded-full font-semibold">{activities.length}</span>
-                        </div>
-                        <div className="space-y-3">
-                          {activities.map(activity => {
-                            const typeColors: Record<string, string> = {
-                              practice: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
-                              reflection: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
-                              discussion: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
-                              project: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/20 dark:text-sky-300 dark:border-sky-800',
-                              research: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
-                            };
-                            return (
-                              <div key={activity.id} className={`rounded-2xl border p-4 ${typeColors[activity.type] || typeColors.practice}`}>
-                                <div className="flex items-start justify-between gap-3 mb-2">
-                                  <h4 className="text-sm font-bold leading-snug">{activity.title}</h4>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <span className="text-xs font-semibold capitalize px-2 py-0.5 rounded-lg bg-white/60 dark:bg-black/20">{activity.type}</span>
-                                    {activity.estimated_minutes > 0 && (
-                                      <span className="flex items-center gap-1 text-xs opacity-75 font-medium">
-                                        <Clock className="w-3 h-3" />{activity.estimated_minutes}m
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                {activity.instructions && (
-                                  <p className="text-sm leading-relaxed opacity-90">{activity.instructions}</p>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 
-                {/* Prompt to enrol for AI tools */}
                 {activeTab === 'ai-tools' && !hasAccess && (
                   <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700">
                     <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4">
@@ -886,6 +991,125 @@ export default function StudentCoursePlayer() {
           </div>
         </div>
       </div>
+
+      {/* Global lesson text styles */}
+      <style>{`
+        .lesson-text-content {
+          font-family: Georgia, 'Times New Roman', serif;
+          color: #1e293b;
+          line-height: 1.85;
+          font-size: 1rem;
+          max-width: 70ch;
+        }
+        .dark .lesson-text-content { color: #cbd5e1; }
+        .lesson-text-content h1 {
+          font-family: system-ui, -apple-system, sans-serif;
+          font-size: 1.75rem; font-weight: 800; color: #0f172a;
+          margin: 2.5rem 0 1rem; line-height: 1.2;
+          padding-bottom: 0.5rem; border-bottom: 2px solid #e2e8f0;
+        }
+        .dark .lesson-text-content h1 { color: #f1f5f9; border-color: #334155; }
+        .lesson-text-content h2 {
+          font-family: system-ui, -apple-system, sans-serif;
+          font-size: 1.25rem; font-weight: 700; color: #0f172a;
+          margin: 2rem 0 0.75rem; padding: 0.65rem 0.65rem 0.65rem 1rem;
+          border-left: 4px solid #3b82f6;
+          background: linear-gradient(to right, #eff6ff, transparent);
+          border-radius: 0 8px 8px 0;
+        }
+        .dark .lesson-text-content h2 {
+          color: #f1f5f9;
+          background: linear-gradient(to right, rgba(59,130,246,0.12), transparent);
+        }
+        .lesson-text-content h3 {
+          font-family: system-ui, -apple-system, sans-serif;
+          font-size: 1rem; font-weight: 700; color: #1e40af;
+          margin: 1.5rem 0 0.5rem;
+          text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.8rem;
+        }
+        .dark .lesson-text-content h3 { color: #93c5fd; }
+        .lesson-text-content p {
+          margin-bottom: 1.1rem; color: #334155;
+        }
+        .dark .lesson-text-content p { color: #94a3b8; }
+        .lesson-text-content ul { padding-left: 0; margin-bottom: 1.1rem; list-style: none; }
+        .lesson-text-content ul li {
+          color: #334155; line-height: 1.75; margin-bottom: 0.5rem;
+          padding-left: 1.75rem; position: relative;
+        }
+        .dark .lesson-text-content ul li { color: #94a3b8; }
+        .lesson-text-content ul li::before {
+          content: ''; position: absolute; left: 0.25rem; top: 0.65em;
+          width: 8px; height: 8px; border-radius: 50%; background: #3b82f6;
+        }
+        .lesson-text-content ol {
+          padding-left: 0; margin-bottom: 1.1rem; list-style: none; counter-reset: item;
+        }
+        .lesson-text-content ol li {
+          color: #334155; line-height: 1.75; margin-bottom: 0.6rem;
+          padding-left: 2.25rem; position: relative; counter-increment: item;
+        }
+        .dark .lesson-text-content ol li { color: #94a3b8; }
+        .lesson-text-content ol li::before {
+          content: counter(item); position: absolute; left: 0; top: 0.1em;
+          width: 1.5rem; height: 1.5rem; border-radius: 50%;
+          background: #1e293b; color: white;
+          font-size: 0.7rem; font-weight: 700; display: flex;
+          align-items: center; justify-content: center;
+          font-family: system-ui, sans-serif;
+        }
+        .dark .lesson-text-content ol li::before { background: #334155; }
+        .lesson-text-content strong { color: #1e3a5f; font-weight: 700; }
+        .dark .lesson-text-content strong { color: #93c5fd; }
+        .lesson-text-content em { color: #0369a1; font-style: italic; }
+        .dark .lesson-text-content em { color: #7dd3fc; }
+        .lesson-text-content blockquote {
+          border-left: 4px solid #3b82f6; margin: 1.75rem 0;
+          padding: 1rem 1.5rem; background: #eff6ff;
+          border-radius: 0 12px 12px 0; color: #1e40af;
+          font-style: italic; line-height: 1.7;
+        }
+        .dark .lesson-text-content blockquote {
+          background: rgba(59,130,246,0.1); color: #bfdbfe;
+        }
+        .lesson-text-content code {
+          background: #f1f5f9; color: #0f172a; padding: 0.15em 0.5em;
+          border-radius: 4px; font-size: 0.85em; font-family: monospace;
+          border: 1px solid #e2e8f0;
+        }
+        .dark .lesson-text-content code { background: #1e293b; color: #e2e8f0; border-color: #334155; }
+        .lesson-text-content pre {
+          background: #0f172a; color: #e2e8f0; padding: 1.25rem;
+          border-radius: 12px; overflow-x: auto; margin: 1.25rem 0;
+          font-size: 0.875rem; line-height: 1.6;
+        }
+        .lesson-text-content table {
+          width: 100%; border-collapse: collapse; margin: 1.5rem 0;
+          font-size: 0.9rem; font-family: system-ui, sans-serif;
+          border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .lesson-text-content th {
+          background: #1e293b; color: white; padding: 0.75rem 1rem;
+          text-align: left; font-weight: 600;
+        }
+        .lesson-text-content td {
+          padding: 0.65rem 1rem; border-bottom: 1px solid #e2e8f0; color: #334155;
+        }
+        .dark .lesson-text-content td { border-color: #334155; color: #94a3b8; }
+        .lesson-text-content tr:nth-child(even) td { background: #f8fafc; }
+        .dark .lesson-text-content tr:nth-child(even) td { background: rgba(30,41,59,0.4); }
+        .lesson-text-content a { color: #2563eb; text-decoration: underline; }
+        .lesson-text-content a:hover { color: #1d4ed8; }
+        .dark .lesson-text-content a { color: #60a5fa; }
+        .lesson-text-content hr {
+          border: none; border-top: 2px solid #e2e8f0; margin: 2rem 0;
+        }
+        .dark .lesson-text-content hr { border-color: #334155; }
+        .lesson-text-content img {
+          max-width: 100%; border-radius: 12px; margin: 1rem 0;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+      `}</style>
 
       {showFlashcards && flashcards.length > 0 && (
         <Suspense fallback={null}>
