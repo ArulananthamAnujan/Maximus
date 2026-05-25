@@ -85,6 +85,13 @@ export default function StudentCoursePlayer() {
       courseProgressRows.filter(p => p.status === 'completed').map(p => p.lesson_id)
     );
     setCompletedLessons(completed);
+    // If all required lessons are already complete, try to issue a certificate in case it was missed
+    if (courseId && profile && courseProgressRows.length > 0) {
+      const reqLessons = sections.flatMap(s => s.lessons.filter(l => l.is_required));
+      if (reqLessons.length > 0 && reqLessons.every(l => completed.has(l.id))) {
+        maybeIssueCertificate(courseId);
+      }
+    }
   }, [courseProgressRows]);
 
   useEffect(() => {
@@ -302,6 +309,38 @@ export default function StudentCoursePlayer() {
     activeSectionQuiz !== null &&
     activeSectionQuiz.bestAttempt?.passed !== true;
 
+  // Issues a certificate if the course has no blocking conditions (no required quizzes unpassed, no ungraded exams)
+  const maybeIssueCertificate = async (cId: string) => {
+    if (!profile) return;
+
+    // Already have one?
+    const { data: existing } = await supabase.from('certificates').select('id').eq('student_id', profile.id).eq('course_id', cId).maybeSingle();
+    if (existing) return;
+
+    // All required quizzes passed?
+    const { data: allQuizzes } = await supabase.from('quizzes').select('id, is_required').eq('course_id', cId);
+    const requiredQuizIds = (allQuizzes || []).filter(q => q.is_required).map(q => q.id);
+    if (requiredQuizIds.length > 0) {
+      const { data: passedAttempts } = await supabase.from('quiz_attempts')
+        .select('quiz_id').eq('student_id', profile.id).eq('passed', true).in('quiz_id', requiredQuizIds);
+      const passedIds = new Set((passedAttempts || []).map(a => a.quiz_id));
+      if (!requiredQuizIds.every(id => passedIds.has(id))) return;
+    }
+
+    // All published exams graded/finalised?
+    const { data: allExams } = await supabase.from('exams').select('id').eq('course_id', cId).eq('is_published', true);
+    const examIds = (allExams || []).map(e => e.id);
+    if (examIds.length > 0) {
+      const { data: examSubs } = await supabase.from('exam_submissions')
+        .select('exam_id, status').eq('student_id', profile.id).in('exam_id', examIds);
+      const gradedIds = new Set((examSubs || []).filter(s => s.status === 'finalised' || s.status === 'graded').map(s => s.exam_id));
+      if (!examIds.every(id => gradedIds.has(id))) return;
+    }
+
+    await supabase.from('certificates').insert({ student_id: profile.id, course_id: cId });
+    sonnerToast.success('Certificate issued! Check your certificates page.', { duration: 5000 });
+  };
+
   const handleMarkComplete = async () => {
     if (!activeLesson || !profile || completedLessons.has(activeLesson.id) || !courseId) return;
     setMarking(true);
@@ -318,6 +357,8 @@ export default function StudentCoursePlayer() {
       supabase.from('enrollments').update({ progress_percent: newProgress }).eq('student_id', profile.id).eq('course_id', courseId),
       supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId),
     ]);
+
+    if (newProgress === 100) await maybeIssueCertificate(courseId);
 
     toast.success('Lesson marked as complete!');
     setMarking(false);
@@ -723,7 +764,12 @@ export default function StudentCoursePlayer() {
                                   timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
                                   progressPercent: 100, status: 'completed', completedAt: new Date().toISOString(),
                                 });
-                                setCompletedLessons(prev => new Set([...prev, activeLesson.id]));
+                                setCompletedLessons(prev => {
+                                  const next = new Set([...prev, activeLesson.id]);
+                                  const newProg = allRequired.length > 0 ? Math.round((next.size / allRequired.length) * 100) : 0;
+                                  if (newProg === 100) maybeIssueCertificate(courseId);
+                                  return next;
+                                });
                                 sonnerToast.success('Lesson completed!');
                               }
                             }}
