@@ -8,25 +8,23 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-function getSiteUrl(req: Request): string {
-  // Use Origin header first (most reliable when called from browser)
-  const origin = req.headers.get("origin");
-  if (origin && origin.startsWith("http")) return origin;
+const ALLOWED_ORIGINS = [
+  Deno.env.get("SITE_URL"),
+  "https://maximusacademy.com.au",
+  "https://www.maximusacademy.com.au",
+].filter(Boolean) as string[];
 
-  // Fall back to SITE_URL env var if configured
+function getSiteUrl(req: Request): string {
+  // Always prefer the configured SITE_URL env var
   const envUrl = Deno.env.get("SITE_URL");
   if (envUrl) return envUrl;
 
-  // Last resort: derive from Referer
-  const referer = req.headers.get("referer");
-  if (referer) {
-    try {
-      const u = new URL(referer);
-      return `${u.protocol}//${u.host}`;
-    } catch { /* ignore */ }
-  }
+  // Only accept Origin header if it matches our allowlist
+  const origin = req.headers.get("origin");
+  if (origin && ALLOWED_ORIGINS.includes(origin)) return origin;
 
-  return "https://pwnlfbbssvywynffkksd.supabase.co";
+  // Safe fallback — never use untrusted headers for redirect URLs
+  return "https://maximusacademy.com.au";
 }
 
 Deno.serve(async (req: Request) => {

@@ -10,13 +10,12 @@ const corsHeaders = {
 function buildWelcomeEmail(opts: {
   full_name: string;
   email: string;
-  password: string;
   role: string;
   courses: string[];
   loginUrl: string;
   resetLink: string;
 }): { subject: string; html: string; text: string } {
-  const { full_name, email, password, role, courses, loginUrl, resetLink } = opts;
+  const { full_name, email, role, courses, loginUrl, resetLink } = opts;
 
   const courseRows = courses.length
     ? courses.map(c => `<tr><td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">• ${c}</td></tr>`).join("")
@@ -71,12 +70,6 @@ function buildWelcomeEmail(opts: {
                         <span style="font-size:14px;color:#374151;">${email}</span>
                       </td>
                     </tr>
-                    <tr>
-                      <td style="padding:6px 0;border-top:1px solid #e0f2fe;">
-                        <span style="font-size:12px;color:#0369a1;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Password</span><br>
-                        <span style="font-size:14px;font-family:monospace;color:#374151;background:#e0f2fe;padding:2px 8px;border-radius:4px;">${password}</span>
-                      </td>
-                    </tr>
                   </table>
                 </td>
               </tr>
@@ -115,14 +108,12 @@ function buildWelcomeEmail(opts: {
     ``,
     `  Login URL: ${loginUrl}`,
     `  Email:     ${email}`,
-    `  Password:  ${password}`,
     ``,
     courses.length
       ? `You have been enrolled in:\n${courses.map(c => `  • ${c}`).join("\n")}\n`
       : "",
-    `Log in at: ${loginUrl}`,
+    resetLink ? `Set your password here: ${resetLink}\n` : `Log in at: ${loginUrl}`,
     ``,
-    resetLink ? `To set your own password: ${resetLink}\n` : "",
     `— The Maximus Academy Team`,
   ].filter(l => l !== undefined).join("\n");
 
@@ -250,7 +241,6 @@ Deno.serve(async (req: Request) => {
     // Send welcome email
     let welcomeEmailSent = false;
     try {
-      const usedPassword = temp_password || password;
       const siteUrl = Deno.env.get("SITE_URL") || "https://maximusacademy.com.au";
 
       // Fetch course titles
@@ -261,7 +251,7 @@ Deno.serve(async (req: Request) => {
         courseTitles = (courseData || []).map((c: { title: string }) => c.title);
       }
 
-      // Generate password reset link (triggers real Supabase SMTP delivery)
+      // Generate password reset link so the user sets their own password
       let resetLink = "";
       try {
         const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
@@ -274,7 +264,6 @@ Deno.serve(async (req: Request) => {
       const { subject, html } = buildWelcomeEmail({
         full_name,
         email,
-        password: usedPassword,
         role,
         courses: courseTitles,
         loginUrl: siteUrl,
@@ -296,13 +285,13 @@ Deno.serve(async (req: Request) => {
       );
 
       if (!smtpRes.ok) {
-        // Fallback: use generateLink type 'invite' which triggers a real welcome email via Supabase SMTP
+        // Fallback: trigger a magic link welcome email via Supabase SMTP
         await supabaseAdmin.auth.admin.generateLink({
           type: "magiclink",
           email,
-          options: { data: { full_name, role, temp_password: usedPassword } },
+          options: { data: { full_name, role } },
         });
-        console.log(`Welcome email fallback triggered for ${email} — password: ${usedPassword}, courses: ${courseTitles.join(", ")}`);
+        console.log(`Welcome email fallback triggered for ${email}, courses: ${courseTitles.join(", ")}`);
       }
 
       welcomeEmailSent = true;
