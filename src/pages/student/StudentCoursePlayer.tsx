@@ -71,7 +71,6 @@ export default function StudentCoursePlayer() {
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<TabId>('lesson');
-  const [sectionQuizBanner, setSectionQuizBanner] = useState<{ sectionTitle: string } | null>(null);
 
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
   const { data: courseProgressRows = [] } = useCourseProgress(courseId);
@@ -268,6 +267,41 @@ export default function StudentCoursePlayer() {
   const prevLesson = currentIndex > 0 ? allLessons[currentIndex - 1] : null;
   const nextLesson = currentIndex < allLessons.length - 1 ? allLessons[currentIndex + 1] : null;
 
+  // Returns the quiz for a section (if any)
+  const getQuizForSection = (sectionId: string) =>
+    quizzes.find(q => q.section_id === sectionId) ?? null;
+
+  // A section is "quiz-passed" if it has no quiz, or its quiz has been passed
+  const isSectionQuizPassed = (sectionId: string) => {
+    const q = getQuizForSection(sectionId);
+    if (!q) return true;
+    return q.bestAttempt?.passed === true;
+  };
+
+  // A section is locked if any earlier section has an unpassed quiz
+  const isSectionLocked = (sectionIndex: number) => {
+    for (let i = 0; i < sectionIndex; i++) {
+      if (!isSectionQuizPassed(sections[i].id)) return true;
+    }
+    return false;
+  };
+
+  // Is the active lesson the last lesson of its section, and that section has an unpassed quiz?
+  const activeSectionIndex = sections.findIndex(s => s.lessons.some(l => l.id === activeLesson?.id));
+  const activeSectionQuiz = activeSectionIndex >= 0 ? getQuizForSection(sections[activeSectionIndex].id) : null;
+  const activeSectionAllLessonsComplete =
+    activeSectionIndex >= 0 &&
+    sections[activeSectionIndex].lessons.every(l => completedLessons.has(l.id));
+  const isLastLessonInSection =
+    activeSectionIndex >= 0 &&
+    activeLesson?.id === sections[activeSectionIndex].lessons[sections[activeSectionIndex].lessons.length - 1]?.id;
+  // Block "Next" if section is finished but quiz not yet passed
+  const mustTakeSectionQuiz =
+    isLastLessonInSection &&
+    activeSectionAllLessonsComplete &&
+    activeSectionQuiz !== null &&
+    activeSectionQuiz.bestAttempt?.passed !== true;
+
   const handleMarkComplete = async () => {
     if (!activeLesson || !profile || completedLessons.has(activeLesson.id) || !courseId) return;
     setMarking(true);
@@ -285,24 +319,24 @@ export default function StudentCoursePlayer() {
       supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId),
     ]);
 
-    // Check if all lessons in the current section are now complete — show quiz banner
-    const owningSection = sections.find(s => s.lessons.some(l => l.id === activeLesson.id));
-    if (owningSection) {
-      const allSectionLessonsComplete = owningSection.lessons.every(l => newCompleted.has(l.id));
-      const sectionHasQuiz = quizzes.some(q => (q as Quiz & { section_id?: string }).section_id === owningSection.id);
-      if (allSectionLessonsComplete && sectionHasQuiz) {
-        setSectionQuizBanner({ sectionTitle: owningSection.title });
-      }
-    }
-
     toast.success('Lesson marked as complete!');
     setMarking(false);
   };
 
-  const goToLesson = (lesson: Lesson) => {
+  const goToLesson = (lesson: Lesson, bypassGate = false) => {
     if (!hasAccess && !lesson.is_preview) {
       sonnerToast.error('You need to enrol to access this lesson');
       return;
+    }
+    if (!bypassGate && hasAccess) {
+      const targetSectionIndex = sections.findIndex(s => s.lessons.some(l => l.id === lesson.id));
+      if (targetSectionIndex > 0 && isSectionLocked(targetSectionIndex)) {
+        const blockingSection = sections.slice(0, targetSectionIndex).findLast(s => !isSectionQuizPassed(s.id));
+        if (blockingSection) {
+          sonnerToast.error(`Complete the "${blockingSection.title}" quiz first to unlock this section`);
+        }
+        return;
+      }
     }
     setActiveLesson(lesson);
     setSidebarOpen(false);
@@ -368,34 +402,58 @@ export default function StudentCoursePlayer() {
           const isExpanded = expandedSections.has(section.id);
           const sectionCompleted = section.lessons.filter(l => completedLessons.has(l.id)).length;
           const hasActiveLesson = section.lessons.some(l => l.id === activeLesson?.id);
+          const sectionLocked = hasAccess && isSectionLocked(si);
+          const sectionQuiz = getQuizForSection(section.id);
+          const quizPassed = isSectionQuizPassed(section.id);
+          const allLessonsInSectionDone = section.lessons.every(l => completedLessons.has(l.id));
+          const showQuizRequired = !sectionLocked && sectionQuiz && !quizPassed && allLessonsInSectionDone;
 
           return (
             <div key={section.id} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0">
               <button
-                onClick={() => setExpandedSections(prev => {
+                onClick={() => !sectionLocked && setExpandedSections(prev => {
                   const next = new Set(prev);
                   if (next.has(section.id)) next.delete(section.id);
                   else next.add(section.id);
                   return next;
                 })}
-                className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-100 dark:hover:bg-navy-800/50 transition-colors text-left ${
-                  hasActiveLesson ? 'bg-sky-50 dark:bg-sky-900/10' : 'bg-gray-50 dark:bg-navy-900/30'
+                className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${
+                  sectionLocked
+                    ? 'opacity-50 cursor-not-allowed bg-gray-50 dark:bg-navy-900/30'
+                    : hasActiveLesson
+                      ? 'bg-sky-50 dark:bg-sky-900/10 hover:bg-sky-100 dark:hover:bg-sky-900/20'
+                      : 'bg-gray-50 dark:bg-navy-900/30 hover:bg-gray-100 dark:hover:bg-navy-800/50'
                 }`}
               >
+                {sectionLocked && <Lock className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
                 <div className="flex-1 min-w-0">
                   <p className={`text-xs font-bold uppercase tracking-wide truncate ${
-                    hasActiveLesson ? 'text-sky-700 dark:text-sky-400' : 'text-gray-700 dark:text-gray-300'
+                    sectionLocked ? 'text-gray-400 dark:text-gray-500'
+                      : hasActiveLesson ? 'text-sky-700 dark:text-sky-400'
+                      : 'text-gray-700 dark:text-gray-300'
                   }`}>
                     Week {si + 1}: {section.title}
                   </p>
-                  <p className="text-xs text-gray-400 mt-0.5">{sectionCompleted}/{section.lessons.length} complete</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {sectionLocked
+                      ? 'Locked — complete previous quiz'
+                      : `${sectionCompleted}/${section.lessons.length} complete`}
+                  </p>
                 </div>
-                {isExpanded
+                {!sectionLocked && (isExpanded
                   ? <ChevronUp className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                  : <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
+                  : <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />)}
               </button>
 
-              {isExpanded && (
+              {/* Quiz required banner inside sidebar */}
+              {!sectionLocked && isExpanded && showQuizRequired && (
+                <div className="mx-3 mb-2 mt-1 flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                  <HelpCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <p className="text-xs text-amber-700 dark:text-amber-300 font-semibold flex-1">Quiz required to continue</p>
+                </div>
+              )}
+
+              {!sectionLocked && isExpanded && (
                 <div>
                   {section.lessons.map(lesson => {
                     const isCompleted = completedLessons.has(lesson.id);
@@ -762,26 +820,38 @@ export default function StudentCoursePlayer() {
                       </div>
                     )}
 
-                    {/* Section-complete quiz banner */}
-                    {sectionQuizBanner && (
-                      <div className="flex items-center gap-4 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 shadow-sm">
-                        <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center shrink-0">
-                          <Trophy className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                    {/* Quiz gate — shown when all section lessons are done but quiz not passed */}
+                    {mustTakeSectionQuiz && activeSectionQuiz && (
+                      <div className="rounded-2xl overflow-hidden border-2 border-amber-400 dark:border-amber-600 shadow-md">
+                        <div className="flex items-center gap-3 px-5 py-4 bg-amber-50 dark:bg-amber-900/30">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center shrink-0">
+                            <Trophy className="w-5 h-5 text-white" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Section quiz required</p>
+                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                              You have completed all lessons in <strong>{sections[activeSectionIndex]?.title}</strong>. Pass the quiz below to unlock the next section.
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-amber-800 dark:text-amber-300">Section complete!</p>
-                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                            You have finished all lessons in <strong>{sectionQuizBanner.sectionTitle}</strong>. Take the section quiz to continue.
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button onClick={() => { setSectionQuizBanner(null); setActiveTab('activities'); }}
-                            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
+                        <div className="flex items-center gap-4 px-5 py-4 bg-white dark:bg-navy-800">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{activeSectionQuiz.title}</p>
+                            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                              {activeSectionQuiz.time_limit_minutes && (
+                                <span className="flex items-center gap-1 text-xs text-gray-400">
+                                  <Clock className="w-3 h-3" /> {activeSectionQuiz.time_limit_minutes} min
+                                </span>
+                              )}
+                              <span className="text-xs text-gray-400">Pass mark: {activeSectionQuiz.pass_mark}%</span>
+                            </div>
+                          </div>
+                          <Link
+                            to="/student/quizzes"
+                            className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
+                          >
                             <HelpCircle className="w-4 h-4" /> Take Quiz
-                          </button>
-                          <button onClick={() => setSectionQuizBanner(null)} className="p-1.5 text-amber-400 hover:text-amber-600 transition-colors">
-                            <X className="w-4 h-4" />
-                          </button>
+                          </Link>
                         </div>
                       </div>
                     )}
@@ -796,7 +866,13 @@ export default function StudentCoursePlayer() {
                         </button>
                       ) : <div />}
                       <div className="text-xs text-gray-400 font-medium">{currentIndex + 1} / {allLessons.length}</div>
-                      {nextLesson ? (
+                      {mustTakeSectionQuiz ? (
+                        <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-bold rounded-xl border border-amber-300 dark:border-amber-700 cursor-not-allowed">
+                          <Lock className="w-4 h-4" />
+                          <span className="hidden sm:inline">Quiz Required</span>
+                          <span className="sm:hidden">Locked</span>
+                        </div>
+                      ) : nextLesson ? (
                         <button onClick={() => goToLesson(nextLesson)}
                           className="flex items-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
                           <span className="hidden sm:inline">Next Lesson</span>

@@ -135,6 +135,7 @@ export interface UserQuizAttempt {
 export interface Quiz {
   id: string;
   course_id: string;
+  section_id?: string;
   title: string;
   description: string;
   time_limit_minutes: number | null;
