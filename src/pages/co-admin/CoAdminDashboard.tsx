@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, GraduationCap, CreditCard, Award, TrendingUp, BookOpen } from 'lucide-react';
+import { Users, GraduationCap, CreditCard, Award, BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
@@ -11,8 +11,7 @@ interface Stats {
   teachers: number;
   enrollments: number;
   certificates: number;
-  totalRevenue: number;
-  recentPayments: number;
+  completedPayments: number;
 }
 
 export default function CoAdminDashboard() {
@@ -27,21 +26,15 @@ export default function CoAdminDashboard() {
         supabase.from('profiles').select('id', { count: 'exact' }).eq('role', 'teacher').eq('is_active', true),
         supabase.from('course_enrollments').select('id', { count: 'exact' }),
         supabase.from('certificates').select('id', { count: 'exact' }).eq('revoked', false),
-        supabase.from('payments').select('amount, status').eq('status', 'completed'),
+        supabase.from('payments').select('id', { count: 'exact' }).eq('status', 'completed'),
       ]);
-
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const { data: recentPay } = await supabase
-        .from('payments').select('amount').eq('status', 'completed').gte('created_at', thirtyDaysAgo.toISOString());
 
       setStats({
         students: studRes.count ?? 0,
         teachers: teachRes.count ?? 0,
         enrollments: enrollRes.count ?? 0,
         certificates: certRes.count ?? 0,
-        totalRevenue: (payRes.data || []).reduce((s, p) => s + (p.amount || 0), 0),
-        recentPayments: (recentPay || []).reduce((s, p) => s + (p.amount || 0), 0),
+        completedPayments: payRes.count ?? 0,
       });
       setLoading(false);
     };
@@ -53,8 +46,7 @@ export default function CoAdminDashboard() {
     { label: 'Teachers', value: stats?.teachers, icon: BookOpen, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', href: '/co-admin/teachers' },
     { label: 'Total Enrolments', value: stats?.enrollments, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', href: '/co-admin/enrollments' },
     { label: 'Certificates Issued', value: stats?.certificates, icon: Award, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', href: '/co-admin/certificates' },
-    { label: 'Total Revenue', value: stats ? `$${stats.totalRevenue.toFixed(2)}` : null, icon: CreditCard, color: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-900/20', href: '/co-admin/payments' },
-    { label: 'Revenue (30 days)', value: stats ? `$${stats.recentPayments.toFixed(2)}` : null, icon: TrendingUp, color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-900/20', href: '/co-admin/payments' },
+    { label: 'Completed Payments', value: stats?.completedPayments, icon: CreditCard, color: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-900/20', href: '/co-admin/payments' },
   ];
 
   return (

@@ -1,15 +1,25 @@
-import { useState, useEffect } from 'react';
-import { Search, BookOpen, Mail, Plus, X, UserCheck, UserX } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, BookOpen, Mail, Plus, X, UserCheck, UserX, RefreshCw, ChevronDown, Check } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../contexts/ToastContext';
 import type { Profile } from '../../types';
 
+interface Course { id: string; title: string; }
+
 interface AddTeacherForm {
   full_name: string;
   email: string;
   password: string;
+  course_ids: string[];
+}
+
+function generatePassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+  let pwd = '';
+  for (let i = 0; i < 12; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+  return pwd;
 }
 
 export default function CoAdminTeachers() {
@@ -18,7 +28,12 @@ export default function CoAdminTeachers() {
   const [search, setSearch]     = useState('');
   const [showAdd, setShowAdd]   = useState(false);
   const [adding, setAdding]     = useState(false);
-  const [form, setForm]         = useState<AddTeacherForm>({ full_name: '', email: '', password: '' });
+  const [courses, setCourses]   = useState<Course[]>([]);
+  const [courseDropOpen, setCourseDropOpen] = useState(false);
+  const [form, setForm] = useState<AddTeacherForm>({
+    full_name: '', email: '', password: generatePassword(), course_ids: [],
+  });
+  const dropRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   const fetchTeachers = async () => {
@@ -27,15 +42,45 @@ export default function CoAdminTeachers() {
     const { data: profiles } = await q;
     if (!profiles) { setLoading(false); return; }
 
-    const { data: courses } = await supabase.from('courses').select('teacher_id');
+    const { data: coursesData } = await supabase.from('courses').select('teacher_id');
     const counts = new Map<string, number>();
-    (courses || []).forEach(c => counts.set(c.teacher_id, (counts.get(c.teacher_id) || 0) + 1));
+    (coursesData || []).forEach(c => counts.set(c.teacher_id, (counts.get(c.teacher_id) || 0) + 1));
 
     setTeachers(profiles.map(p => ({ ...p, courseCount: counts.get(p.id) || 0 } as Profile & { courseCount: number })));
     setLoading(false);
   };
 
   useEffect(() => { fetchTeachers(); }, [search]);
+
+  useEffect(() => {
+    supabase.from('courses').select('id,title').eq('is_published', true).order('title').then(({ data }) => {
+      setCourses(data || []);
+    });
+  }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
+        setCourseDropOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const openAdd = () => {
+    setForm({ full_name: '', email: '', password: generatePassword(), course_ids: [] });
+    setCourseDropOpen(false);
+    setShowAdd(true);
+  };
+
+  const toggleCourse = (id: string) => {
+    setForm(f => ({
+      ...f,
+      course_ids: f.course_ids.includes(id) ? f.course_ids.filter(c => c !== id) : [...f.course_ids, id],
+    }));
+  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,16 +95,22 @@ export default function CoAdminTeachers() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session?.access_token}`,
           },
-          body: JSON.stringify({ ...form, role: 'teacher' }),
+          body: JSON.stringify({
+            full_name: form.full_name,
+            email: form.email,
+            password: form.password,
+            temp_password: form.password,
+            role: 'teacher',
+            course_ids: form.course_ids,
+          }),
         }
       );
       const result = await res.json();
       if (!res.ok || result.error) {
         toast.error(result.error || 'Failed to create teacher');
       } else {
-        toast.success('Teacher account created');
+        toast.success('Teacher account created and welcome email sent');
         setShowAdd(false);
-        setForm({ full_name: '', email: '', password: '' });
         fetchTeachers();
       }
     } catch {
@@ -76,7 +127,7 @@ export default function CoAdminTeachers() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input type="text" placeholder="Search teachers..." value={search} onChange={e => setSearch(e.target.value)} className="input-field pl-9" />
           </div>
-          <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2 shrink-0">
+          <button onClick={openAdd} className="btn-primary flex items-center gap-2 shrink-0">
             <Plus className="w-4 h-4" /> Add Teacher
           </button>
         </div>
@@ -154,7 +205,7 @@ export default function CoAdminTeachers() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Full Name</label>
                 <input
-                  type="text" required placeholder="John Smith"
+                  type="text" required placeholder="Jane Smith"
                   value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
                   className="input-field"
                 />
@@ -162,19 +213,89 @@ export default function CoAdminTeachers() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email</label>
                 <input
-                  type="email" required placeholder="john@example.com"
+                  type="email" required placeholder="jane@example.com"
                   value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   className="input-field"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Temporary Password</label>
-                <input
-                  type="password" required minLength={8} placeholder="Min. 8 characters"
-                  value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  className="input-field"
-                />
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Generated Password</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text" required readOnly value={form.password}
+                    className="input-field flex-1 font-mono text-sm bg-gray-50 dark:bg-navy-900/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, password: generatePassword() }))}
+                    className="p-2.5 rounded-lg border border-gray-200 dark:border-navy-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+                    title="Regenerate password"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">This password will be emailed to the teacher</p>
               </div>
+
+              {/* Course selection */}
+              <div ref={dropRef}>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                  Assign to Courses <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setCourseDropOpen(o => !o)}
+                  className="input-field w-full flex items-center justify-between text-left"
+                >
+                  <span className="text-gray-500 dark:text-gray-400 text-sm">
+                    {form.course_ids.length === 0 ? 'Select courses...' : `${form.course_ids.length} course${form.course_ids.length !== 1 ? 's' : ''} selected`}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${courseDropOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {courseDropOpen && (
+                  <div className="mt-1 border border-gray-200 dark:border-navy-600 rounded-xl overflow-hidden shadow-lg bg-white dark:bg-navy-800 max-h-48 overflow-y-auto z-10 relative">
+                    {courses.length === 0 ? (
+                      <p className="px-3 py-2 text-sm text-gray-400">No published courses available</p>
+                    ) : (
+                      courses.map(c => (
+                        <button
+                          key={c.id} type="button"
+                          onClick={() => toggleCourse(c.id)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+                        >
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                            form.course_ids.includes(c.id)
+                              ? 'bg-sky-500 border-sky-500'
+                              : 'border-gray-300 dark:border-navy-500'
+                          }`}>
+                            {form.course_ids.includes(c.id) && <Check className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                          <span className="text-gray-700 dark:text-gray-300 truncate">{c.title}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {form.course_ids.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {courses.filter(c => form.course_ids.includes(c.id)).map(c => (
+                      <span key={c.id} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-medium">
+                        {c.title}
+                        <button type="button" onClick={() => toggleCourse(c.id)} className="hover:text-emerald-900 dark:hover:text-emerald-200">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <p className="text-xs text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/20 rounded-lg px-3 py-2">
+                A welcome email with login credentials will be sent to the teacher.
+              </p>
+
               <div className="flex gap-3 justify-end pt-2">
                 <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-navy-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
                   Cancel

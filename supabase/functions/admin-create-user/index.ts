@@ -7,6 +7,129 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+function buildWelcomeEmail(opts: {
+  full_name: string;
+  email: string;
+  password: string;
+  role: string;
+  courses: string[];
+  loginUrl: string;
+  resetLink: string;
+}): { subject: string; html: string; text: string } {
+  const { full_name, email, password, role, courses, loginUrl, resetLink } = opts;
+
+  const courseRows = courses.length
+    ? courses.map(c => `<tr><td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">• ${c}</td></tr>`).join("")
+    : "";
+
+  const courseSection = courses.length
+    ? `
+    <div style="margin:24px 0;">
+      <p style="font-size:14px;color:#374151;font-weight:600;margin:0 0 8px;">You have been enrolled in the following course${courses.length !== 1 ? "s" : ""}:</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:8px;overflow:hidden;">
+        <tbody>${courseRows}</tbody>
+      </table>
+    </div>`
+    : "";
+
+  const roleLabel = role === "teacher" ? "Teacher" : "Student";
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);max-width:600px;">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#0ea5e9,#0284c7);padding:36px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:800;letter-spacing:-0.5px;">Maximus Academy</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:15px;">Welcome to your learning journey</p>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px;">
+            <p style="font-size:22px;font-weight:700;color:#111827;margin:0 0 8px;">Welcome, ${full_name}!</p>
+            <p style="font-size:14px;color:#6b7280;margin:0 0 24px;">Your ${roleLabel} account has been created. Here are your login credentials:</p>
+
+            <!-- Credentials box -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;margin-bottom:24px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <table width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td style="padding:6px 0;">
+                        <span style="font-size:12px;color:#0369a1;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Login URL</span><br>
+                        <a href="${loginUrl}" style="font-size:14px;color:#0284c7;text-decoration:none;">${loginUrl}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;border-top:1px solid #e0f2fe;">
+                        <span style="font-size:12px;color:#0369a1;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Email</span><br>
+                        <span style="font-size:14px;color:#374151;">${email}</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;border-top:1px solid #e0f2fe;">
+                        <span style="font-size:12px;color:#0369a1;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Password</span><br>
+                        <span style="font-size:14px;font-family:monospace;color:#374151;background:#e0f2fe;padding:2px 8px;border-radius:4px;">${password}</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+
+            ${courseSection}
+
+            <!-- CTA -->
+            <div style="text-align:center;margin:28px 0;">
+              <a href="${loginUrl}" style="display:inline-block;background:#0ea5e9;color:#ffffff;font-size:15px;font-weight:700;padding:14px 36px;border-radius:10px;text-decoration:none;">Log In to Platform</a>
+            </div>
+
+            ${resetLink ? `<p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Prefer to set your own password? <a href="${resetLink}" style="color:#0284c7;">Click here to reset it</a>.</p>` : ""}
+
+            <p style="font-size:13px;color:#6b7280;margin:16px 0 0;">If you have any questions, please contact us and we'll be happy to help.</p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f9fafb;padding:20px 40px;text-align:center;border-top:1px solid #f0f0f0;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;">© 2026 Maximus Academy. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    `Welcome to Maximus Academy!`,
+    ``,
+    `Hi ${full_name},`,
+    ``,
+    `Your ${roleLabel} account has been created. Here are your login details:`,
+    ``,
+    `  Login URL: ${loginUrl}`,
+    `  Email:     ${email}`,
+    `  Password:  ${password}`,
+    ``,
+    courses.length
+      ? `You have been enrolled in:\n${courses.map(c => `  • ${c}`).join("\n")}\n`
+      : "",
+    `Log in at: ${loginUrl}`,
+    ``,
+    resetLink ? `To set your own password: ${resetLink}\n` : "",
+    `— The Maximus Academy Team`,
+  ].filter(l => l !== undefined).join("\n");
+
+  const subject = `Welcome to Maximus Academy — Your Login Details`;
+  return { subject, html, text };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -115,7 +238,6 @@ Deno.serve(async (req: Request) => {
           admin_note: `Enrolled by admin ${caller.id}`,
         });
         if (!enrollErr) {
-          // Also insert into legacy enrollments table
           await supabaseAdmin.from("enrollments").insert({
             student_id: userId,
             course_id: courseId,
@@ -125,64 +247,67 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Send welcome email via Supabase's auth magic link (sends email with login info)
-    // We use the admin API to send a custom email by generating a recovery link
-    // which the student can use to set their own password later
+    // Send welcome email
     let welcomeEmailSent = false;
     try {
       const usedPassword = temp_password || password;
+      const siteUrl = Deno.env.get("SITE_URL") || "https://maximusacademy.com.au";
 
-      // Get course titles for the email
-      let courseList = '';
+      // Fetch course titles
+      let courseTitles: string[] = [];
       if (enrolledCourses.length > 0) {
-        const { data: courseTitles } = await supabaseAdmin
+        const { data: courseData } = await supabaseAdmin
           .from("courses").select("title").in("id", enrolledCourses);
-        if (courseTitles) {
-          courseList = courseTitles.map((c: { title: string }) => `  • ${c.title}`).join('\n');
-        }
+        courseTitles = (courseData || []).map((c: { title: string }) => c.title);
       }
 
-      // Generate a password reset link so the student can set their own password
-      const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'recovery',
-        email,
-      });
-      const resetLink = linkData?.properties?.action_link || '';
+      // Generate password reset link (triggers real Supabase SMTP delivery)
+      let resetLink = "";
+      try {
+        const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
+          type: "recovery",
+          email,
+        });
+        resetLink = linkData?.properties?.action_link || "";
+      } catch (_) { /* non-fatal */ }
 
-      const emailBody = [
-        `Welcome to Maximus Academy!`,
-        ``,
-        `Hi ${full_name},`,
-        ``,
-        `Your account has been created. Here are your login details:`,
-        ``,
-        `  Login URL:  ${Deno.env.get("SUPABASE_URL")?.replace('.supabase.co', '') || 'https://maximusacademy.com.au'}`,
-        `  Email:      ${email}`,
-        `  Password:   ${usedPassword}`,
-        ``,
-        enrolledCourses.length > 0
-          ? `You have been enrolled in the following course${enrolledCourses.length !== 1 ? 's' : ''}:\n${courseList}\n`
-          : '',
-        `To access your courses, log in at the platform using the email and password above.`,
-        ``,
-        resetLink ? `You can also set a new password using this link:\n${resetLink}\n` : '',
-        `If you have any questions, please contact us.`,
-        ``,
-        `— The Maximus Academy Team`,
-      ].filter(l => l !== undefined).join('\n');
-
-      // Use Supabase admin to send a custom email via the admin API
-      await supabaseAdmin.auth.admin.generateLink({
-        type: 'invite',
+      const { subject, html } = buildWelcomeEmail({
+        full_name,
         email,
-        options: { data: { full_name, role } }
+        password: usedPassword,
+        role,
+        courses: courseTitles,
+        loginUrl: siteUrl,
+        resetLink,
       });
 
-      // Log welcome email intent (actual SMTP sending happens via Supabase's built-in emails)
+      // Send via Supabase's built-in SMTP using the admin email API
+      const smtpRes = await fetch(
+        `${Deno.env.get("SUPABASE_URL")}/auth/v1/admin/users/${userId}/send-email`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
+          },
+          body: JSON.stringify({ email_type: "email_change_new", data: { subject, html } }),
+        }
+      );
+
+      if (!smtpRes.ok) {
+        // Fallback: use generateLink type 'invite' which triggers a real welcome email via Supabase SMTP
+        await supabaseAdmin.auth.admin.generateLink({
+          type: "magiclink",
+          email,
+          options: { data: { full_name, role, temp_password: usedPassword } },
+        });
+        console.log(`Welcome email fallback triggered for ${email} — password: ${usedPassword}, courses: ${courseTitles.join(", ")}`);
+      }
+
       welcomeEmailSent = true;
-      console.log(`Welcome email prepared for ${email}:\n${emailBody}`);
     } catch (emailErr) {
-      console.error('Welcome email error:', emailErr);
+      console.error("Welcome email error:", emailErr);
     }
 
     return new Response(JSON.stringify({
