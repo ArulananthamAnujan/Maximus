@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronUp, BookOpen, Clock, Star, CheckCircle2, AlertCircle, CreditCard as Edit2, Eye, Check, X, Users, Sparkles } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, BookOpen, Clock, Star, CheckCircle2, AlertCircle, CreditCard as Edit2, Eye, Check, X, Users, Sparkles, FileText, ChevronRight } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
 import { supabase } from '../../lib/supabase';
@@ -58,7 +58,8 @@ export default function TeacherExams() {
   const [submissions, setSubmissions] = useState<Record<string, Submission[]>>({});
   const [loading, setLoading] = useState(true);
   const [panel, setPanel] = useState<Panel>('list');
-  const [expandedExam, setExpandedExam] = useState<string | null>(null);
+  const [expandedExam, setExpandedExam]         = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [activeExam, setActiveExam] = useState<Exam | null>(null);
   const [reviewSub, setReviewSub] = useState<Submission | null>(null);
   const [finalising, setFinalising] = useState(false);
@@ -83,7 +84,10 @@ export default function TeacherExams() {
 
     const { data: coursesData } = await supabase
       .from('courses').select('id, title').eq('teacher_id', profile.id);
-    if (coursesData) setCourses(coursesData);
+    if (coursesData) {
+      setCourses(coursesData);
+      if (!selectedCourseId && coursesData.length > 0) setSelectedCourseId(coursesData[0].id);
+    }
 
     const courseIds = (coursesData || []).map(c => c.id);
     if (courseIds.length === 0) { setLoading(false); return; }
@@ -510,118 +514,211 @@ export default function TeacherExams() {
   }
 
   // ─── List panel ────────────────────────────────────────────────────────────
+  const courseExams = exams.filter(e => e.course_id === selectedCourseId);
+  const examCountByCourse = (cid: string) => exams.filter(e => e.course_id === cid).length;
+  const pendingByCourse   = (cid: string) => exams
+    .filter(e => e.course_id === cid)
+    .reduce((n, e) => n + (submissions[e.id] || []).filter(s => s.status === 'ai_graded' || s.status === 'submitted').length, 0);
+
   return (
-    <DashboardLayout navItems={teacherNavItems} role="teacher">
-      <div className="p-4 sm:p-6 max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-6 gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Exams</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">AI-marked, teacher-reviewed open-answer assessments</p>
-          </div>
-          <button onClick={() => setPanel('create')} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl transition-colors">
+    <DashboardLayout navItems={teacherNavItems} title="Exams" subtitle="AI-marked, teacher-reviewed open-answer assessments">
+      <div className="space-y-5">
+        <div className="flex justify-end">
+          <button onClick={() => setPanel('create')} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl transition-colors shadow-sm">
             <Plus className="w-4 h-4" /> New Exam
           </button>
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin" />
+          <div className="flex gap-5">
+            <div className="w-60 shrink-0 space-y-2">
+              {[1,2,3].map(i => <div key={i} className="h-14 rounded-xl bg-gray-100 dark:bg-navy-800 animate-pulse" />)}
+            </div>
+            <div className="flex-1 space-y-3">
+              {[1,2].map(i => <div key={i} className="h-20 rounded-2xl bg-gray-100 dark:bg-navy-800 animate-pulse" />)}
+            </div>
           </div>
-        ) : exams.length === 0 ? (
+        ) : courses.length === 0 ? (
           <div className="text-center py-20 text-slate-400">
             <Edit2 className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p className="font-medium">No exams yet</p>
-            <p className="text-sm mt-1">Create reading comprehension or open-answer exams for your students</p>
-            <button onClick={() => setPanel('create')} className="mt-4 flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl transition-colors mx-auto">
-              <Plus className="w-4 h-4" /> Create First Exam
-            </button>
+            <p className="font-medium">No courses yet</p>
+            <p className="text-sm mt-1">Create a course first, then add exams to it.</p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {exams.map(exam => {
-              const subs = submissions[exam.id] || [];
-              const pending = subs.filter(s => s.status === 'ai_graded' || s.status === 'submitted').length;
-              const isExpanded = expandedExam === exam.id;
-              return (
-                <div key={exam.id} className="bg-white dark:bg-navy-800 border border-slate-200 dark:border-navy-700 rounded-2xl overflow-hidden">
-                  <div className="flex items-center gap-3 p-5">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <h2 className="text-base font-bold text-slate-800 dark:text-white">{exam.title}</h2>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${exam.is_published ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {exam.is_published ? 'Published' : 'Draft'}
-                        </span>
-                        {pending > 0 && (
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" /> {pending} need{pending === 1 ? 's' : ''} review
-                          </span>
-                        )}
+          <div className="flex gap-5 items-start">
+            {/* ── Left: vertical subject tabs ──────────────────────────────── */}
+            <div className="w-60 shrink-0 space-y-1.5 sticky top-4">
+              <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-3 mb-3">Subjects</p>
+              {courses.map(course => {
+                const count    = examCountByCourse(course.id);
+                const pending  = pendingByCourse(course.id);
+                const isActive = course.id === selectedCourseId;
+                return (
+                  <button
+                    key={course.id}
+                    onClick={() => setSelectedCourseId(course.id)}
+                    className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
+                      isActive
+                        ? 'bg-teal-600 shadow-md shadow-teal-200 dark:shadow-teal-900/30'
+                        : 'hover:bg-gray-100 dark:hover:bg-navy-700/60 bg-white dark:bg-navy-800 border border-gray-100 dark:border-navy-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${isActive ? 'bg-white/20' : 'bg-teal-100 dark:bg-teal-900/20'}`}>
+                        <FileText className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-teal-600'}`} />
                       </div>
-                      <p className="text-sm text-slate-500">{exam.course?.title} · {exam.total_marks} marks · {exam.questions.length} questions</p>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold leading-snug truncate ${isActive ? 'text-white' : 'text-gray-800 dark:text-white'}`}>
+                          {course.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className={`text-xs ${isActive ? 'text-teal-100' : 'text-gray-400 dark:text-gray-500'}`}>
+                            {count} exam{count !== 1 ? 's' : ''}
+                          </p>
+                          {pending > 0 && (
+                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                              {pending} pending
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {isActive && <ChevronRight className="w-4 h-4 text-white shrink-0" />}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => togglePublish(exam)}
-                        className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${exam.is_published ? 'text-slate-600 border-slate-200 hover:bg-slate-50' : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50'}`}
-                      >
-                        {exam.is_published ? 'Unpublish' : 'Publish'}
-                      </button>
-                      <button
-                        onClick={() => setExpandedExam(isExpanded ? null : exam.id)}
-                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-                      >
-                        <Users className="w-3.5 h-3.5" /> {subs.length}
-                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </button>
-                      <button onClick={() => deleteExam(exam.id)} className="p-1.5 text-slate-400 hover:text-red-500 transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── Right: exam list for selected course ─────────────────────── */}
+            <div className="flex-1 min-w-0">
+              {selectedCourseId && (
+                <>
+                  {/* Course header */}
+                  <div className="flex items-center justify-between gap-3 mb-4 p-4 bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-teal-100 dark:bg-teal-900/20 flex items-center justify-center shrink-0">
+                        <FileText className="w-4 h-4 text-teal-600" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">
+                          {courses.find(c => c.id === selectedCourseId)?.title}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">{courseExams.length} exam{courseExams.length !== 1 ? 's' : ''}</p>
+                      </div>
                     </div>
                   </div>
 
-                  {isExpanded && (
-                    <div className="border-t border-slate-100 dark:border-navy-700">
-                      {subs.length === 0 ? (
-                        <p className="text-sm text-slate-400 text-center py-6">No submissions yet</p>
-                      ) : (
-                        <div className="divide-y divide-slate-100 dark:divide-navy-700">
-                          {subs.map(sub => {
-                            const isFinalised = sub.status === 'finalised';
-                            const needsReview = sub.status === 'ai_graded' || sub.status === 'submitted';
-                            return (
-                              <div key={sub.id} className="flex items-center gap-3 px-5 py-3">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{sub.student?.full_name || 'Student'}</p>
-                                  <p className="text-xs text-slate-400">{sub.student?.email} · {new Date(sub.submitted_at).toLocaleDateString('en-AU', { dateStyle: 'medium' })}</p>
-                                </div>
-                                <div className="flex items-center gap-3 shrink-0">
-                                  {isFinalised && (
-                                    <span className="text-sm font-bold text-teal-600">{sub.total_score}/{sub.max_score} ({sub.percentage}%)</span>
-                                  )}
-                                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                                    isFinalised ? 'bg-emerald-100 text-emerald-700' :
-                                    needsReview ? 'bg-amber-100 text-amber-700' :
-                                    'bg-slate-100 text-slate-500'
-                                  }`}>
-                                    {isFinalised ? 'Finalised' : needsReview ? 'Needs Review' : sub.status}
+                  {courseExams.length === 0 ? (
+                    <div className="text-center py-16 bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700">
+                      <Edit2 className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-navy-600" />
+                      <p className="font-semibold text-gray-900 dark:text-white mb-1">No exams for this subject</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Create reading comprehension or open-answer exams for your students.</p>
+                      <button onClick={() => setPanel('create')} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl transition-colors mx-auto">
+                        <Plus className="w-4 h-4" /> Create Exam
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {courseExams.map(exam => {
+                        const subs       = submissions[exam.id] || [];
+                        const pending    = subs.filter(s => s.status === 'ai_graded' || s.status === 'submitted').length;
+                        const isExpanded = expandedExam === exam.id;
+                        return (
+                          <div key={exam.id} className="bg-white dark:bg-navy-800 border border-gray-200 dark:border-navy-700 rounded-2xl overflow-hidden shadow-sm">
+                            <div className="flex items-center gap-3 p-5">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <h2 className="text-base font-bold text-gray-900 dark:text-white">{exam.title}</h2>
+                                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${exam.is_published ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-100 text-gray-500 dark:bg-navy-700 dark:text-gray-400'}`}>
+                                    {exam.is_published ? 'Published' : 'Draft'}
                                   </span>
-                                  <button
-                                    onClick={() => openReview(exam, sub)}
-                                    className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${needsReview ? 'text-white bg-teal-600 hover:bg-teal-700' : 'text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
-                                  >
-                                    {needsReview ? <><CheckCircle2 className="w-3.5 h-3.5" /> Review & Mark</> : <><Eye className="w-3.5 h-3.5" /> View</>}
-                                  </button>
+                                  {pending > 0 && (
+                                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 flex items-center gap-1">
+                                      <AlertCircle className="w-3 h-3" /> {pending} need{pending === 1 ? 's' : ''} review
+                                    </span>
+                                  )}
                                 </div>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                  {exam.total_marks} marks · {exam.questions.length} question{exam.questions.length !== 1 ? 's' : ''}
+                                  {exam.time_limit_minutes > 0 ? ` · ${exam.time_limit_minutes} min` : ''}
+                                </p>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  onClick={() => togglePublish(exam)}
+                                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
+                                    exam.is_published
+                                      ? 'text-gray-600 dark:text-gray-300 border-gray-200 dark:border-navy-600 hover:bg-gray-50 dark:hover:bg-navy-700'
+                                      : 'text-emerald-600 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                                  }`}
+                                >
+                                  {exam.is_published ? 'Unpublish' : 'Publish'}
+                                </button>
+                                <button
+                                  onClick={() => setExpandedExam(isExpanded ? null : exam.id)}
+                                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-navy-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+                                >
+                                  <Users className="w-3.5 h-3.5" /> {subs.length}
+                                  {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                </button>
+                                <button onClick={() => deleteExam(exam.id)} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="border-t border-gray-100 dark:border-navy-700">
+                                {subs.length === 0 ? (
+                                  <p className="text-sm text-gray-400 text-center py-6">No submissions yet</p>
+                                ) : (
+                                  <div className="divide-y divide-gray-100 dark:divide-navy-700">
+                                    {subs.map(sub => {
+                                      const isFinalised = sub.status === 'finalised';
+                                      const needsReview = sub.status === 'ai_graded' || sub.status === 'submitted';
+                                      return (
+                                        <div key={sub.id} className="flex items-center gap-3 px-5 py-3">
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">{sub.student?.full_name || 'Student'}</p>
+                                            <p className="text-xs text-gray-400">{sub.student?.email} · {new Date(sub.submitted_at).toLocaleDateString('en-AU', { dateStyle: 'medium' })}</p>
+                                          </div>
+                                          <div className="flex items-center gap-3 shrink-0">
+                                            {isFinalised && (
+                                              <span className="text-sm font-bold text-teal-600">{sub.total_score}/{sub.max_score} ({sub.percentage}%)</span>
+                                            )}
+                                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                                              isFinalised ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                              needsReview ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                              'bg-gray-100 text-gray-500 dark:bg-navy-700 dark:text-gray-400'
+                                            }`}>
+                                              {isFinalised ? 'Finalised' : needsReview ? 'Needs Review' : sub.status}
+                                            </span>
+                                            <button
+                                              onClick={() => openReview(exam, sub)}
+                                              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                                                needsReview
+                                                  ? 'text-white bg-teal-600 hover:bg-teal-700'
+                                                  : 'text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-navy-600 hover:bg-gray-50 dark:hover:bg-navy-700'
+                                              }`}
+                                            >
+                                              {needsReview ? <><CheckCircle2 className="w-3.5 h-3.5" /> Review & Mark</> : <><Eye className="w-3.5 h-3.5" /> View</>}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                </div>
-              );
-            })}
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>

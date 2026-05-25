@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, HelpCircle, Trash2, ChevronDown, ChevronUp, Pencil, X, Check, GripVertical, UserPlus, AlertCircle } from 'lucide-react';
+import {
+  Plus, HelpCircle, Trash2, ChevronDown, ChevronUp, Pencil, X, Check,
+  GripVertical, UserPlus, AlertCircle, BookOpen, ChevronRight,
+} from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
 import { supabase } from '../../lib/supabase';
@@ -21,33 +24,33 @@ const EMPTY_QUESTION = {
 };
 
 export default function TeacherQuizzes() {
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [quizzes, setQuizzes] = useState<QuizWithQuestions[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [courses, setCourses]   = useState<Course[]>([]);
+  const [quizzes, setQuizzes]   = useState<QuizWithQuestions[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Quiz | null>(null);
   const [deleteQuestionTarget, setDeleteQuestionTarget] = useState<{ quizId: string; question: QuizQuestion } | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
-  const [editQuiz, setEditQuiz] = useState<QuizWithQuestions | null>(null);
-  const [form, setForm] = useState<typeof EMPTY_FORM>({ ...EMPTY_FORM });
-  const [saving, setSaving] = useState(false);
+  const [editQuiz, setEditQuiz]     = useState<QuizWithQuestions | null>(null);
+  const [form, setForm]             = useState<typeof EMPTY_FORM>({ ...EMPTY_FORM });
+  const [saving, setSaving]         = useState(false);
 
-  const [addingQuestionTo, setAddingQuestionTo] = useState<string | null>(null);
-  const [editingQuestion, setEditingQuestion] = useState<{ quizId: string; question: QuizQuestion } | null>(null);
-  const [questionForm, setQuestionForm] = useState<typeof EMPTY_QUESTION>({ ...EMPTY_QUESTION });
-  const [savingQuestion, setSavingQuestion] = useState(false);
+  const [addingQuestionTo, setAddingQuestionTo]   = useState<string | null>(null);
+  const [editingQuestion, setEditingQuestion]     = useState<{ quizId: string; question: QuizQuestion } | null>(null);
+  const [questionForm, setQuestionForm]           = useState<typeof EMPTY_QUESTION>({ ...EMPTY_QUESTION });
+  const [savingQuestion, setSavingQuestion]       = useState(false);
 
-  // Extra attempts state
-  const [grantModal, setGrantModal] = useState<{ quiz: QuizWithQuestions } | null>(null);
+  const [grantModal, setGrantModal]   = useState<{ quiz: QuizWithQuestions } | null>(null);
   const [grantStudents, setGrantStudents] = useState<Array<{ id: string; full_name: string; email: string; attemptCount: number; extraGranted: number }>>([]);
   const [grantTarget, setGrantTarget] = useState<string | null>(null);
   const [grantAmount, setGrantAmount] = useState(1);
-  const [grantNote, setGrantNote] = useState('');
+  const [grantNote, setGrantNote]     = useState('');
   const [grantSaving, setGrantSaving] = useState(false);
 
   const { profile } = useAuth();
-  const { toast } = useToast();
+  const { toast }   = useToast();
 
   const fetchData = async () => {
     if (!profile) return;
@@ -63,14 +66,24 @@ export default function TeacherQuizzes() {
           .order('created_at', { ascending: false });
         if (quizzesData) setQuizzes(quizzesData as QuizWithQuestions[]);
       }
+      if (!selectedCourseId && coursesData.length > 0) {
+        setSelectedCourseId(coursesData[0].id);
+      }
     }
     setLoading(false);
   };
 
   useEffect(() => { fetchData(); }, [profile]);
 
+  // ── Derived: quizzes for the selected course ───────────────────────────────
+  const courseQuizzes = quizzes.filter(q => q.course_id === selectedCourseId);
+
+  // ── Quiz count per course for the tab badges ───────────────────────────────
+  const quizCountByCourse = (courseId: string) => quizzes.filter(q => q.course_id === courseId).length;
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM });
+    setForm({ ...EMPTY_FORM, course_id: selectedCourseId || '' });
     setShowCreate(true);
   };
 
@@ -140,10 +153,8 @@ export default function TeacherQuizzes() {
   const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingQuestion(true);
-
     const quiz = quizzes.find(q => q.id === (editingQuestion?.quizId || addingQuestionTo));
     const orderIndex = quiz?.questions?.length || 0;
-
     const payload: Partial<QuizQuestion> = {
       question: questionForm.question,
       type: questionForm.type,
@@ -151,7 +162,6 @@ export default function TeacherQuizzes() {
       correct_answer: questionForm.correct_answer,
       points: questionForm.points,
     };
-
     if (editingQuestion) {
       const { error } = await supabase.from('quiz_questions').update(payload).eq('id', editingQuestion.question.id);
       if (!error) { toast.success('Question updated'); setEditingQuestion(null); fetchData(); }
@@ -178,7 +188,6 @@ export default function TeacherQuizzes() {
     setGrantTarget(null);
     setGrantAmount(1);
     setGrantNote('');
-    // Load students who have attempted this quiz and exhausted attempts
     const [attemptsRes, extraRes] = await Promise.all([
       supabase.from('quiz_attempts').select('student_id, count:id').eq('quiz_id', quiz.id),
       supabase.from('quiz_extra_attempts').select('student_id, extra_attempts').eq('quiz_id', quiz.id),
@@ -222,6 +231,7 @@ export default function TeacherQuizzes() {
     setGrantSaving(false);
   };
 
+  // ── Sub-components ─────────────────────────────────────────────────────────
   const QuizFormModal = ({ title, onClose }: { title: string; onClose: () => void }) => (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
@@ -229,7 +239,7 @@ export default function TeacherQuizzes() {
         <button onClick={onClose} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
           <X className="w-4 h-4" />
         </button>
-        <h3 className="font-playfair text-xl font-bold text-gray-900 dark:text-white mb-5">{title}</h3>
+        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-5">{title}</h3>
         <form onSubmit={handleSaveQuiz} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Course</label>
@@ -276,7 +286,7 @@ export default function TeacherQuizzes() {
         <button onClick={onClose} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
           <X className="w-4 h-4" />
         </button>
-        <h3 className="font-playfair text-xl font-bold text-gray-900 dark:text-white mb-5">
+        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-5">
           {editingQuestion ? 'Edit Question' : 'Add Question'}
         </h3>
         <form onSubmit={handleSaveQuestion} className="space-y-4">
@@ -290,7 +300,6 @@ export default function TeacherQuizzes() {
               required
             />
           </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Type</label>
@@ -319,7 +328,9 @@ export default function TeacherQuizzes() {
 
           {questionForm.type === 'mcq' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Options <span className="text-xs text-gray-400 font-normal">(click to set correct answer)</span></label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Options <span className="text-xs text-gray-400 font-normal">(click circle to mark correct)</span>
+              </label>
               <div className="space-y-2">
                 {questionForm.options.map((opt, i) => (
                   <div key={i} className="flex items-center gap-2">
@@ -341,11 +352,7 @@ export default function TeacherQuizzes() {
                         const newOpts = [...questionForm.options];
                         const wasCorrect = questionForm.correct_answer === questionForm.options[i];
                         newOpts[i] = e.target.value;
-                        setQuestionForm(f => ({
-                          ...f,
-                          options: newOpts,
-                          correct_answer: wasCorrect ? e.target.value : f.correct_answer,
-                        }));
+                        setQuestionForm(f => ({ ...f, options: newOpts, correct_answer: wasCorrect ? e.target.value : f.correct_answer }));
                       }}
                       placeholder={`Option ${i + 1}`}
                       className="input-field text-sm py-2 flex-1"
@@ -383,7 +390,9 @@ export default function TeacherQuizzes() {
 
           {questionForm.type === 'short_answer' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Expected Answer <span className="text-xs text-gray-400 font-normal">(used for grading reference)</span></label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                Expected Answer <span className="text-xs text-gray-400 font-normal">(grading reference)</span>
+              </label>
               <input
                 type="text"
                 value={questionForm.correct_answer}
@@ -410,8 +419,9 @@ export default function TeacherQuizzes() {
     </div>
   );
 
+  // ── Main render ─────────────────────────────────────────────────────────────
   return (
-    <DashboardLayout navItems={teacherNavItems} title="Quizzes" subtitle="Create and manage quizzes for your courses">
+    <DashboardLayout navItems={teacherNavItems} title="Quizzes" subtitle="Create and manage quizzes by subject">
       <div className="space-y-5">
         <div className="flex justify-end">
           <button onClick={openCreate} className="btn-primary text-sm py-2 flex items-center gap-2">
@@ -420,150 +430,224 @@ export default function TeacherQuizzes() {
         </div>
 
         {loading ? (
-          <div className="space-y-4">{[1,2,3].map(i => (
-            <div key={i} className="card p-5 animate-pulse">
-              <div className="h-5 bg-gray-200 dark:bg-navy-700 rounded w-1/3 mb-2" />
-              <div className="h-4 bg-gray-200 dark:bg-navy-700 rounded w-1/2" />
+          <div className="flex gap-5">
+            <div className="w-60 shrink-0 space-y-2">
+              {[1,2,3].map(i => <div key={i} className="h-14 rounded-xl bg-gray-100 dark:bg-navy-800 animate-pulse" />)}
             </div>
-          ))}</div>
-        ) : quizzes.length === 0 ? (
+            <div className="flex-1 space-y-3">
+              {[1,2,3].map(i => <div key={i} className="h-16 rounded-xl bg-gray-100 dark:bg-navy-800 animate-pulse" />)}
+            </div>
+          </div>
+        ) : courses.length === 0 ? (
           <div className="card text-center py-16">
             <HelpCircle className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-1">No quizzes yet</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Create your first quiz to test student knowledge.</p>
+            <h3 className="font-semibold text-gray-900 dark:text-white mb-1">No courses yet</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Create a course first to add quizzes.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {quizzes.map(quiz => (
-              <div key={quiz.id} className="card overflow-hidden">
-                <div
-                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors"
-                  onClick={() => setExpanded(expanded === quiz.id ? null : quiz.id)}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <h3 className="font-semibold text-gray-900 dark:text-white">{quiz.title}</h3>
-                      <span className="text-xs bg-gold-100 dark:bg-gold-900/30 text-gold-700 dark:text-gold-400 px-2 py-0.5 rounded-full font-medium">
-                        {quiz.questions?.length || 0} question{quiz.questions?.length !== 1 ? 's' : ''}
-                      </span>
+          <div className="flex gap-5 items-start">
+            {/* ── Left: vertical subject tabs ──────────────────────────────── */}
+            <div className="w-60 shrink-0 space-y-1.5 sticky top-4">
+              <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-3 mb-3">Subjects</p>
+              {courses.map(course => {
+                const count    = quizCountByCourse(course.id);
+                const isActive = course.id === selectedCourseId;
+                return (
+                  <button
+                    key={course.id}
+                    onClick={() => setSelectedCourseId(course.id)}
+                    className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
+                      isActive
+                        ? 'bg-sky-600 shadow-md shadow-sky-200 dark:shadow-sky-900/30'
+                        : 'hover:bg-gray-100 dark:hover:bg-navy-700/60 bg-white dark:bg-navy-800 border border-gray-100 dark:border-navy-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${isActive ? 'bg-white/20' : 'bg-sky-100 dark:bg-sky-900/20'}`}>
+                        <BookOpen className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-sky-600'}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold leading-snug truncate ${isActive ? 'text-white' : 'text-gray-800 dark:text-white'}`}>
+                          {course.title}
+                        </p>
+                        <p className={`text-xs mt-0.5 ${isActive ? 'text-sky-100' : 'text-gray-400 dark:text-gray-500'}`}>
+                          {count} quiz{count !== 1 ? 'zes' : ''}
+                        </p>
+                      </div>
+                      {isActive && <ChevronRight className="w-4 h-4 text-white shrink-0" />}
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {quiz.time_limit_minutes ? `${quiz.time_limit_minutes} min limit` : 'No time limit'} &bull; Pass: {quiz.pass_mark}% &bull; {quiz.max_attempts} attempt{quiz.max_attempts !== 1 ? 's' : ''}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0 ml-3">
-                    <button
-                      onClick={e => openAddQuestion(quiz.id, e)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400 hover:opacity-80 transition-opacity"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Question
-                    </button>
-                    <button
-                      onClick={e => openGrantModal(quiz, e)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400 hover:opacity-80 transition-opacity"
-                      title="Grant extra attempts to students"
-                    >
-                      <UserPlus className="w-3.5 h-3.5" /> Attempts
-                    </button>
-                    <button
-                      onClick={e => openEdit(quiz, e)}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); setDeleteTarget(quiz); }}
-                      className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                    {expanded === quiz.id
-                      ? <ChevronUp className="w-5 h-5 text-gray-400 ml-1" />
-                      : <ChevronDown className="w-5 h-5 text-gray-400 ml-1" />}
-                  </div>
-                </div>
+                  </button>
+                );
+              })}
+            </div>
 
-                {expanded === quiz.id && (
-                  <div className="border-t border-gray-100 dark:border-navy-700">
-                    {quiz.questions && quiz.questions.length > 0 ? (
-                      <div className="p-4 space-y-3">
-                        {quiz.questions
-                          .slice()
-                          .sort((a, b) => a.order_index - b.order_index)
-                          .map((q, idx) => (
-                          <div key={q.id} className="bg-gray-50 dark:bg-navy-700/50 rounded-xl p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-start gap-3 flex-1 min-w-0">
-                                <GripVertical className="w-4 h-4 text-gray-300 dark:text-navy-500 mt-0.5 shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">{idx + 1}. {q.question}</p>
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded-full">
-                                      {q.type === 'mcq' ? 'Multiple Choice' : q.type === 'true_false' ? 'True/False' : 'Short Answer'}
-                                    </span>
-                                    <span className="text-xs text-gray-400">{q.points} pt{q.points !== 1 ? 's' : ''}</span>
-                                  </div>
-                                  {q.options && q.options.length > 0 && (
-                                    <div className="mt-2 space-y-1">
-                                      {q.options.map((opt, i) => (
-                                        <div key={i} className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 ${
-                                          opt === q.correct_answer
-                                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium'
-                                            : 'text-gray-500 dark:text-gray-400'
-                                        }`}>
-                                          {opt === q.correct_answer && <Check className="w-3 h-3" />}
-                                          {opt}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {q.type === 'short_answer' && q.correct_answer && (
-                                    <div className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium flex items-center gap-1.5">
-                                      <Check className="w-3 h-3" /> {q.correct_answer}
-                                    </div>
-                                  )}
-                                </div>
+            {/* ── Right: quiz list for selected course ─────────────────────── */}
+            <div className="flex-1 min-w-0">
+              {selectedCourseId && (
+                <>
+                  {/* Course header */}
+                  <div className="flex items-center justify-between gap-3 mb-4 p-4 bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-sky-100 dark:bg-sky-900/20 flex items-center justify-center shrink-0">
+                        <BookOpen className="w-4.5 h-4.5 text-sky-600" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">
+                          {courses.find(c => c.id === selectedCourseId)?.title}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">{courseQuizzes.length} quiz{courseQuizzes.length !== 1 ? 'zes' : ''}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {courseQuizzes.length === 0 ? (
+                    <div className="card text-center py-14">
+                      <HelpCircle className="w-9 h-9 text-gray-300 dark:text-navy-600 mx-auto mb-3" />
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">No quizzes for this subject</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Create a quiz to test student knowledge.</p>
+                      <button onClick={openCreate} className="btn-primary text-sm py-2 flex items-center gap-2 mx-auto">
+                        <Plus className="w-4 h-4" /> New Quiz
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {courseQuizzes.map(quiz => (
+                        <div key={quiz.id} className="card overflow-hidden">
+                          <div
+                            className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-navy-700/30 transition-colors"
+                            onClick={() => setExpanded(expanded === quiz.id ? null : quiz.id)}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <h3 className="font-semibold text-gray-900 dark:text-white">{quiz.title}</h3>
+                                <span className="text-xs bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 px-2 py-0.5 rounded-full font-medium">
+                                  {quiz.questions?.length || 0} Q{quiz.questions?.length !== 1 ? 's' : ''}
+                                </span>
+                                {quiz.is_published ? (
+                                  <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full font-medium">Published</span>
+                                ) : (
+                                  <span className="text-xs bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded-full font-medium">Draft</span>
+                                )}
                               </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                  onClick={e => openEditQuestion(quiz.id, q, e)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-white dark:hover:bg-navy-600 transition-colors"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={e => { e.stopPropagation(); setDeleteQuestionTarget({ quizId: quiz.id, question: q }); }}
-                                  className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {quiz.time_limit_minutes ? `${quiz.time_limit_minutes} min` : 'No time limit'} · Pass: {quiz.pass_mark}% · {quiz.max_attempts} attempt{quiz.max_attempts !== 1 ? 's' : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-3">
+                              <button
+                                onClick={e => openAddQuestion(quiz.id, e)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400 hover:opacity-80 transition-opacity"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Question
+                              </button>
+                              <button
+                                onClick={e => openGrantModal(quiz, e)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400 hover:opacity-80 transition-opacity"
+                                title="Grant extra attempts"
+                              >
+                                <UserPlus className="w-3.5 h-3.5" /> Attempts
+                              </button>
+                              <button
+                                onClick={e => openEdit(quiz, e)}
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={e => { e.stopPropagation(); setDeleteTarget(quiz); }}
+                                className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              {expanded === quiz.id
+                                ? <ChevronUp className="w-5 h-5 text-gray-400 ml-1" />
+                                : <ChevronDown className="w-5 h-5 text-gray-400 ml-1" />}
                             </div>
                           </div>
-                        ))}
-                        <button
-                          onClick={e => openAddQuestion(quiz.id, e)}
-                          className="w-full py-2.5 border-2 border-dashed border-gray-200 dark:border-navy-600 rounded-xl text-sm text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <Plus className="w-4 h-4" /> Add another question
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="p-8 text-center">
-                        <HelpCircle className="w-8 h-8 text-gray-300 dark:text-navy-500 mx-auto mb-2" />
-                        <p className="text-sm text-gray-400 mb-3">No questions yet</p>
-                        <button
-                          onClick={e => openAddQuestion(quiz.id, e)}
-                          className="btn-primary text-sm py-2 flex items-center gap-2 mx-auto"
-                        >
-                          <Plus className="w-4 h-4" /> Add First Question
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+
+                          {expanded === quiz.id && (
+                            <div className="border-t border-gray-100 dark:border-navy-700">
+                              {quiz.questions && quiz.questions.length > 0 ? (
+                                <div className="p-4 space-y-3">
+                                  {quiz.questions.slice().sort((a, b) => a.order_index - b.order_index).map((q, idx) => (
+                                    <div key={q.id} className="bg-gray-50 dark:bg-navy-700/50 rounded-xl p-4">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                                          <GripVertical className="w-4 h-4 text-gray-300 dark:text-navy-500 mt-0.5 shrink-0" />
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">{idx + 1}. {q.question}</p>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded-full">
+                                                {q.type === 'mcq' ? 'Multiple Choice' : q.type === 'true_false' ? 'True/False' : 'Short Answer'}
+                                              </span>
+                                              <span className="text-xs text-gray-400">{q.points} pt{q.points !== 1 ? 's' : ''}</span>
+                                            </div>
+                                            {q.options && q.options.length > 0 && (
+                                              <div className="mt-2 space-y-1">
+                                                {q.options.map((opt, i) => (
+                                                  <div key={i} className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 ${
+                                                    opt === q.correct_answer
+                                                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium'
+                                                      : 'text-gray-500 dark:text-gray-400'
+                                                  }`}>
+                                                    {opt === q.correct_answer && <Check className="w-3 h-3" />}
+                                                    {opt}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {q.type === 'short_answer' && q.correct_answer && (
+                                              <div className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium flex items-center gap-1.5">
+                                                <Check className="w-3 h-3" /> {q.correct_answer}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <button
+                                            onClick={e => openEditQuestion(quiz.id, q, e)}
+                                            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-white dark:hover:bg-navy-600 transition-colors"
+                                          >
+                                            <Pencil className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            onClick={e => { e.stopPropagation(); setDeleteQuestionTarget({ quizId: quiz.id, question: q }); }}
+                                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <button
+                                    onClick={e => openAddQuestion(quiz.id, e)}
+                                    className="w-full py-2.5 border-2 border-dashed border-gray-200 dark:border-navy-600 rounded-xl text-sm text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-colors flex items-center justify-center gap-2"
+                                  >
+                                    <Plus className="w-4 h-4" /> Add another question
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="p-8 text-center">
+                                  <HelpCircle className="w-8 h-8 text-gray-300 dark:text-navy-500 mx-auto mb-2" />
+                                  <p className="text-sm text-gray-400 mb-3">No questions yet</p>
+                                  <button
+                                    onClick={e => openAddQuestion(quiz.id, e)}
+                                    className="btn-primary text-sm py-2 flex items-center gap-2 mx-auto"
+                                  >
+                                    <Plus className="w-4 h-4" /> Add First Question
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -600,7 +684,6 @@ export default function TeacherQuizzes() {
         confirmText="Delete"
       />
 
-      {/* ── Grant extra attempts modal ─────────────────────────────────── */}
       {grantModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setGrantModal(null)} />
@@ -627,11 +710,7 @@ export default function TeacherQuizzes() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Select Student</label>
-                  <select
-                    value={grantTarget || ''}
-                    onChange={e => setGrantTarget(e.target.value)}
-                    className="input-field"
-                  >
+                  <select value={grantTarget || ''} onChange={e => setGrantTarget(e.target.value)} className="input-field">
                     <option value="">Choose a student...</option>
                     {grantStudents.map(s => (
                       <option key={s.id} value={s.id}>
@@ -640,21 +719,18 @@ export default function TeacherQuizzes() {
                     ))}
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Extra Attempts to Grant</label>
                   <select value={grantAmount} onChange={e => setGrantAmount(parseInt(e.target.value))} className="input-field">
                     {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} attempt{n !== 1 ? 's' : ''}</option>)}
                   </select>
                 </div>
-
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                     Note <span className="text-gray-400 font-normal text-xs">(optional)</span>
                   </label>
                   <input type="text" value={grantNote} onChange={e => setGrantNote(e.target.value)} className="input-field" placeholder="e.g. Technical issue during first attempt" />
                 </div>
-
                 <div className="flex gap-3 justify-end pt-2">
                   <button type="button" onClick={() => setGrantModal(null)} className="px-4 py-2 text-sm border border-gray-200 dark:border-navy-600 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
                     Cancel
