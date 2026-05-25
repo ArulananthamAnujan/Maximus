@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   HelpCircle, Clock, CheckCircle2, XCircle, AlertCircle,
   Trophy, ChevronRight, ChevronDown, ChevronUp, Lock, Info,
+  BookOpen, GraduationCap,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -11,15 +12,14 @@ import { useMyEnrollments } from '../../hooks/useProgress';
 import { toast as sonnerToast } from 'sonner';
 import type { Quiz, QuizQuestion } from '../../types';
 
-// Local type aligned with actual quiz_attempts table schema
 interface QuizAttemptRow {
   id: string;
   student_id: string;
   quiz_id: string;
   course_id: string;
-  score: number;        // raw points earned
+  score: number;
   total_points: number;
-  percentage: number;   // 0-100
+  percentage: number;
   passed: boolean;
   answers: Record<string, string>;
   attempt_number: number;
@@ -33,13 +33,19 @@ interface QuizWithCourse extends Quiz {
   extraAttemptsGranted: number;
 }
 
+interface CourseGroup {
+  courseId: string;
+  courseTitle: string;
+  quizzes: QuizWithCourse[];
+}
+
 type ViewState = 'list' | 'taking' | 'results';
 
 const MAX_BASE_ATTEMPTS = 3;
 
 export default function StudentQuizzes() {
   const { profile } = useAuth();
-  const [quizzes, setQuizzes]           = useState<QuizWithCourse[]>([]);
+  const [groups, setGroups]             = useState<CourseGroup[]>([]);
   const [loading, setLoading]           = useState(true);
   const [view, setView]                 = useState<ViewState>('list');
   const [activeQuiz, setActiveQuiz]     = useState<QuizWithCourse | null>(null);
@@ -49,8 +55,9 @@ export default function StudentQuizzes() {
   const [lastAttempt, setLastAttempt]   = useState<QuizAttemptRow | null>(null);
   const [submitting, setSubmitting]     = useState(false);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
-  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startedAtRef  = useRef<string>('');
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startedAtRef = useRef<string>('');
 
   const { data: enrollments = [] } = useMyEnrollments();
 
@@ -82,18 +89,35 @@ export default function StudentQuizzes() {
       extraByQuiz.set(r.quiz_id, (extraByQuiz.get(r.quiz_id) || 0) + r.extra_attempts);
     });
 
-    setQuizzes((quizRes.data || []).map(q => ({
+    const quizzes: QuizWithCourse[] = (quizRes.data || []).map(q => ({
       ...q,
       attempts: attemptsByQuiz.get(q.id) || [],
       extraAttemptsGranted: extraByQuiz.get(q.id) || 0,
-    })) as QuizWithCourse[]);
+    })) as QuizWithCourse[];
+
+    // Group by course
+    const groupMap = new Map<string, CourseGroup>();
+    quizzes.forEach(q => {
+      const cid = q.course?.id || q.course_id;
+      if (!groupMap.has(cid)) {
+        groupMap.set(cid, { courseId: cid, courseTitle: q.course?.title || 'Unknown Course', quizzes: [] });
+      }
+      groupMap.get(cid)!.quizzes.push(q);
+    });
+
+    const grouped = Array.from(groupMap.values());
+    setGroups(grouped);
+
+    // Auto-select first course
+    if (grouped.length > 0 && !selectedCourseId) {
+      setSelectedCourseId(grouped[0].courseId);
+    }
     setLoading(false);
   };
 
   const totalAllowed = (quiz: QuizWithCourse) => MAX_BASE_ATTEMPTS + quiz.extraAttemptsGranted;
   const attemptsLeft = (quiz: QuizWithCourse) => totalAllowed(quiz) - quiz.attempts.length;
 
-  // Derive pass mark: prefer pass_mark, fall back to pass_percentage, default 60
   const getPassMark = (quiz: QuizWithCourse) =>
     (quiz as Quiz & { pass_mark?: number; pass_percentage?: number }).pass_mark
     ?? (quiz as Quiz & { pass_percentage?: number }).pass_percentage
@@ -110,7 +134,6 @@ export default function StudentQuizzes() {
       sonnerToast.error('No attempts remaining. Ask your teacher for extra attempts.');
       return;
     }
-
     const { data } = await supabase.from('quiz_questions').select('*').eq('quiz_id', quiz.id).order('order_index');
     setQuestions((data || []) as QuizQuestion[]);
     setActiveQuiz(quiz);
@@ -144,7 +167,6 @@ export default function StudentQuizzes() {
     let score = 0, totalPts = 0;
     questions.forEach(q => {
       totalPts += q.points;
-      // correct_answer_text takes priority; fall back to string comparison of correct_answer index
       const correctText = (q as QuizQuestion & { correct_answer_text?: string }).correct_answer_text
         ?? String(q.correct_answer);
       if (q.type !== 'short_answer' && answers[q.id]?.toLowerCase() === correctText.toLowerCase()) {
@@ -175,10 +197,7 @@ export default function StudentQuizzes() {
       return;
     }
 
-    if (passed) {
-      await checkAndIssueCertificate(activeQuiz.course_id);
-    }
-
+    if (passed) await checkAndIssueCertificate(activeQuiz.course_id);
     if (data) setLastAttempt(data as QuizAttemptRow);
     sonnerToast[passed ? 'success' : 'error'](passed ? `You passed with ${pct}%!` : `You scored ${pct}%. Keep trying!`);
     setSubmitting(false);
@@ -188,101 +207,103 @@ export default function StudentQuizzes() {
 
   const checkAndIssueCertificate = async (courseId: string) => {
     if (!profile) return;
-
-    // All required quizzes must be passed
     const { data: allQuizzes } = await supabase.from('quizzes').select('id, is_required').eq('course_id', courseId);
     if (!allQuizzes) return;
     const requiredQuizIds = allQuizzes.filter(q => q.is_required).map(q => q.id);
-
     if (requiredQuizIds.length > 0) {
-      const { data: passedAttempts } = await supabase
-        .from('quiz_attempts').select('quiz_id, passed')
-        .eq('student_id', profile.id).eq('passed', true);
+      const { data: passedAttempts } = await supabase.from('quiz_attempts').select('quiz_id, passed').eq('student_id', profile.id).eq('passed', true);
       const passedQuizIds = new Set((passedAttempts || []).map(a => a.quiz_id));
       if (!requiredQuizIds.every(id => passedQuizIds.has(id))) return;
     }
-
-    // All published exams for this course must have a finalised/graded submission
     const { data: allExams } = await supabase.from('exams').select('id').eq('course_id', courseId).eq('is_published', true);
     if (allExams && allExams.length > 0) {
       const examIds = allExams.map(e => e.id);
-      const { data: examSubs } = await supabase
-        .from('exam_submissions').select('exam_id, status, percentage')
-        .eq('student_id', profile.id).in('exam_id', examIds);
+      const { data: examSubs } = await supabase.from('exam_submissions').select('exam_id, status').eq('student_id', profile.id).in('exam_id', examIds);
       const gradedSubs = new Set((examSubs || []).filter(s => s.status === 'finalised' || s.status === 'graded').map(s => s.exam_id));
       if (!examIds.every(id => gradedSubs.has(id))) return;
     }
-
-    // Issue certificate if not already issued
     const { data: existing } = await supabase.from('certificates').select('id').eq('student_id', profile.id).eq('course_id', courseId).maybeSingle();
     if (existing) return;
-
     await supabase.from('certificates').insert({ student_id: profile.id, course_id: courseId });
     sonnerToast.success('Certificate earned! Check your certificates page.');
   };
 
   const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
-  // ── Taking view ─────────────────────────────────────────────────────────────
+  // ── Taking view ──────────────────────────────────────────────────────────────
   if (view === 'taking' && activeQuiz) {
     const timeLimitMins = (activeQuiz as Quiz & { time_limit?: number; time_limit_minutes?: number }).time_limit_minutes
       ?? (activeQuiz as Quiz & { time_limit?: number }).time_limit ?? 0;
     return (
-      <DashboardLayout navItems={studentNavItems} title={activeQuiz.title} subtitle="Answer all questions carefully">
-        <div className="max-w-3xl mx-auto space-y-6">
-          <div className="flex items-center justify-between bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 p-4 shadow-sm">
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {questions.length} questions · Pass mark: {getPassMark(activeQuiz)}%
-            </span>
+      <DashboardLayout navItems={studentNavItems} title={activeQuiz.title} subtitle={activeQuiz.course?.title}>
+        <div className="max-w-3xl mx-auto space-y-5">
+          {/* Progress bar + meta */}
+          <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 p-4 shadow-sm flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+              <span className="font-semibold text-gray-900 dark:text-white">{questions.length} questions</span>
+              <span>·</span>
+              <span>Pass mark: <strong>{getPassMark(activeQuiz)}%</strong></span>
+            </div>
             {timeLimitMins > 0 && (
-              <div className={`flex items-center gap-2 font-mono font-bold text-lg ${timeLeft < 60 ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>
-                <Clock className="w-5 h-5" /> {formatTime(timeLeft)}
+              <div className={`flex items-center gap-2 font-mono font-bold text-lg px-4 py-1.5 rounded-xl ${
+                timeLeft < 60 ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : 'bg-gray-100 dark:bg-navy-700 text-gray-900 dark:text-white'
+              }`}>
+                <Clock className="w-4 h-4" /> {formatTime(timeLeft)}
               </div>
             )}
           </div>
 
           {questions.map((q, idx) => (
             <div key={q.id} className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 p-6 shadow-sm">
-              <p className="font-semibold text-gray-900 dark:text-white mb-4">
-                <span className="text-sky-600 mr-2 font-bold">{idx + 1}.</span>{q.question}
-                {q.points > 1 && <span className="ml-2 text-xs text-gray-400 font-normal">({q.points} pts)</span>}
-              </p>
+              <div className="flex items-start gap-3 mb-5">
+                <span className="w-7 h-7 rounded-lg bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {idx + 1}
+                </span>
+                <p className="font-semibold text-gray-900 dark:text-white leading-snug flex-1">
+                  {q.question}
+                  {q.points > 1 && <span className="ml-2 text-xs text-gray-400 font-normal">({q.points} pts)</span>}
+                </p>
+              </div>
               {q.type === 'short_answer' ? (
                 <textarea
                   value={answers[q.id] || ''}
                   onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                  className="input-field min-h-20 resize-none"
+                  className="w-full border border-gray-200 dark:border-navy-600 rounded-xl px-4 py-3 text-sm bg-gray-50 dark:bg-navy-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-transparent resize-none min-h-24"
                   placeholder="Type your answer..."
                 />
               ) : (
                 <div className="space-y-2">
-                  {(q.options as string[]).map(opt => (
-                    <label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                      answers[q.id] === opt
-                        ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20 shadow-sm'
-                        : 'border-gray-200 dark:border-navy-600 hover:bg-gray-50 dark:hover:bg-navy-700'
-                    }`}>
-                      <div className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
-                        answers[q.id] === opt ? 'border-sky-500 bg-sky-500' : 'border-gray-300 dark:border-navy-500'
+                  {(q.options as string[]).map((opt, oi) => {
+                    const letters = ['A','B','C','D','E'];
+                    const selected = answers[q.id] === opt;
+                    return (
+                      <label key={opt} className={`flex items-center gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                        selected
+                          ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20 shadow-sm'
+                          : 'border-gray-200 dark:border-navy-600 hover:bg-gray-50 dark:hover:bg-navy-700/50'
                       }`}>
-                        {answers[q.id] === opt && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
-                      </div>
-                      <input type="radio" name={q.id} value={opt} checked={answers[q.id] === opt}
-                        onChange={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))} className="sr-only" />
-                      <span className="text-sm text-gray-800 dark:text-gray-200">{opt}</span>
-                    </label>
-                  ))}
+                        <div className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${
+                          selected ? 'bg-sky-500 text-white' : 'bg-gray-100 dark:bg-navy-600 text-gray-500 dark:text-gray-400'
+                        }`}>
+                          {letters[oi] || oi + 1}
+                        </div>
+                        <input type="radio" name={q.id} value={opt} checked={selected}
+                          onChange={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))} className="sr-only" />
+                        <span className="text-sm text-gray-800 dark:text-gray-200">{opt}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </div>
           ))}
 
-          <div className="flex gap-3 justify-end pb-6">
-            <button onClick={() => setView('list')} className="px-4 py-2.5 text-sm font-semibold border border-gray-200 dark:border-navy-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
+          <div className="flex gap-3 justify-end pb-8">
+            <button onClick={() => setView('list')} className="px-5 py-2.5 text-sm font-semibold border border-gray-200 dark:border-navy-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
               Cancel
             </button>
             <button onClick={submitQuiz} disabled={submitting}
-              className="px-6 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-60 shadow-sm">
+              className="px-7 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-60 shadow-sm">
               {submitting ? 'Submitting...' : 'Submit Quiz'}
             </button>
           </div>
@@ -296,9 +317,8 @@ export default function StudentQuizzes() {
     const used = activeQuiz.attempts.length + 1;
     const left = attemptsLeft(activeQuiz) - 1;
     const exhausted = left <= 0;
-
     return (
-      <DashboardLayout navItems={studentNavItems} title="Quiz Results" subtitle="">
+      <DashboardLayout navItems={studentNavItems} title="Quiz Results" subtitle={activeQuiz.course?.title}>
         <div className="max-w-xl mx-auto">
           <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 p-8 text-center shadow-sm">
             <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-5 ${
@@ -325,16 +345,14 @@ export default function StudentQuizzes() {
                 <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-bold text-amber-700 dark:text-amber-300">No attempts remaining</p>
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                    Contact your teacher to request additional attempts.
-                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Contact your teacher to request additional attempts.</p>
                 </div>
               </div>
             )}
 
             <div className="flex gap-3 justify-center">
               <button onClick={() => setView('list')}
-                className="px-4 py-2.5 text-sm font-semibold border border-gray-200 dark:border-navy-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
+                className="px-5 py-2.5 text-sm font-semibold border border-gray-200 dark:border-navy-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
                 Back to Quizzes
               </button>
               {!lastAttempt.passed && !exhausted && (
@@ -356,113 +374,214 @@ export default function StudentQuizzes() {
     );
   }
 
-  // ── List view ────────────────────────────────────────────────────────────────
-  return (
-    <DashboardLayout navItems={studentNavItems} title="Quizzes" subtitle="Test your knowledge">
-      <div className="space-y-4">
-        {loading ? (
-          <div className="space-y-4">{[1, 2, 3].map(i => <div key={i} className="bg-white dark:bg-navy-800 rounded-2xl h-24 animate-pulse" />)}</div>
-        ) : quizzes.length === 0 ? (
-          <div className="text-center py-20">
-            <HelpCircle className="w-12 h-12 text-gray-300 dark:text-navy-600 mx-auto mb-3" />
-            <p className="text-gray-500 dark:text-gray-400">No quizzes available yet</p>
-          </div>
-        ) : (
-          quizzes.map(quiz => {
-            const best = quiz.attempts.reduce<QuizAttemptRow | null>((b, a) => (!b || a.percentage > b.percentage ? a : b), null);
-            const left  = attemptsLeft(quiz);
-            const total = totalAllowed(quiz);
-            const canAttempt = left > 0;
-            const hasEnrollment = enrollments.some(e => e.course_id === quiz.course_id && (e.payment_status === 'not_required' || e.payment_status === 'completed'));
-            const historyOpen = expandedHistory.has(quiz.id);
-            const sortedAttempts = [...quiz.attempts].sort((a, b) =>
-              new Date(b.submitted_at ?? b.created_at).getTime() - new Date(a.submitted_at ?? a.created_at).getTime()
-            );
-            const passMark = getPassMark(quiz);
+  // ── List view — university-style vertical subject tabs ───────────────────────
+  const activeGroup = groups.find(g => g.courseId === selectedCourseId) ?? groups[0] ?? null;
 
-            return (
-              <div key={quiz.id} className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm overflow-hidden">
-                <div className="p-5 flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                    best?.passed ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-sky-100 dark:bg-sky-900/20'
-                  }`}>
-                    {best?.passed
-                      ? <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-                      : <HelpCircle className="w-6 h-6 text-sky-600" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900 dark:text-white">{quiz.title}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{quiz.course?.title}</p>
-                    <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
-                      <span>Pass: {passMark}%</span>
-                      {best && (
-                        <span className={best.passed ? 'text-emerald-600 font-semibold' : 'text-red-500'}>
-                          Best: {best.percentage}%
-                        </span>
-                      )}
-                      <span className={left <= 0 ? 'text-red-500 font-semibold' : left === 1 ? 'text-amber-500 font-semibold' : ''}>
-                        {left}/{total} attempts left
-                      </span>
-                      {quiz.extraAttemptsGranted > 0 && (
-                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{quiz.extraAttemptsGranted} bonus</span>
-                      )}
+  const courseStats = (group: CourseGroup) => {
+    const total  = group.quizzes.length;
+    const passed = group.quizzes.filter(q => q.attempts.some(a => a.passed)).length;
+    return { total, passed };
+  };
+
+  return (
+    <DashboardLayout navItems={studentNavItems} title="Quizzes" subtitle="Test your knowledge by subject">
+      {loading ? (
+        <div className="flex gap-5">
+          <div className="w-64 shrink-0 space-y-2">
+            {[1,2,3].map(i => <div key={i} className="h-16 rounded-xl bg-gray-100 dark:bg-navy-800 animate-pulse" />)}
+          </div>
+          <div className="flex-1 space-y-3">
+            {[1,2,3].map(i => <div key={i} className="h-24 rounded-2xl bg-gray-100 dark:bg-navy-800 animate-pulse" />)}
+          </div>
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="text-center py-24">
+          <div className="w-20 h-20 rounded-2xl bg-sky-50 dark:bg-sky-900/20 flex items-center justify-center mx-auto mb-4">
+            <HelpCircle className="w-10 h-10 text-sky-400" />
+          </div>
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">No quizzes available yet</h3>
+          <p className="text-gray-500 dark:text-gray-400">Enrol in a course to access quizzes.</p>
+        </div>
+      ) : (
+        <div className="flex gap-5 items-start">
+          {/* ── Left: vertical course tabs ─────────────────────────────────── */}
+          <div className="w-64 shrink-0 space-y-1.5 sticky top-4">
+            <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest px-3 mb-3">Subjects</p>
+            {groups.map(group => {
+              const { total, passed } = courseStats(group);
+              const isActive = group.courseId === (selectedCourseId ?? groups[0]?.courseId);
+              const allPassed = passed === total && total > 0;
+              return (
+                <button
+                  key={group.courseId}
+                  onClick={() => setSelectedCourseId(group.courseId)}
+                  className={`w-full text-left px-4 py-3.5 rounded-xl transition-all group ${
+                    isActive
+                      ? 'bg-sky-600 shadow-md shadow-sky-200 dark:shadow-sky-900/30'
+                      : 'hover:bg-gray-100 dark:hover:bg-navy-700/60 bg-white dark:bg-navy-800 border border-gray-100 dark:border-navy-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      isActive ? 'bg-white/20' : allPassed ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-sky-100 dark:bg-sky-900/20'
+                    }`}>
+                      {allPassed
+                        ? <CheckCircle2 className={`w-4 h-4 ${isActive ? 'text-white' : 'text-emerald-600'}`} />
+                        : <BookOpen className={`w-4 h-4 ${isActive ? 'text-white' : 'text-sky-600'}`} />}
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold leading-snug truncate ${isActive ? 'text-white' : 'text-gray-800 dark:text-white'}`}>
+                        {group.courseTitle}
+                      </p>
+                      <p className={`text-xs mt-0.5 ${isActive ? 'text-sky-100' : 'text-gray-400 dark:text-gray-500'}`}>
+                        {passed}/{total} passed
+                      </p>
+                    </div>
+                    {isActive && <ChevronRight className="w-4 h-4 text-white shrink-0" />}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {quiz.attempts.length > 0 && (
-                      <button onClick={() => setExpandedHistory(prev => {
-                        const n = new Set(prev);
-                        if (n.has(quiz.id)) n.delete(quiz.id); else n.add(quiz.id);
-                        return n;
-                      })} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors" title="History">
-                        {historyOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                      </button>
-                    )}
-                    {!hasEnrollment ? (
-                      <div className="flex items-center gap-1 text-sm text-gray-400"><Lock className="w-4 h-4" /> Locked</div>
-                    ) : canAttempt ? (
-                      <button onClick={() => startQuiz(quiz)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
-                        {quiz.attempts.length === 0 ? 'Start' : 'Retry'} <ChevronRight className="w-4 h-4" />
-                      </button>
-                    ) : (
-                      <div className="flex items-center gap-1 text-sm text-amber-500">
-                        <AlertCircle className="w-4 h-4" /> Ask teacher
-                      </div>
-                    )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ── Right: quiz list for selected course ──────────────────────── */}
+          <div className="flex-1 min-w-0">
+            {activeGroup && (
+              <>
+                {/* Course header */}
+                <div className="flex items-center gap-3 mb-5 p-4 bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm">
+                  <div className="w-10 h-10 rounded-xl bg-sky-100 dark:bg-sky-900/20 flex items-center justify-center shrink-0">
+                    <GraduationCap className="w-5 h-5 text-sky-600" />
+                  </div>
+                  <div>
+                    <h2 className="font-bold text-gray-900 dark:text-white">{activeGroup.courseTitle}</h2>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {activeGroup.quizzes.length} quiz{activeGroup.quizzes.length !== 1 ? 'zes' : ''} ·{' '}
+                      {courseStats(activeGroup).passed} passed
+                    </p>
                   </div>
                 </div>
 
-                {historyOpen && sortedAttempts.length > 0 && (
-                  <div className="border-t border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/30">
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide px-5 py-2">Attempt History</p>
-                    <div className="divide-y divide-gray-100 dark:divide-navy-700">
-                      {sortedAttempts.map((attempt, i) => (
-                        <div key={attempt.id} className="flex items-center gap-4 px-5 py-3">
-                          <span className="text-xs text-gray-400 w-16">#{sortedAttempts.length - i}</span>
-                          <span className={`text-sm font-bold ${attempt.passed ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {attempt.percentage}%
-                          </span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                            attempt.passed
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                          }`}>
-                            {attempt.passed ? 'Passed' : 'Failed'}
-                          </span>
-                          <span className="text-xs text-gray-400 ml-auto">
-                            {new Date(attempt.submitted_at ?? attempt.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          </span>
+                <div className="space-y-3">
+                  {activeGroup.quizzes.map((quiz, qIdx) => {
+                    const best       = quiz.attempts.reduce<QuizAttemptRow | null>((b, a) => (!b || a.percentage > b.percentage ? a : b), null);
+                    const left       = attemptsLeft(quiz);
+                    const total      = totalAllowed(quiz);
+                    const canAttempt = left > 0;
+                    const hasEnrollment = enrollments.some(e => e.course_id === quiz.course_id && (e.payment_status === 'not_required' || e.payment_status === 'completed'));
+                    const historyOpen   = expandedHistory.has(quiz.id);
+                    const sortedAttempts = [...quiz.attempts].sort((a, b) =>
+                      new Date(b.submitted_at ?? b.created_at).getTime() - new Date(a.submitted_at ?? a.created_at).getTime()
+                    );
+                    const passMark = getPassMark(quiz);
+
+                    return (
+                      <div key={quiz.id} className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm overflow-hidden">
+                        <div className="p-5">
+                          <div className="flex items-start gap-4">
+                            {/* Status badge */}
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                              best?.passed ? 'bg-emerald-100 dark:bg-emerald-900/30' : quiz.attempts.length > 0 ? 'bg-red-100 dark:bg-red-900/20' : 'bg-gray-100 dark:bg-navy-700'
+                            }`}>
+                              <span className="text-sm font-bold text-gray-500 dark:text-gray-400">{qIdx + 1}</span>
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-semibold text-gray-900 dark:text-white">{quiz.title}</p>
+                                  <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+                                    <span className="flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" />Pass: {passMark}%
+                                    </span>
+                                    {best && (
+                                      <span className={`font-semibold ${best.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+                                        Best: {best.percentage}%
+                                      </span>
+                                    )}
+                                    <span className={left <= 0 ? 'text-red-500 font-semibold' : left === 1 ? 'text-amber-500 font-semibold' : ''}>
+                                      {left}/{total} attempts left
+                                    </span>
+                                    {quiz.extraAttemptsGranted > 0 && (
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{quiz.extraAttemptsGranted} bonus</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {quiz.attempts.length > 0 && (
+                                    <button
+                                      onClick={() => setExpandedHistory(prev => {
+                                        const n = new Set(prev);
+                                        if (n.has(quiz.id)) n.delete(quiz.id); else n.add(quiz.id);
+                                        return n;
+                                      })}
+                                      className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors"
+                                      title="Attempt history"
+                                    >
+                                      {historyOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                    </button>
+                                  )}
+                                  {!hasEnrollment ? (
+                                    <div className="flex items-center gap-1 text-sm text-gray-400"><Lock className="w-4 h-4" /> Locked</div>
+                                  ) : best?.passed ? (
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-lg">
+                                      <CheckCircle2 className="w-3.5 h-3.5" /> Passed
+                                    </div>
+                                  ) : canAttempt ? (
+                                    <button
+                                      onClick={() => startQuiz(quiz)}
+                                      className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
+                                    >
+                                      {quiz.attempts.length === 0 ? 'Start' : 'Retry'}
+                                      <ChevronRight className="w-4 h-4" />
+                                    </button>
+                                  ) : (
+                                    <div className="flex items-center gap-1 text-sm text-amber-500">
+                                      <AlertCircle className="w-4 h-4" /> Ask teacher
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
+
+                        {/* Attempt history */}
+                        {historyOpen && sortedAttempts.length > 0 && (
+                          <div className="border-t border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/30">
+                            <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest px-5 py-2.5">Attempt History</p>
+                            <div className="divide-y divide-gray-100 dark:divide-navy-700">
+                              {sortedAttempts.map((attempt, i) => (
+                                <div key={attempt.id} className="flex items-center gap-4 px-5 py-3">
+                                  <span className="text-xs text-gray-400 w-16 shrink-0">Attempt #{sortedAttempts.length - i}</span>
+                                  <span className={`text-sm font-bold ${attempt.passed ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    {attempt.percentage}%
+                                  </span>
+                                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                    attempt.passed
+                                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                  }`}>
+                                    {attempt.passed ? 'Passed' : 'Failed'}
+                                  </span>
+                                  <span className="text-xs text-gray-400 ml-auto">
+                                    {new Date(attempt.submitted_at ?? attempt.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }
