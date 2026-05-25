@@ -867,11 +867,15 @@ export default function StudentCoursePlayer() {
                       ) : <div />}
                       <div className="text-xs text-gray-400 font-medium">{currentIndex + 1} / {allLessons.length}</div>
                       {mustTakeSectionQuiz ? (
-                        <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-bold rounded-xl border border-amber-300 dark:border-amber-700 cursor-not-allowed">
-                          <Lock className="w-4 h-4" />
-                          <span className="hidden sm:inline">Quiz Required</span>
-                          <span className="sm:hidden">Locked</span>
-                        </div>
+                        <Link
+                          to="/student/quizzes"
+                          className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
+                        >
+                          <HelpCircle className="w-4 h-4" />
+                          <span className="hidden sm:inline">Take Quiz</span>
+                          <span className="sm:hidden">Quiz</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </Link>
                       ) : nextLesson ? (
                         <button onClick={() => goToLesson(nextLesson)}
                           className="flex items-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
