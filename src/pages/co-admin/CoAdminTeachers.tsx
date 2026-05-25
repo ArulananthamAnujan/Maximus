@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, BookOpen, Mail, Plus, X, UserCheck, UserX, RefreshCw, ChevronDown, Check, Send } from 'lucide-react';
+import { Search, BookOpen, Plus, X, UserCheck, UserX, RefreshCw, ChevronDown, Check, Trash2 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
 import { supabase } from '../../lib/supabase';
@@ -7,8 +7,6 @@ import { useToast } from '../../contexts/ToastContext';
 import type { Profile } from '../../types';
 
 interface Course { id: string; title: string; }
-
-interface EmailTarget { id: string; full_name: string; email: string; }
 
 interface AddTeacherForm {
   full_name: string;
@@ -35,11 +33,9 @@ export default function CoAdminTeachers() {
   const [form, setForm] = useState<AddTeacherForm>({
     full_name: '', email: '', password: generatePassword(), course_ids: [],
   });
+  const [confirmDelete, setConfirmDelete] = useState<Profile | null>(null);
+  const [deleting, setDeleting]           = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
-  const [emailTarget, setEmailTarget]   = useState<EmailTarget | null>(null);
-  const [emailSubject, setEmailSubject] = useState('');
-  const [emailBody, setEmailBody]       = useState('');
-  const [sendingEmail, setSendingEmail] = useState(false);
   const { toast } = useToast();
 
   const fetchTeachers = async () => {
@@ -64,7 +60,6 @@ export default function CoAdminTeachers() {
     });
   }, []);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
@@ -88,39 +83,6 @@ export default function CoAdminTeachers() {
     }));
   };
 
-  const openEmail = (t: Profile & { courseCount: number }) => {
-    setEmailTarget({ id: t.id, full_name: t.full_name || t.email, email: t.email });
-    setEmailSubject('');
-    setEmailBody('');
-  };
-
-  const handleSendEmail = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!emailTarget) return;
-    setSendingEmail(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-admin-message`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ to_user_id: emailTarget.id, subject: emailSubject, body: emailBody }),
-        }
-      );
-      const result = await res.json();
-      if (!res.ok || result.error) {
-        toast.error(result.error || 'Failed to send message');
-      } else {
-        toast.success(`Message sent to ${emailTarget.full_name}`);
-        setEmailTarget(null);
-      }
-    } catch {
-      toast.error('Network error — please try again');
-    }
-    setSendingEmail(false);
-  };
-
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdding(true);
@@ -130,10 +92,7 @@ export default function CoAdminTeachers() {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
           body: JSON.stringify({
             full_name: form.full_name,
             email: form.email,
@@ -156,6 +115,33 @@ export default function CoAdminTeachers() {
       toast.error('Network error — please try again');
     }
     setAdding(false);
+  };
+
+  const handleDelete = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ user_id: confirmDelete.id }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        toast.error(result.error || 'Failed to remove teacher');
+      } else {
+        toast.success(`${confirmDelete.full_name || 'Teacher'} has been removed`);
+        setConfirmDelete(null);
+        fetchTeachers();
+      }
+    } catch {
+      toast.error('Network error — please try again');
+    }
+    setDeleting(false);
   };
 
   return (
@@ -219,8 +205,12 @@ export default function CoAdminTeachers() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <button onClick={() => openEmail(t)} className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors inline-flex" title="Send message">
-                          <Mail className="w-4 h-4" />
+                        <button
+                          onClick={() => setConfirmDelete(t)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors inline-flex"
+                          title="Remove teacher"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </td>
                     </tr>
@@ -232,47 +222,43 @@ export default function CoAdminTeachers() {
         </div>
       </div>
 
-      {/* Send Email Modal */}
-      {emailTarget && (
+      {/* Confirm Delete Modal */}
+      {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setEmailTarget(null)} />
-          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-slide-up">
-            <button onClick={() => setEmailTarget(null)} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
-                <Mail className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <div>
-                <h3 className="font-bold text-lg text-gray-900 dark:text-white">Send Message</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">To: <span className="font-medium text-gray-700 dark:text-gray-300">{emailTarget.full_name}</span> &middot; {emailTarget.email}</p>
-              </div>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setConfirmDelete(null)} />
+          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-slide-up">
+            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
             </div>
-            <form onSubmit={handleSendEmail} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Subject</label>
-                <input type="text" required placeholder="e.g. Course update notification" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} className="input-field" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Message</label>
-                <textarea required rows={6} placeholder="Write your message here..." value={emailBody} onChange={e => setEmailBody(e.target.value)} className="input-field resize-none" />
-              </div>
-              <div className="flex gap-3 justify-end pt-1">
-                <button type="button" onClick={() => setEmailTarget(null)} className="px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">Cancel</button>
-                <button type="submit" disabled={sendingEmail} className="btn-primary text-sm py-2.5 px-5 disabled:opacity-60 flex items-center gap-2">
-                  {sendingEmail ? (
-                    <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Sending...</>
-                  ) : (
-                    <><Send className="w-4 h-4" /> Send Message</>
-                  )}
-                </button>
-              </div>
-            </form>
+            <h3 className="font-bold text-lg text-gray-900 dark:text-white text-center mb-2">Remove Teacher</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-1">
+              Are you sure you want to remove <span className="font-semibold text-gray-800 dark:text-gray-200">{confirmDelete.full_name || confirmDelete.email}</span>?
+            </p>
+            <p className="text-xs text-red-500 dark:text-red-400 text-center mb-6">
+              This will permanently delete their account. They can be re-added later.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {deleting ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Removing...</> : <><Trash2 className="w-4 h-4" /> Remove</>}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Add Teacher Modal */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowAdd(false)} />
@@ -284,80 +270,47 @@ export default function CoAdminTeachers() {
             <form onSubmit={handleAdd} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Full Name</label>
-                <input
-                  type="text" required placeholder="Jane Smith"
-                  value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                  className="input-field"
-                />
+                <input type="text" required placeholder="Jane Smith" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} className="input-field" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email</label>
-                <input
-                  type="email" required placeholder="jane@example.com"
-                  value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="input-field"
-                />
+                <input type="email" required placeholder="jane@example.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} className="input-field" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Generated Password</label>
                 <div className="flex gap-2">
-                  <input
-                    type="text" required readOnly value={form.password}
-                    className="input-field flex-1 font-mono text-sm bg-gray-50 dark:bg-navy-900/50"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, password: generatePassword() }))}
-                    className="p-2.5 rounded-lg border border-gray-200 dark:border-navy-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
-                    title="Regenerate password"
-                  >
+                  <input type="text" required readOnly value={form.password} className="input-field flex-1 font-mono text-sm bg-gray-50 dark:bg-navy-900/50" />
+                  <button type="button" onClick={() => setForm(f => ({ ...f, password: generatePassword() }))} className="p-2.5 rounded-lg border border-gray-200 dark:border-navy-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors" title="Regenerate password">
                     <RefreshCw className="w-4 h-4" />
                   </button>
                 </div>
                 <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">This password will be emailed to the teacher</p>
               </div>
 
-              {/* Course selection */}
               <div ref={dropRef}>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                   Assign to Courses <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setCourseDropOpen(o => !o)}
-                  className="input-field w-full flex items-center justify-between text-left"
-                >
+                <button type="button" onClick={() => setCourseDropOpen(o => !o)} className="input-field w-full flex items-center justify-between text-left">
                   <span className="text-gray-500 dark:text-gray-400 text-sm">
                     {form.course_ids.length === 0 ? 'Select courses...' : `${form.course_ids.length} course${form.course_ids.length !== 1 ? 's' : ''} selected`}
                   </span>
                   <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${courseDropOpen ? 'rotate-180' : ''}`} />
                 </button>
-
                 {courseDropOpen && (
                   <div className="mt-1 border border-gray-200 dark:border-navy-600 rounded-xl overflow-hidden shadow-lg bg-white dark:bg-navy-800 max-h-48 overflow-y-auto z-10 relative">
                     {courses.length === 0 ? (
                       <p className="px-3 py-2 text-sm text-gray-400">No published courses available</p>
-                    ) : (
-                      courses.map(c => (
-                        <button
-                          key={c.id} type="button"
-                          onClick={() => toggleCourse(c.id)}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
-                        >
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                            form.course_ids.includes(c.id)
-                              ? 'bg-sky-500 border-sky-500'
-                              : 'border-gray-300 dark:border-navy-500'
-                          }`}>
-                            {form.course_ids.includes(c.id) && <Check className="w-2.5 h-2.5 text-white" />}
-                          </div>
-                          <span className="text-gray-700 dark:text-gray-300 truncate">{c.title}</span>
-                        </button>
-                      ))
-                    )}
+                    ) : courses.map(c => (
+                      <button key={c.id} type="button" onClick={() => toggleCourse(c.id)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${form.course_ids.includes(c.id) ? 'bg-sky-500 border-sky-500' : 'border-gray-300 dark:border-navy-500'}`}>
+                          {form.course_ids.includes(c.id) && <Check className="w-2.5 h-2.5 text-white" />}
+                        </div>
+                        <span className="text-gray-700 dark:text-gray-300 truncate">{c.title}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
-
                 {form.course_ids.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {courses.filter(c => form.course_ids.includes(c.id)).map(c => (
@@ -377,9 +330,7 @@ export default function CoAdminTeachers() {
               </p>
 
               <div className="flex gap-3 justify-end pt-2">
-                <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-navy-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
-                  Cancel
-                </button>
+                <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-navy-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">Cancel</button>
                 <button type="submit" disabled={adding} className="btn-primary text-sm py-2 disabled:opacity-60">
                   {adding ? 'Creating...' : 'Create Teacher'}
                 </button>

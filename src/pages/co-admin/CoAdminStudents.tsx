@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
-  Search, GraduationCap, UserCheck, UserX, Mail,
-  Plus, X, Check, ChevronDown, RefreshCw, Send,
+  Search, GraduationCap, UserCheck, UserX,
+  Plus, X, Check, ChevronDown, RefreshCw, Trash2,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
@@ -11,31 +11,24 @@ import type { Profile } from '../../types';
 
 interface Course { id: string; title: string; category: string; }
 
-interface EmailTarget { id: string; full_name: string; email: string; }
-
 function generatePassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#!';
   return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
 export default function CoAdminStudents() {
-  const [students, setStudents]           = useState<Profile[]>([]);
-  const [courses, setCourses]             = useState<Course[]>([]);
-  const [loading, setLoading]             = useState(true);
-  const [search, setSearch]               = useState('');
-  const [statusFilter, setStatusFilter]   = useState('all');
-  const [showAdd, setShowAdd]             = useState(false);
-  const [creating, setCreating]           = useState(false);
-  const [coursesOpen, setCoursesOpen]     = useState(false);
+  const [students, setStudents]         = useState<Profile[]>([]);
+  const [courses, setCourses]           = useState<Course[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [showAdd, setShowAdd]           = useState(false);
+  const [creating, setCreating]         = useState(false);
+  const [coursesOpen, setCoursesOpen]   = useState(false);
   const [selectedCourses, setSelectedCourses] = useState<Set<string>>(new Set());
   const [form, setForm] = useState({ full_name: '', email: '', password: generatePassword() });
-
-  // Email compose state
-  const [emailTarget, setEmailTarget]     = useState<EmailTarget | null>(null);
-  const [emailSubject, setEmailSubject]   = useState('');
-  const [emailBody, setEmailBody]         = useState('');
-  const [sendingEmail, setSendingEmail]   = useState(false);
-
+  const [confirmDelete, setConfirmDelete] = useState<Profile | null>(null);
+  const [deleting, setDeleting]           = useState(false);
   const { toast } = useToast();
 
   const fetchStudents = async () => {
@@ -100,7 +93,9 @@ export default function CoAdminStudents() {
         toast.error(result.error || 'Failed to create student');
       } else {
         const enrolled = selectedCourses.size;
-        toast.success(`Student created${enrolled > 0 ? ` and enrolled in ${enrolled} course${enrolled !== 1 ? 's' : ''}` : ''}. Welcome email sent.`);
+        toast.success(
+          `Student created${enrolled > 0 ? ` and enrolled in ${enrolled} course${enrolled !== 1 ? 's' : ''}` : ''}. Welcome email sent.`
+        );
         setShowAdd(false);
         setForm({ full_name: '', email: '', password: generatePassword() });
         setSelectedCourses(new Set());
@@ -113,44 +108,38 @@ export default function CoAdminStudents() {
     setCreating(false);
   };
 
+  const handleDelete = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ user_id: confirmDelete.id }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        toast.error(result.error || 'Failed to remove student');
+      } else {
+        toast.success(`${confirmDelete.full_name || 'Student'} has been removed`);
+        setConfirmDelete(null);
+        fetchStudents();
+      }
+    } catch {
+      toast.error('Network error — please try again');
+    }
+    setDeleting(false);
+  };
+
   const openAdd = () => {
     setForm({ full_name: '', email: '', password: generatePassword() });
     setSelectedCourses(new Set());
     setCoursesOpen(false);
     setShowAdd(true);
-  };
-
-  const openEmail = (s: Profile) => {
-    setEmailTarget({ id: s.id, full_name: s.full_name || s.email, email: s.email });
-    setEmailSubject('');
-    setEmailBody('');
-  };
-
-  const handleSendEmail = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!emailTarget) return;
-    setSendingEmail(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-admin-message`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ to_user_id: emailTarget.id, subject: emailSubject, body: emailBody }),
-        }
-      );
-      const result = await res.json();
-      if (!res.ok || result.error) {
-        toast.error(result.error || 'Failed to send message');
-      } else {
-        toast.success(`Message sent to ${emailTarget.full_name}`);
-        setEmailTarget(null);
-      }
-    } catch {
-      toast.error('Network error — please try again');
-    }
-    setSendingEmail(false);
   };
 
   return (
@@ -218,20 +207,20 @@ export default function CoAdminStudents() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1 justify-end">
-                          <button
-                            onClick={() => openEmail(s)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors"
-                            title="Send message"
-                          >
-                            <Mail className="w-4 h-4" />
-                          </button>
                           <button onClick={() => toggleActive(s)}
                             className={`p-1.5 rounded-lg transition-colors ${
                               s.is_active
-                                ? 'text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20'
+                                ? 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20'
                                 : 'text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
                             }`} title={s.is_active ? 'Deactivate' : 'Activate'}>
                             {s.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(s)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            title="Remove student"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -244,53 +233,38 @@ export default function CoAdminStudents() {
         </div>
       </div>
 
-      {/* Send Email Modal */}
-      {emailTarget && (
+      {/* Confirm Delete Modal */}
+      {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setEmailTarget(null)} />
-          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-slide-up">
-            <button onClick={() => setEmailTarget(null)} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center shrink-0">
-                <Mail className="w-5 h-5 text-sky-600 dark:text-sky-400" />
-              </div>
-              <div>
-                <h3 className="font-bold text-lg text-gray-900 dark:text-white">Send Message</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">To: <span className="font-medium text-gray-700 dark:text-gray-300">{emailTarget.full_name}</span> &middot; {emailTarget.email}</p>
-              </div>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setConfirmDelete(null)} />
+          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-slide-up">
+            <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
             </div>
-            <form onSubmit={handleSendEmail} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Subject</label>
-                <input
-                  type="text" required placeholder="e.g. Important update about your course"
-                  value={emailSubject} onChange={e => setEmailSubject(e.target.value)}
-                  className="input-field"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Message</label>
-                <textarea
-                  required rows={6} placeholder="Write your message here..."
-                  value={emailBody} onChange={e => setEmailBody(e.target.value)}
-                  className="input-field resize-none"
-                />
-              </div>
-              <div className="flex gap-3 justify-end pt-1">
-                <button type="button" onClick={() => setEmailTarget(null)} className="px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
-                  Cancel
-                </button>
-                <button type="submit" disabled={sendingEmail} className="btn-primary text-sm py-2.5 px-5 disabled:opacity-60 flex items-center gap-2">
-                  {sendingEmail ? (
-                    <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Sending...</>
-                  ) : (
-                    <><Send className="w-4 h-4" /> Send Message</>
-                  )}
-                </button>
-              </div>
-            </form>
+            <h3 className="font-bold text-lg text-gray-900 dark:text-white text-center mb-2">Remove Student</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-1">
+              Are you sure you want to remove <span className="font-semibold text-gray-800 dark:text-gray-200">{confirmDelete.full_name || confirmDelete.email}</span>?
+            </p>
+            <p className="text-xs text-red-500 dark:text-red-400 text-center mb-6">
+              This will permanently delete their account. They can be re-added later.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {deleting ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Removing...</> : <><Trash2 className="w-4 h-4" /> Remove</>}
+              </button>
+            </div>
           </div>
         </div>
       )}
