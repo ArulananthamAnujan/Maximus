@@ -167,8 +167,7 @@ export default function StudentQuizzes() {
     let score = 0, totalPts = 0;
     questions.forEach(q => {
       totalPts += q.points;
-      const correctText = (q as QuizQuestion & { correct_answer_text?: string }).correct_answer_text
-        ?? String(q.correct_answer);
+      const correctText = q.correct_answer ?? '';
       if (q.type !== 'short_answer' && answers[q.id]?.toLowerCase() === correctText.toLowerCase()) {
         score += q.points;
       }
