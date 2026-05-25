@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, HelpCircle, Trash2, ChevronDown, ChevronUp, Pencil, X, Check,
-  GripVertical, UserPlus, AlertCircle, BookOpen, ChevronRight,
+  GripVertical, UserPlus, AlertCircle, BookOpen, ChevronRight, Zap,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
@@ -41,6 +41,20 @@ export default function TeacherQuizzes() {
   const [editingQuestion, setEditingQuestion]     = useState<{ quizId: string; question: QuizQuestion } | null>(null);
   const [questionForm, setQuestionForm]           = useState<typeof EMPTY_QUESTION>({ ...EMPTY_QUESTION });
   const [savingQuestion, setSavingQuestion]       = useState(false);
+
+  // Inline quick-answer state: { questionId -> draft answer string }
+  const [quickAnswer, setQuickAnswer] = useState<Record<string, string>>({});
+  const [savingQuick, setSavingQuick] = useState<string | null>(null);
+
+  const saveQuickAnswer = async (q: QuizQuestion, value: string) => {
+    if (!value.trim()) return;
+    setSavingQuick(q.id);
+    await supabase.from('quiz_questions').update({ correct_answer: value }).eq('id', q.id);
+    setSavingQuick(null);
+    setQuickAnswer(prev => { const n = { ...prev }; delete n[q.id]; return n; });
+    fetchData();
+    toast.success('Correct answer saved');
+  };
 
   const [grantModal, setGrantModal]   = useState<{ quiz: QuizWithQuestions } | null>(null);
   const [grantStudents, setGrantStudents] = useState<Array<{ id: string; full_name: string; email: string; attemptCount: number; extraGranted: number }>>([]);
@@ -569,57 +583,178 @@ export default function TeacherQuizzes() {
                             <div className="border-t border-gray-100 dark:border-navy-700">
                               {quiz.questions && quiz.questions.length > 0 ? (
                                 <div className="p-4 space-y-3">
-                                  {quiz.questions.slice().sort((a, b) => a.order_index - b.order_index).map((q, idx) => (
-                                    <div key={q.id} className="bg-gray-50 dark:bg-navy-700/50 rounded-xl p-4">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="flex items-start gap-3 flex-1 min-w-0">
-                                          <GripVertical className="w-4 h-4 text-gray-300 dark:text-navy-500 mt-0.5 shrink-0" />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">{idx + 1}. {q.question}</p>
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                              <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded-full">
-                                                {q.type === 'mcq' ? 'Multiple Choice' : q.type === 'true_false' ? 'True/False' : 'Short Answer'}
-                                              </span>
-                                              <span className="text-xs text-gray-400">{q.points} pt{q.points !== 1 ? 's' : ''}</span>
+                                  {quiz.questions.slice().sort((a, b) => a.order_index - b.order_index).map((q, idx) => {
+                                    const missingAnswer = !q.correct_answer?.trim();
+                                    const isQuickOpen   = quickAnswer[q.id] !== undefined;
+                                    return (
+                                    <div key={q.id} className={`rounded-xl overflow-hidden border ${
+                                      missingAnswer
+                                        ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10'
+                                        : 'border-transparent bg-gray-50 dark:bg-navy-700/50'
+                                    }`}>
+                                      <div className="p-4">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                                            <GripVertical className="w-4 h-4 text-gray-300 dark:text-navy-500 mt-0.5 shrink-0" />
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                                                <p className="text-sm font-medium text-gray-900 dark:text-white">{idx + 1}. {q.question}</p>
+                                              </div>
+                                              <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded-full">
+                                                  {q.type === 'mcq' ? 'Multiple Choice' : q.type === 'true_false' ? 'True/False' : 'Short Answer'}
+                                                </span>
+                                                <span className="text-xs text-gray-400">{q.points} pt{q.points !== 1 ? 's' : ''}</span>
+                                                {missingAnswer && (
+                                                  <span className="text-xs font-semibold text-red-600 dark:text-red-400 flex items-center gap-1">
+                                                    <AlertCircle className="w-3 h-3" /> No correct answer set
+                                                  </span>
+                                                )}
+                                              </div>
+
+                                              {/* Options list */}
+                                              {q.options && q.options.length > 0 && (
+                                                <div className="mt-2 space-y-1">
+                                                  {q.options.map((opt, i) => (
+                                                    <div key={i} className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 ${
+                                                      opt === q.correct_answer
+                                                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium'
+                                                        : 'text-gray-500 dark:text-gray-400'
+                                                    }`}>
+                                                      {opt === q.correct_answer && <Check className="w-3 h-3" />}
+                                                      {opt}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                              {q.type === 'short_answer' && q.correct_answer && (
+                                                <div className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium flex items-center gap-1.5">
+                                                  <Check className="w-3 h-3" /> {q.correct_answer}
+                                                </div>
+                                              )}
                                             </div>
-                                            {q.options && q.options.length > 0 && (
-                                              <div className="mt-2 space-y-1">
-                                                {q.options.map((opt, i) => (
-                                                  <div key={i} className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 ${
-                                                    opt === q.correct_answer
-                                                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium'
-                                                      : 'text-gray-500 dark:text-gray-400'
-                                                  }`}>
-                                                    {opt === q.correct_answer && <Check className="w-3 h-3" />}
-                                                    {opt}
-                                                  </div>
-                                                ))}
-                                              </div>
+                                          </div>
+
+                                          <div className="flex items-center gap-1 shrink-0">
+                                            {missingAnswer && (
+                                              <button
+                                                onClick={e => {
+                                                  e.stopPropagation();
+                                                  setQuickAnswer(prev =>
+                                                    prev[q.id] !== undefined
+                                                      ? (() => { const n = { ...prev }; delete n[q.id]; return n; })()
+                                                      : { ...prev, [q.id]: '' }
+                                                  );
+                                                }}
+                                                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                                                title="Set correct answer"
+                                              >
+                                                <Zap className="w-3.5 h-3.5" /> Fix
+                                              </button>
                                             )}
-                                            {q.type === 'short_answer' && q.correct_answer && (
-                                              <div className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium flex items-center gap-1.5">
-                                                <Check className="w-3 h-3" /> {q.correct_answer}
-                                              </div>
-                                            )}
+                                            <button
+                                              onClick={e => openEditQuestion(quiz.id, q, e)}
+                                              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-white dark:hover:bg-navy-600 transition-colors"
+                                            >
+                                              <Pencil className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                              onClick={e => { e.stopPropagation(); setDeleteQuestionTarget({ quizId: quiz.id, question: q }); }}
+                                              className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
                                           </div>
                                         </div>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                          <button
-                                            onClick={e => openEditQuestion(quiz.id, q, e)}
-                                            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-white dark:hover:bg-navy-600 transition-colors"
-                                          >
-                                            <Pencil className="w-3.5 h-3.5" />
-                                          </button>
-                                          <button
-                                            onClick={e => { e.stopPropagation(); setDeleteQuestionTarget({ quizId: quiz.id, question: q }); }}
-                                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
-                                        </div>
                                       </div>
+
+                                      {/* ── Inline quick-answer panel ─────────────────── */}
+                                      {isQuickOpen && (
+                                        <div className="border-t border-red-200 dark:border-red-800 bg-white dark:bg-navy-800 p-4 space-y-3">
+                                          <p className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                                            <Zap className="w-3.5 h-3.5 text-amber-500" /> Set correct answer
+                                          </p>
+
+                                          {q.type === 'mcq' && q.options && q.options.length > 0 && (
+                                            <div className="space-y-1.5">
+                                              {q.options.filter(o => o.trim()).map(opt => (
+                                                <button
+                                                  key={opt}
+                                                  type="button"
+                                                  onClick={() => setQuickAnswer(prev => ({ ...prev, [q.id]: opt }))}
+                                                  className={`w-full text-left text-sm px-3 py-2 rounded-lg border-2 transition-all ${
+                                                    quickAnswer[q.id] === opt
+                                                      ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 font-semibold'
+                                                      : 'border-gray-200 dark:border-navy-600 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-navy-500'
+                                                  }`}
+                                                >
+                                                  <div className="flex items-center gap-2">
+                                                    <div className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                                                      quickAnswer[q.id] === opt ? 'border-green-500 bg-green-500' : 'border-gray-300 dark:border-navy-500'
+                                                    }`}>
+                                                      {quickAnswer[q.id] === opt && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                                                    </div>
+                                                    {opt}
+                                                  </div>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+
+                                          {q.type === 'true_false' && (
+                                            <div className="flex gap-2">
+                                              {['True', 'False'].map(val => (
+                                                <button
+                                                  key={val}
+                                                  type="button"
+                                                  onClick={() => setQuickAnswer(prev => ({ ...prev, [q.id]: val }))}
+                                                  className={`flex-1 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${
+                                                    quickAnswer[q.id] === val
+                                                      ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                                                      : 'border-gray-200 dark:border-navy-600 text-gray-600 dark:text-gray-400 hover:border-gray-300'
+                                                  }`}
+                                                >
+                                                  {val}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+
+                                          {q.type === 'short_answer' && (
+                                            <input
+                                              type="text"
+                                              value={quickAnswer[q.id] || ''}
+                                              onChange={e => setQuickAnswer(prev => ({ ...prev, [q.id]: e.target.value }))}
+                                              placeholder="Type the correct / model answer..."
+                                              className="w-full border border-gray-200 dark:border-navy-600 rounded-lg px-3 py-2 text-sm bg-gray-50 dark:bg-navy-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-green-400 focus:border-transparent"
+                                              autoFocus
+                                            />
+                                          )}
+
+                                          <div className="flex gap-2 justify-end">
+                                            <button
+                                              type="button"
+                                              onClick={() => setQuickAnswer(prev => { const n = { ...prev }; delete n[q.id]; return n; })}
+                                              className="px-3 py-1.5 text-xs border border-gray-200 dark:border-navy-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={!quickAnswer[q.id]?.trim() || savingQuick === q.id}
+                                              onClick={() => saveQuickAnswer(q, quickAnswer[q.id])}
+                                              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50"
+                                            >
+                                              {savingQuick === q.id
+                                                ? <><div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving...</>
+                                                : <><Check className="w-3 h-3" /> Save Answer</>}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                   <button
                                     onClick={e => openAddQuestion(quiz.id, e)}
                                     className="w-full py-2.5 border-2 border-dashed border-gray-200 dark:border-navy-600 rounded-xl text-sm text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-colors flex items-center justify-center gap-2"
