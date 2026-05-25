@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, HelpCircle, Trash2, ChevronDown, ChevronUp, Pencil, X, Check, GripVertical } from 'lucide-react';
+import { Plus, HelpCircle, Trash2, ChevronDown, ChevronUp, Pencil, X, Check, GripVertical, UserPlus, AlertCircle } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
 import { supabase } from '../../lib/supabase';
@@ -37,6 +37,14 @@ export default function TeacherQuizzes() {
   const [editingQuestion, setEditingQuestion] = useState<{ quizId: string; question: QuizQuestion } | null>(null);
   const [questionForm, setQuestionForm] = useState<typeof EMPTY_QUESTION>({ ...EMPTY_QUESTION });
   const [savingQuestion, setSavingQuestion] = useState(false);
+
+  // Extra attempts state
+  const [grantModal, setGrantModal] = useState<{ quiz: QuizWithQuestions } | null>(null);
+  const [grantStudents, setGrantStudents] = useState<Array<{ id: string; full_name: string; email: string; attemptCount: number; extraGranted: number }>>([]);
+  const [grantTarget, setGrantTarget] = useState<string | null>(null);
+  const [grantAmount, setGrantAmount] = useState(1);
+  const [grantNote, setGrantNote] = useState('');
+  const [grantSaving, setGrantSaving] = useState(false);
 
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -164,6 +172,56 @@ export default function TeacherQuizzes() {
     fetchData();
   };
 
+  const openGrantModal = async (quiz: QuizWithQuestions, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setGrantModal({ quiz });
+    setGrantTarget(null);
+    setGrantAmount(1);
+    setGrantNote('');
+    // Load students who have attempted this quiz and exhausted attempts
+    const [attemptsRes, extraRes] = await Promise.all([
+      supabase.from('quiz_attempts').select('student_id, count:id').eq('quiz_id', quiz.id),
+      supabase.from('quiz_extra_attempts').select('student_id, extra_attempts').eq('quiz_id', quiz.id),
+    ]);
+    const attemptCounts = new Map<string, number>();
+    (attemptsRes.data || []).forEach((r: { student_id: string }) => {
+      attemptCounts.set(r.student_id, (attemptCounts.get(r.student_id) || 0) + 1);
+    });
+    const extraGranted = new Map<string, number>();
+    (extraRes.data || []).forEach((r: { student_id: string; extra_attempts: number }) => {
+      extraGranted.set(r.student_id, (extraGranted.get(r.student_id) || 0) + r.extra_attempts);
+    });
+    const studentIds = [...new Set([...attemptCounts.keys()])];
+    if (studentIds.length === 0) { setGrantStudents([]); return; }
+    const { data: profiles } = await supabase.from('profiles').select('id, full_name, email').in('id', studentIds);
+    setGrantStudents((profiles || []).map((p: { id: string; full_name: string; email: string }) => ({
+      id: p.id,
+      full_name: p.full_name,
+      email: p.email,
+      attemptCount: attemptCounts.get(p.id) || 0,
+      extraGranted: extraGranted.get(p.id) || 0,
+    })));
+  };
+
+  const handleGrantAttempts = async () => {
+    if (!grantModal || !grantTarget || !profile) return;
+    setGrantSaving(true);
+    const { error } = await supabase.from('quiz_extra_attempts').insert({
+      quiz_id: grantModal.quiz.id,
+      student_id: grantTarget,
+      granted_by: profile.id,
+      extra_attempts: grantAmount,
+      note: grantNote.trim() || null,
+    });
+    if (error) {
+      toast.error('Failed to grant attempts');
+    } else {
+      toast.success(`${grantAmount} extra attempt${grantAmount !== 1 ? 's' : ''} granted`);
+      setGrantModal(null);
+    }
+    setGrantSaving(false);
+  };
+
   const QuizFormModal = ({ title, onClose }: { title: string; onClose: () => void }) => (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
@@ -211,7 +269,7 @@ export default function TeacherQuizzes() {
     </div>
   );
 
-  const QuestionFormModal = ({ quizId, onClose }: { quizId: string; onClose: () => void }) => (
+  const QuestionFormModal = ({ quizId: _quizId, onClose }: { quizId: string; onClose: () => void }) => (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-slide-up max-h-[90vh] overflow-y-auto">
@@ -401,6 +459,13 @@ export default function TeacherQuizzes() {
                       <Plus className="w-3.5 h-3.5" /> Question
                     </button>
                     <button
+                      onClick={e => openGrantModal(quiz, e)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400 hover:opacity-80 transition-opacity"
+                      title="Grant extra attempts to students"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" /> Attempts
+                    </button>
+                    <button
                       onClick={e => openEdit(quiz, e)}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors"
                     >
@@ -534,6 +599,80 @@ export default function TeacherQuizzes() {
         onCancel={() => setDeleteQuestionTarget(null)}
         confirmText="Delete"
       />
+
+      {/* ── Grant extra attempts modal ─────────────────────────────────── */}
+      {grantModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setGrantModal(null)} />
+          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-md p-6 animate-slide-up">
+            <button onClick={() => setGrantModal(null)} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                <UserPlus className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 dark:text-white">Grant Extra Attempts</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{grantModal.quiz.title}</p>
+              </div>
+            </div>
+
+            {grantStudents.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No students have attempted this quiz yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Select Student</label>
+                  <select
+                    value={grantTarget || ''}
+                    onChange={e => setGrantTarget(e.target.value)}
+                    className="input-field"
+                  >
+                    <option value="">Choose a student...</option>
+                    {grantStudents.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.full_name} ({s.email}) — {s.attemptCount} attempt{s.attemptCount !== 1 ? 's' : ''}{s.extraGranted > 0 ? `, +${s.extraGranted} bonus` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Extra Attempts to Grant</label>
+                  <select value={grantAmount} onChange={e => setGrantAmount(parseInt(e.target.value))} className="input-field">
+                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} attempt{n !== 1 ? 's' : ''}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                    Note <span className="text-gray-400 font-normal text-xs">(optional)</span>
+                  </label>
+                  <input type="text" value={grantNote} onChange={e => setGrantNote(e.target.value)} className="input-field" placeholder="e.g. Technical issue during first attempt" />
+                </div>
+
+                <div className="flex gap-3 justify-end pt-2">
+                  <button type="button" onClick={() => setGrantModal(null)} className="px-4 py-2 text-sm border border-gray-200 dark:border-navy-600 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleGrantAttempts}
+                    disabled={!grantTarget || grantSaving}
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 shadow-sm flex items-center gap-2"
+                  >
+                    {grantSaving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                    Grant Attempts
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

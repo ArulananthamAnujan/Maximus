@@ -196,7 +196,9 @@ export interface Certificate {
   id: string;
   student_id: string;
   course_id: string;
-  certificate_id: string;
+  certificate_id: string | null;
+  verification_code: string | null;
+  certificate_url: string | null;
   issued_at: string;
   revoked: boolean;
   revoked_at: string | null;

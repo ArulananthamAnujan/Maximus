@@ -105,11 +105,37 @@ export default function StudentCoursePlayer() {
           lessons: [...(s.lessons || [])].sort((a, b) => a.order_index - b.order_index),
         })) as SectionWithLessons[];
         setSections(secs);
-        const firstLesson = secs[0]?.lessons[0];
-        if (firstLesson) {
-          setActiveLesson(firstLesson);
-          if (secs[0]) setExpandedSections(new Set([secs[0].id]));
-        }
+
+        // Resume from last accessed lesson via lesson_progress_v2, fall back to first lesson
+        const allLessonsFlat = secs.flatMap(s => s.lessons);
+        let resumeLesson = allLessonsFlat[0];
+        try {
+          const { data: progressRows } = await supabase
+            .from('lesson_progress_v2')
+            .select('lesson_id, updated_at, status')
+            .eq('user_id', profile.id)
+            .eq('course_id', courseId)
+            .order('updated_at', { ascending: false })
+            .limit(1);
+          if (progressRows && progressRows.length > 0) {
+            const lastLessonId = progressRows[0].lesson_id;
+            const lastStatus = progressRows[0].status;
+            const found = allLessonsFlat.find(l => l.id === lastLessonId);
+            if (found) {
+              // If last lesson was completed, move to next lesson; otherwise resume it
+              if (lastStatus === 'completed') {
+                const idx = allLessonsFlat.findIndex(l => l.id === lastLessonId);
+                resumeLesson = allLessonsFlat[idx + 1] ?? found;
+              } else {
+                resumeLesson = found;
+              }
+            }
+          }
+        } catch { /* fall back to first lesson */ }
+
+        setActiveLesson(resumeLesson);
+        const owningSection = secs.find(s => s.lessons.some(l => l.id === resumeLesson?.id));
+        if (owningSection) setExpandedSections(new Set([owningSection.id]));
       }
 
       if (quizRes.data) {
