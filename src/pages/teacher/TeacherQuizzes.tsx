@@ -159,7 +159,7 @@ export default function TeacherQuizzes() {
       question: q.question,
       type: q.type,
       options: q.options && q.options.length >= 4 ? [...q.options] : [...(q.options || []), '', '', '', ''].slice(0, 4),
-      correct_answer: q.correct_answer,
+      correct_answer: String(q.correct_answer ?? ''),
       points: q.points,
     });
   };
@@ -584,7 +584,7 @@ export default function TeacherQuizzes() {
                               {quiz.questions && quiz.questions.length > 0 ? (
                                 <div className="p-4 space-y-3">
                                   {quiz.questions.slice().sort((a, b) => a.order_index - b.order_index).map((q, idx) => {
-                                    const missingAnswer = !q.correct_answer?.trim();
+                                    const missingAnswer = !String(q.correct_answer ?? '').trim();
                                     const isQuickOpen   = quickAnswer[q.id] !== undefined;
                                     return (
                                     <div key={q.id} className={`rounded-xl overflow-hidden border ${
