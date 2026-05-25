@@ -1,25 +1,32 @@
 import { useState, useEffect } from 'react';
-import { Search, GraduationCap, UserCheck, UserX, Mail, Plus, X } from 'lucide-react';
+import {
+  Search, GraduationCap, UserCheck, UserX, Mail,
+  Plus, X, Check, ChevronDown, RefreshCw,
+} from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../contexts/ToastContext';
 import type { Profile } from '../../types';
 
-interface AddStudentForm {
-  full_name: string;
-  email: string;
-  password: string;
+interface Course { id: string; title: string; category: string; }
+
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#!';
+  return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
 export default function CoAdminStudents() {
-  const [students, setStudents]   = useState<Profile[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [search, setSearch]       = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [showAdd, setShowAdd]     = useState(false);
-  const [adding, setAdding]       = useState(false);
-  const [form, setForm]           = useState<AddStudentForm>({ full_name: '', email: '', password: '' });
+  const [students, setStudents]           = useState<Profile[]>([]);
+  const [courses, setCourses]             = useState<Course[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [search, setSearch]               = useState('');
+  const [statusFilter, setStatusFilter]   = useState('all');
+  const [showAdd, setShowAdd]             = useState(false);
+  const [creating, setCreating]           = useState(false);
+  const [coursesOpen, setCoursesOpen]     = useState(false);
+  const [selectedCourses, setSelectedCourses] = useState<Set<string>>(new Set());
+  const [form, setForm] = useState({ full_name: '', email: '', password: generatePassword() });
   const { toast } = useToast();
 
   const fetchStudents = async () => {
@@ -31,6 +38,11 @@ export default function CoAdminStudents() {
     if (data) setStudents(data as Profile[]);
     setLoading(false);
   };
+
+  useEffect(() => {
+    supabase.from('courses').select('id, title, category').eq('is_published', true).order('title')
+      .then(({ data }) => { if (data) setCourses(data as Course[]); });
+  }, []);
 
   useEffect(() => { fetchStudents(); }, [search, statusFilter]);
 
@@ -44,11 +56,22 @@ export default function CoAdminStudents() {
     }
   };
 
-  const handleAdd = async (e: React.FormEvent) => {
+  const toggleCourse = (id: string) => {
+    setSelectedCourses(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAdding(true);
+    setCreating(true);
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      const password = form.password.trim() || generatePassword();
+
       const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`,
         {
@@ -57,22 +80,44 @@ export default function CoAdminStudents() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session?.access_token}`,
           },
-          body: JSON.stringify({ ...form, role: 'student' }),
+          body: JSON.stringify({
+            email: form.email.trim(),
+            password,
+            full_name: form.full_name.trim(),
+            role: 'student',
+            course_ids: [...selectedCourses],
+            send_welcome_email: true,
+            temp_password: password,
+          }),
         }
       );
+
       const result = await res.json();
       if (!res.ok || result.error) {
         toast.error(result.error || 'Failed to create student');
       } else {
-        toast.success('Student account created');
+        const enrolled = selectedCourses.size;
+        toast.success(
+          `Student created${enrolled > 0 ? ` and enrolled in ${enrolled} course${enrolled !== 1 ? 's' : ''}` : ''}. Welcome email sent.`
+        );
         setShowAdd(false);
-        setForm({ full_name: '', email: '', password: '' });
+        setForm({ full_name: '', email: '', password: generatePassword() });
+        setSelectedCourses(new Set());
+        setCoursesOpen(false);
         fetchStudents();
       }
     } catch {
       toast.error('Network error — please try again');
     }
-    setAdding(false);
+
+    setCreating(false);
+  };
+
+  const openAdd = () => {
+    setForm({ full_name: '', email: '', password: generatePassword() });
+    setSelectedCourses(new Set());
+    setCoursesOpen(false);
+    setShowAdd(true);
   };
 
   return (
@@ -92,7 +137,7 @@ export default function CoAdminStudents() {
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
           </select>
-          <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2 shrink-0">
+          <button onClick={openAdd} className="btn-primary flex items-center gap-2 shrink-0">
             <Plus className="w-4 h-4" /> Add Student
           </button>
         </div>
@@ -174,42 +219,169 @@ export default function CoAdminStudents() {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowAdd(false)} />
-          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-slide-up">
-            <button onClick={() => setShowAdd(false)} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
-              <X className="w-4 h-4" />
-            </button>
-            <h3 className="font-bold text-lg text-gray-900 dark:text-white mb-5">Add New Student</h3>
-            <form onSubmit={handleAdd} className="space-y-4">
+          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-1">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Full Name</label>
-                <input
-                  type="text" required placeholder="Jane Smith"
-                  value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                  className="input-field"
-                />
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white">Add New Student</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Student will receive a welcome email with their login details</p>
               </div>
+              <button onClick={() => setShowAdd(false)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreate} className="space-y-4 mt-5">
+              {/* Name + Email */}
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                    Full Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text" required placeholder="Jane Smith"
+                    value={form.full_name}
+                    onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                    Email Address <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="email" required placeholder="jane@example.com"
+                    value={form.email}
+                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                    className="input-field"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email</label>
-                <input
-                  type="email" required placeholder="jane@example.com"
-                  value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="input-field"
-                />
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                  Password
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(auto-generated — student can change after login)</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={form.password}
+                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                    minLength={8}
+                    className="input-field font-mono text-sm flex-1"
+                    placeholder="Auto-generated password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, password: generatePassword() }))}
+                    className="px-3 py-2 border border-gray-200 dark:border-navy-600 rounded-xl text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors shrink-0"
+                    title="Regenerate password"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
+
+              {/* Course selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Temporary Password</label>
-                <input
-                  type="password" required minLength={8} placeholder="Min. 8 characters"
-                  value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  className="input-field"
-                />
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                  Enrol in Courses
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(optional)</span>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => setCoursesOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-3 py-2.5 border border-gray-200 dark:border-navy-600 rounded-xl text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-navy-700 hover:bg-gray-50 dark:hover:bg-navy-600 transition-colors"
+                >
+                  <span>
+                    {selectedCourses.size === 0
+                      ? 'Select courses to enrol...'
+                      : `${selectedCourses.size} course${selectedCourses.size !== 1 ? 's' : ''} selected`}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${coursesOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {coursesOpen && (
+                  <div className="mt-1.5 border border-gray-200 dark:border-navy-600 rounded-xl overflow-hidden shadow-lg bg-white dark:bg-navy-800 max-h-52 overflow-y-auto">
+                    {courses.length === 0 ? (
+                      <p className="text-sm text-gray-400 text-center py-4">No published courses found</p>
+                    ) : courses.map(c => {
+                      const selected = selectedCourses.has(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleCourse(c.id)}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
+                            selected ? 'bg-sky-50 dark:bg-sky-900/20' : 'hover:bg-gray-50 dark:hover:bg-navy-700'
+                          }`}
+                        >
+                          <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${
+                            selected ? 'border-sky-500 bg-sky-500' : 'border-gray-300 dark:border-navy-500'
+                          }`}>
+                            {selected && <Check className="w-3 h-3 text-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-gray-900 dark:text-white truncate">{c.title}</p>
+                            {c.category && <p className="text-xs text-gray-400 truncate">{c.category}</p>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {selectedCourses.size > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {[...selectedCourses].map(id => {
+                      const c = courses.find(c => c.id === id);
+                      if (!c) return null;
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 text-xs font-medium rounded-full">
+                          {c.title.length > 30 ? c.title.substring(0, 30) + '…' : c.title}
+                          <button type="button" onClick={() => toggleCourse(id)} className="ml-0.5 text-sky-500 hover:text-sky-700">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              <div className="flex gap-3 justify-end pt-2">
-                <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-navy-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
+
+              {/* Welcome email notice */}
+              <div className="rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 p-3 flex items-start gap-2.5">
+                <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 mt-0.5">
+                  <Check className="w-3 h-3 text-white" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Welcome email will be sent automatically</p>
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">
+                    The student will receive their email address, password, and enrolled course details.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  className="px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors"
+                >
                   Cancel
                 </button>
-                <button type="submit" disabled={adding} className="btn-primary text-sm py-2 disabled:opacity-60">
-                  {adding ? 'Creating...' : 'Create Student'}
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="btn-primary text-sm py-2.5 px-6 disabled:opacity-60 flex items-center gap-2"
+                >
+                  {creating ? (
+                    <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Creating...</>
+                  ) : (
+                    <><GraduationCap className="w-4 h-4" /> Create & Enrol</>
+                  )}
                 </button>
               </div>
             </form>
