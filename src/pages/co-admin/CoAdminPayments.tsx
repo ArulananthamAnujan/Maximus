@@ -6,8 +6,6 @@ import { supabase } from '../../lib/supabase';
 
 interface PaymentRow {
   id: string;
-  amount: number;
-  currency: string;
   status: string;
   created_at: string;
   stripe_payment_id: string;
@@ -29,18 +27,14 @@ export default function CoAdminPayments() {
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [totalRevenue, setTotalRevenue] = useState(0);
 
   useEffect(() => {
     const fetch = async () => {
       const { data } = await supabase
         .from('payments')
-        .select('*, student:profiles(full_name,email), course:courses(title)')
+        .select('id,status,created_at,stripe_payment_id,promo_code,discount_percent,student:profiles(full_name,email),course:courses(title)')
         .order('created_at', { ascending: false });
-      if (data) {
-        setPayments(data as PaymentRow[]);
-        setTotalRevenue(data.filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0));
-      }
+      if (data) setPayments(data as PaymentRow[]);
       setLoading(false);
     };
     fetch();
@@ -57,7 +51,7 @@ export default function CoAdminPayments() {
   });
 
   return (
-    <DashboardLayout navItems={coAdminNavItems} title="Payments" subtitle={`Total revenue: $${totalRevenue.toFixed(2)}`}>
+    <DashboardLayout navItems={coAdminNavItems} title="Payments" subtitle={`${filtered.length} transactions`}>
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -88,7 +82,6 @@ export default function CoAdminPayments() {
                   <tr className="border-b border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900/40">
                     <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide px-4 py-3">Student</th>
                     <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide px-4 py-3">Course</th>
-                    <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide px-4 py-3">Amount</th>
                     <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide px-4 py-3">Status</th>
                     <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide px-4 py-3">Date</th>
                   </tr>
@@ -101,12 +94,6 @@ export default function CoAdminPayments() {
                         <p className="text-xs text-gray-400">{p.student?.email}</p>
                       </td>
                       <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[200px] truncate">{p.course?.title || '—'}</td>
-                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white">
-                        ${p.amount?.toFixed(2)} <span className="text-xs text-gray-400 font-normal uppercase">{p.currency}</span>
-                        {p.discount_percent > 0 && (
-                          <span className="ml-2 text-xs text-emerald-600">-{p.discount_percent}%</span>
-                        )}
-                      </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_COLORS[p.status] || 'bg-gray-100 text-gray-600'}`}>
                           {p.status}
