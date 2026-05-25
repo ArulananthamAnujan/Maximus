@@ -6,7 +6,8 @@ import { useAuth } from '../contexts/AuthContext';
 
 export interface LessonProgressRow {
   id: string;
-  user_id: string;
+  student_id: string;
+  user_id: string | null;
   lesson_id: string;
   course_id: string;
   status: 'not_started' | 'in_progress' | 'completed';
@@ -44,17 +45,17 @@ export interface CourseEnrollmentRow {
 
 export interface UserQuizAttemptRow {
   id: string;
-  user_id: string;
+  student_id: string;
   quiz_id: string;
   course_id: string;
   score: number;
-  max_score: number;
+  total_points: number;
   percentage: number;
   passed: boolean;
   answers: Record<string, string>;
   attempt_number: number;
-  started_at: string | null;
-  completed_at: string;
+  submitted_at: string;
+  created_at: string;
 }
 
 // ─── Lesson Progress ──────────────────────────────────────────────────────────
@@ -68,9 +69,9 @@ export function useLessonProgress(lessonId: string | undefined) {
     queryFn: async (): Promise<LessonProgressRow | null> => {
       if (!lessonId || !user) return null;
       const { data } = await supabase
-        .from('lesson_progress_v2')
-        .select('id,user_id,lesson_id,course_id,status,progress_percent,last_position_seconds,time_spent_seconds,completed_at,created_at,updated_at')
-        .eq('user_id', user.id)
+        .from('lesson_progress')
+        .select('*')
+        .eq('student_id', user.id)
         .eq('lesson_id', lessonId)
         .maybeSingle();
       return data as LessonProgressRow | null;
@@ -87,9 +88,9 @@ export function useCourseProgress(courseId: string | undefined) {
     queryFn: async (): Promise<LessonProgressRow[]> => {
       if (!courseId || !user) return [];
       const { data } = await supabase
-        .from('lesson_progress_v2')
-        .select('id,user_id,lesson_id,course_id,status,progress_percent,last_position_seconds,time_spent_seconds,completed_at,created_at,updated_at')
-        .eq('user_id', user.id)
+        .from('lesson_progress')
+        .select('*')
+        .eq('student_id', user.id)
         .eq('course_id', courseId);
       return (data as LessonProgressRow[]) ?? [];
     },
@@ -135,19 +136,24 @@ export function useUpdateLessonProgress() {
   return useMutation({
     mutationFn: async (input: UpdateProgressInput) => {
       if (!user) throw new Error('Not authenticated');
+      const isCompleted = input.status === 'completed' || input.progressPercent >= 90;
       const row = {
+        student_id: user.id,
         user_id: user.id,
         lesson_id: input.lessonId,
         course_id: input.courseId,
         last_position_seconds: input.lastPositionSeconds,
         time_spent_seconds: input.timeSpentSeconds,
         progress_percent: input.progressPercent,
-        status: input.status ?? (input.progressPercent >= 90 ? 'completed' : 'in_progress'),
-        completed_at: input.completedAt ?? (input.progressPercent >= 90 ? new Date().toISOString() : null),
+        status: input.status ?? (isCompleted ? 'completed' : 'in_progress'),
+        is_completed: isCompleted,
+        watch_percentage: input.progressPercent,
+        completed_at: input.completedAt ?? (isCompleted ? new Date().toISOString() : null),
+        updated_at: new Date().toISOString(),
       };
       const { error } = await supabase
-        .from('lesson_progress_v2')
-        .upsert(row, { onConflict: 'user_id,lesson_id' });
+        .from('lesson_progress')
+        .upsert(row, { onConflict: 'student_id,lesson_id' });
       if (error) throw error;
       return row;
     },
@@ -176,18 +182,20 @@ export function useRecordQuizAttempt() {
   return useMutation({
     mutationFn: async (input: RecordQuizAttemptInput) => {
       if (!user) throw new Error('Not authenticated');
+      const pct = input.maxScore > 0 ? Math.round((input.score / input.maxScore) * 100) : 0;
       const { data, error } = await supabase
-        .from('user_quiz_attempts')
+        .from('quiz_attempts')
         .insert({
-          user_id: user.id,
+          student_id: user.id,
           quiz_id: input.quizId,
           course_id: input.courseId,
           score: input.score,
-          max_score: input.maxScore,
+          total_points: input.maxScore,
+          percentage: pct,
           passed: input.passed,
           answers: input.answers,
           attempt_number: input.attemptNumber,
-          started_at: input.startedAt,
+          submitted_at: new Date().toISOString(),
         })
         .select()
         .maybeSingle();
@@ -208,7 +216,6 @@ export function useEnrollInFreeCourse() {
     mutationFn: async (courseId: string) => {
       if (!user) throw new Error('Not authenticated');
 
-      // Verify course is free before enrolling
       const { data: course, error: courseErr } = await supabase
         .from('courses')
         .select('is_free, is_paid, price, price_amount')
@@ -247,10 +254,10 @@ export function useMyQuizAttempts(courseId?: string) {
     queryFn: async (): Promise<UserQuizAttemptRow[]> => {
       if (!user) return [];
       let query = supabase
-        .from('user_quiz_attempts')
-        .select('id,user_id,quiz_id,course_id,score,max_score,percentage,passed,answers,attempt_number,started_at,completed_at')
-        .eq('user_id', user.id)
-        .order('completed_at', { ascending: false });
+        .from('quiz_attempts')
+        .select('id,student_id,quiz_id,course_id,score,total_points,percentage,passed,answers,attempt_number,submitted_at,created_at')
+        .eq('student_id', user.id)
+        .order('created_at', { ascending: false });
       if (courseId) query = query.eq('course_id', courseId);
       const { data } = await query;
       return (data as UserQuizAttemptRow[]) ?? [];

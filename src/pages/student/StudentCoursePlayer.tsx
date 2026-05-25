@@ -71,6 +71,7 @@ export default function StudentCoursePlayer() {
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<TabId>('lesson');
+  const [sectionQuizBanner, setSectionQuizBanner] = useState<{ sectionTitle: string } | null>(null);
 
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
   const { data: courseProgressRows = [] } = useCourseProgress(courseId);
@@ -106,14 +107,14 @@ export default function StudentCoursePlayer() {
         })) as SectionWithLessons[];
         setSections(secs);
 
-        // Resume from last accessed lesson via lesson_progress_v2, fall back to first lesson
+        // Resume from last accessed lesson via lesson_progress, fall back to first lesson
         const allLessonsFlat = secs.flatMap(s => s.lessons);
         let resumeLesson = allLessonsFlat[0];
         try {
           const { data: progressRows } = await supabase
-            .from('lesson_progress_v2')
+            .from('lesson_progress')
             .select('lesson_id, updated_at, status')
-            .eq('user_id', profile.id)
+            .eq('student_id', profile.id)
             .eq('course_id', courseId)
             .order('updated_at', { ascending: false })
             .limit(1);
@@ -122,7 +123,6 @@ export default function StudentCoursePlayer() {
             const lastStatus = progressRows[0].status;
             const found = allLessonsFlat.find(l => l.id === lastLessonId);
             if (found) {
-              // If last lesson was completed, move to next lesson; otherwise resume it
               if (lastStatus === 'completed') {
                 const idx = allLessonsFlat.findIndex(l => l.id === lastLessonId);
                 resumeLesson = allLessonsFlat[idx + 1] ?? found;
@@ -277,12 +277,24 @@ export default function StudentCoursePlayer() {
       timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
       progressPercent: 100, status: 'completed', completedAt: new Date().toISOString(),
     });
-    await supabase.from('lesson_progress').insert({ student_id: profile.id, lesson_id: activeLesson.id }).then(() => {});
     const newCompleted = new Set(completedLessons).add(activeLesson.id);
     setCompletedLessons(newCompleted);
     const newProgress = allRequired.length > 0 ? Math.round((newCompleted.size / allRequired.length) * 100) : 0;
-    await supabase.from('enrollments').update({ progress_percent: newProgress }).eq('student_id', profile.id).eq('course_id', courseId);
-    await supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId);
+    await Promise.all([
+      supabase.from('enrollments').update({ progress_percent: newProgress }).eq('student_id', profile.id).eq('course_id', courseId),
+      supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId),
+    ]);
+
+    // Check if all lessons in the current section are now complete — show quiz banner
+    const owningSection = sections.find(s => s.lessons.some(l => l.id === activeLesson.id));
+    if (owningSection) {
+      const allSectionLessonsComplete = owningSection.lessons.every(l => newCompleted.has(l.id));
+      const sectionHasQuiz = quizzes.some(q => (q as Quiz & { section_id?: string }).section_id === owningSection.id);
+      if (allSectionLessonsComplete && sectionHasQuiz) {
+        setSectionQuizBanner({ sectionTitle: owningSection.title });
+      }
+    }
+
     toast.success('Lesson marked as complete!');
     setMarking(false);
   };
@@ -750,6 +762,30 @@ export default function StudentCoursePlayer() {
                       </div>
                     )}
 
+                    {/* Section-complete quiz banner */}
+                    {sectionQuizBanner && (
+                      <div className="flex items-center gap-4 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 shadow-sm">
+                        <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center shrink-0">
+                          <Trophy className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-amber-800 dark:text-amber-300">Section complete!</p>
+                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                            You have finished all lessons in <strong>{sectionQuizBanner.sectionTitle}</strong>. Take the section quiz to continue.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button onClick={() => { setSectionQuizBanner(null); setActiveTab('activities'); }}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
+                            <HelpCircle className="w-4 h-4" /> Take Quiz
+                          </button>
+                          <button onClick={() => setSectionQuizBanner(null)} className="p-1.5 text-amber-400 hover:text-amber-600 transition-colors">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Lesson navigation */}
                     <div className="flex items-center justify-between gap-4 pt-2">
                       {prevLesson ? (
@@ -811,7 +847,9 @@ export default function StudentCoursePlayer() {
                           {quizzes.map(quiz => {
                             const attempt = quiz.bestAttempt;
                             const passed = attempt?.passed;
-                            const score = attempt ? Math.round((attempt.score / attempt.total_points) * 100) : null;
+                            const score = attempt
+                              ? (attempt.total_points > 0 ? Math.round((attempt.score / attempt.total_points) * 100) : attempt.score)
+                              : null;
                             return (
                               <div key={quiz.id}
                                 className="flex items-center gap-4 p-4 bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm">

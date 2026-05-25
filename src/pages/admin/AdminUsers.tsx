@@ -182,6 +182,7 @@ export default function AdminUsers() {
             <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="input-field py-2 text-sm w-32">
               <option value="all">All Roles</option>
               <option value="admin">Admin</option>
+              <option value="co_admin">Co-Admin</option>
               <option value="teacher">Teacher</option>
               <option value="student">Student</option>
             </select>
@@ -304,6 +305,7 @@ export default function AdminUsers() {
                 <select value={editRole} onChange={e => setEditRole(e.target.value)} className="input-field">
                   <option value="student">Student</option>
                   <option value="teacher">Teacher</option>
+                  <option value="co_admin">Co-Admin</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
@@ -355,6 +357,7 @@ export default function AdminUsers() {
                   <select value={newUser.role} onChange={e => setNewUser(u => ({ ...u, role: e.target.value }))} className="input-field">
                     <option value="student">Student</option>
                     <option value="teacher">Teacher</option>
+                    <option value="co_admin">Co-Admin</option>
                     <option value="admin">Admin</option>
                   </select>
                 </div>

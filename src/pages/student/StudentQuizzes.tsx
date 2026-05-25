@@ -9,11 +9,27 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMyEnrollments } from '../../hooks/useProgress';
 import { toast as sonnerToast } from 'sonner';
-import type { Quiz, QuizQuestion, QuizAttempt } from '../../types';
+import type { Quiz, QuizQuestion } from '../../types';
+
+// Local type aligned with actual quiz_attempts table schema
+interface QuizAttemptRow {
+  id: string;
+  student_id: string;
+  quiz_id: string;
+  course_id: string;
+  score: number;        // raw points earned
+  total_points: number;
+  percentage: number;   // 0-100
+  passed: boolean;
+  answers: Record<string, string>;
+  attempt_number: number;
+  submitted_at: string | null;
+  created_at: string;
+}
 
 interface QuizWithCourse extends Quiz {
   course: { id: string; title: string };
-  attempts: QuizAttempt[];
+  attempts: QuizAttemptRow[];
   extraAttemptsGranted: number;
 }
 
@@ -30,7 +46,7 @@ export default function StudentQuizzes() {
   const [questions, setQuestions]       = useState<QuizQuestion[]>([]);
   const [answers, setAnswers]           = useState<Record<string, string>>({});
   const [timeLeft, setTimeLeft]         = useState(0);
-  const [lastAttempt, setLastAttempt]   = useState<QuizAttempt | null>(null);
+  const [lastAttempt, setLastAttempt]   = useState<QuizAttemptRow | null>(null);
   const [submitting, setSubmitting]     = useState(false);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -50,15 +66,15 @@ export default function StudentQuizzes() {
     if (allCourseIds.length === 0) { setLoading(false); return; }
 
     const [quizRes, attemptRes, extraRes] = await Promise.all([
-      supabase.from('quizzes').select('*, course:courses(id,title)').in('course_id', allCourseIds),
-      supabase.from('quiz_attempts').select('*').eq('student_id', profile.id),
+      supabase.from('quizzes').select('*, course:courses(id,title)').in('course_id', allCourseIds).eq('is_published', true),
+      supabase.from('quiz_attempts').select('id,student_id,quiz_id,course_id,score,total_points,percentage,passed,answers,attempt_number,submitted_at,created_at').eq('student_id', profile.id),
       supabase.from('quiz_extra_attempts').select('quiz_id, extra_attempts').eq('student_id', profile.id),
     ]);
 
-    const attemptsByQuiz = new Map<string, QuizAttempt[]>();
+    const attemptsByQuiz = new Map<string, QuizAttemptRow[]>();
     (attemptRes.data || []).forEach(a => {
       if (!attemptsByQuiz.has(a.quiz_id)) attemptsByQuiz.set(a.quiz_id, []);
-      attemptsByQuiz.get(a.quiz_id)!.push(a as QuizAttempt);
+      attemptsByQuiz.get(a.quiz_id)!.push(a as QuizAttemptRow);
     });
 
     const extraByQuiz = new Map<string, number>();
@@ -77,6 +93,12 @@ export default function StudentQuizzes() {
   const totalAllowed = (quiz: QuizWithCourse) => MAX_BASE_ATTEMPTS + quiz.extraAttemptsGranted;
   const attemptsLeft = (quiz: QuizWithCourse) => totalAllowed(quiz) - quiz.attempts.length;
 
+  // Derive pass mark: prefer pass_mark, fall back to pass_percentage, default 60
+  const getPassMark = (quiz: QuizWithCourse) =>
+    (quiz as Quiz & { pass_mark?: number; pass_percentage?: number }).pass_mark
+    ?? (quiz as Quiz & { pass_percentage?: number }).pass_percentage
+    ?? 60;
+
   const startQuiz = async (quiz: QuizWithCourse) => {
     const courseId = quiz.course_id;
     const hasAccess = enrollments.some(e => e.course_id === courseId && (e.payment_status === 'not_required' || e.payment_status === 'completed'));
@@ -94,12 +116,17 @@ export default function StudentQuizzes() {
     setActiveQuiz(quiz);
     setAnswers({});
     startedAtRef.current = new Date().toISOString();
-    if (quiz.time_limit_minutes) setTimeLeft(quiz.time_limit_minutes * 60);
+    const timeLimitMins = (quiz as Quiz & { time_limit?: number; time_limit_minutes?: number }).time_limit_minutes
+      ?? (quiz as Quiz & { time_limit?: number }).time_limit ?? 0;
+    if (timeLimitMins) setTimeLeft(timeLimitMins * 60);
     setView('taking');
   };
 
   useEffect(() => {
-    if (view !== 'taking' || !activeQuiz?.time_limit_minutes) return;
+    if (view !== 'taking' || !activeQuiz) return;
+    const timeLimitMins = (activeQuiz as Quiz & { time_limit?: number; time_limit_minutes?: number }).time_limit_minutes
+      ?? (activeQuiz as Quiz & { time_limit?: number }).time_limit ?? 0;
+    if (!timeLimitMins) return;
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) { submitQuiz(); return 0; }
@@ -114,36 +141,46 @@ export default function StudentQuizzes() {
     setSubmitting(true);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    let score = 0, total = 0;
+    let score = 0, totalPts = 0;
     questions.forEach(q => {
-      total += q.points;
-      if (q.type !== 'short_answer' && answers[q.id]?.toLowerCase() === q.correct_answer.toLowerCase()) {
+      totalPts += q.points;
+      // correct_answer_text takes priority; fall back to string comparison of correct_answer index
+      const correctText = (q as QuizQuestion & { correct_answer_text?: string }).correct_answer_text
+        ?? String(q.correct_answer);
+      if (q.type !== 'short_answer' && answers[q.id]?.toLowerCase() === correctText.toLowerCase()) {
         score += q.points;
       }
     });
-    const percent = total > 0 ? Math.round((score / total) * 100) : 0;
-    const passed = percent >= activeQuiz.pass_mark;
+    const pct = totalPts > 0 ? Math.round((score / totalPts) * 100) : 0;
+    const passMark = getPassMark(activeQuiz);
+    const passed = pct >= passMark;
     const attemptNumber = activeQuiz.attempts.length + 1;
 
-    const { data } = await supabase.from('quiz_attempts').insert({
-      quiz_id: activeQuiz.id, student_id: profile.id,
-      score: percent, total_points: total, passed, answers,
+    const { data, error } = await supabase.from('quiz_attempts').insert({
+      student_id: profile.id,
+      quiz_id: activeQuiz.id,
+      course_id: activeQuiz.course_id,
+      score,
+      total_points: totalPts,
+      percentage: pct,
+      passed,
+      answers,
       attempt_number: attemptNumber,
+      submitted_at: new Date().toISOString(),
     }).select().maybeSingle();
 
-    await supabase.from('user_quiz_attempts').insert({
-      user_id: profile.id, quiz_id: activeQuiz.id, course_id: activeQuiz.course_id,
-      score, max_score: total, passed, answers,
-      attempt_number: attemptNumber, started_at: startedAtRef.current,
-    }).then(() => {});
+    if (error) {
+      sonnerToast.error('Failed to submit quiz. Please try again.');
+      setSubmitting(false);
+      return;
+    }
 
-    // Auto-issue certificate if passed and all required quizzes done
     if (passed) {
       await checkAndIssueCertificate(activeQuiz.course_id);
     }
 
-    if (data) setLastAttempt(data as QuizAttempt);
-    sonnerToast[passed ? 'success' : 'error'](passed ? `You passed with ${percent}%!` : `You scored ${percent}%. Keep trying!`);
+    if (data) setLastAttempt(data as QuizAttemptRow);
+    sonnerToast[passed ? 'success' : 'error'](passed ? `You passed with ${pct}%!` : `You scored ${pct}%. Keep trying!`);
     setSubmitting(false);
     setView('results');
     fetchQuizzes();
@@ -151,17 +188,32 @@ export default function StudentQuizzes() {
 
   const checkAndIssueCertificate = async (courseId: string) => {
     if (!profile) return;
-    // Check all required quizzes for this course are passed
+
+    // All required quizzes must be passed
     const { data: allQuizzes } = await supabase.from('quizzes').select('id, is_required').eq('course_id', courseId);
     if (!allQuizzes) return;
-    const requiredIds = allQuizzes.filter(q => q.is_required).map(q => q.id);
-    if (requiredIds.length === 0) return;
-    const { data: passedAttempts } = await supabase.from('quiz_attempts').select('quiz_id, passed').eq('student_id', profile.id).eq('passed', true);
-    const passedQuizIds = new Set((passedAttempts || []).map(a => a.quiz_id));
-    const allPassed = requiredIds.every(id => passedQuizIds.has(id));
-    if (!allPassed) return;
+    const requiredQuizIds = allQuizzes.filter(q => q.is_required).map(q => q.id);
 
-    // Check certificate doesn't already exist
+    if (requiredQuizIds.length > 0) {
+      const { data: passedAttempts } = await supabase
+        .from('quiz_attempts').select('quiz_id, passed')
+        .eq('student_id', profile.id).eq('passed', true);
+      const passedQuizIds = new Set((passedAttempts || []).map(a => a.quiz_id));
+      if (!requiredQuizIds.every(id => passedQuizIds.has(id))) return;
+    }
+
+    // All published exams for this course must have a finalised/graded submission
+    const { data: allExams } = await supabase.from('exams').select('id').eq('course_id', courseId).eq('is_published', true);
+    if (allExams && allExams.length > 0) {
+      const examIds = allExams.map(e => e.id);
+      const { data: examSubs } = await supabase
+        .from('exam_submissions').select('exam_id, status, percentage')
+        .eq('student_id', profile.id).in('exam_id', examIds);
+      const gradedSubs = new Set((examSubs || []).filter(s => s.status === 'finalised' || s.status === 'graded').map(s => s.exam_id));
+      if (!examIds.every(id => gradedSubs.has(id))) return;
+    }
+
+    // Issue certificate if not already issued
     const { data: existing } = await supabase.from('certificates').select('id').eq('student_id', profile.id).eq('course_id', courseId).maybeSingle();
     if (existing) return;
 
@@ -173,14 +225,16 @@ export default function StudentQuizzes() {
 
   // ── Taking view ─────────────────────────────────────────────────────────────
   if (view === 'taking' && activeQuiz) {
+    const timeLimitMins = (activeQuiz as Quiz & { time_limit?: number; time_limit_minutes?: number }).time_limit_minutes
+      ?? (activeQuiz as Quiz & { time_limit?: number }).time_limit ?? 0;
     return (
       <DashboardLayout navItems={studentNavItems} title={activeQuiz.title} subtitle="Answer all questions carefully">
         <div className="max-w-3xl mx-auto space-y-6">
           <div className="flex items-center justify-between bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 p-4 shadow-sm">
             <span className="text-sm text-gray-500 dark:text-gray-400">
-              {questions.length} questions · Pass mark: {activeQuiz.pass_mark}%
+              {questions.length} questions · Pass mark: {getPassMark(activeQuiz)}%
             </span>
-            {activeQuiz.time_limit_minutes && (
+            {timeLimitMins > 0 && (
               <div className={`flex items-center gap-2 font-mono font-bold text-lg ${timeLeft < 60 ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}>
                 <Clock className="w-5 h-5" /> {formatTime(timeLeft)}
               </div>
@@ -258,12 +312,12 @@ export default function StudentQuizzes() {
               {lastAttempt.passed ? 'Well done!' : 'Not quite there'}
             </h2>
             <p className="text-gray-500 dark:text-gray-400 mb-6">
-              {lastAttempt.passed ? 'You passed this quiz.' : `You did not reach the pass mark of ${activeQuiz.pass_mark}%.`}
+              {lastAttempt.passed ? 'You passed this quiz.' : `You did not reach the pass mark of ${getPassMark(activeQuiz)}%.`}
             </p>
             <div className={`text-6xl font-extrabold mb-2 ${lastAttempt.passed ? 'text-emerald-500' : 'text-red-500'}`}>
-              {lastAttempt.score}%
+              {lastAttempt.percentage}%
             </div>
-            <p className="text-sm text-gray-400 mb-2">Pass mark: {activeQuiz.pass_mark}%</p>
+            <p className="text-sm text-gray-400 mb-2">Pass mark: {getPassMark(activeQuiz)}%</p>
             <p className="text-xs text-gray-400 mb-8">Attempt {used} of {totalAllowed(activeQuiz)}</p>
 
             {!lastAttempt.passed && exhausted && (
@@ -315,13 +369,16 @@ export default function StudentQuizzes() {
           </div>
         ) : (
           quizzes.map(quiz => {
-            const best = quiz.attempts.reduce<QuizAttempt | null>((b, a) => (!b || a.score > b.score ? a : b), null);
+            const best = quiz.attempts.reduce<QuizAttemptRow | null>((b, a) => (!b || a.percentage > b.percentage ? a : b), null);
             const left  = attemptsLeft(quiz);
             const total = totalAllowed(quiz);
             const canAttempt = left > 0;
             const hasEnrollment = enrollments.some(e => e.course_id === quiz.course_id && (e.payment_status === 'not_required' || e.payment_status === 'completed'));
             const historyOpen = expandedHistory.has(quiz.id);
-            const sortedAttempts = [...quiz.attempts].sort((a, b) => new Date(b.submitted_at ?? b.created_at).getTime() - new Date(a.submitted_at ?? a.created_at).getTime());
+            const sortedAttempts = [...quiz.attempts].sort((a, b) =>
+              new Date(b.submitted_at ?? b.created_at).getTime() - new Date(a.submitted_at ?? a.created_at).getTime()
+            );
+            const passMark = getPassMark(quiz);
 
             return (
               <div key={quiz.id} className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm overflow-hidden">
@@ -337,13 +394,10 @@ export default function StudentQuizzes() {
                     <p className="font-semibold text-gray-900 dark:text-white">{quiz.title}</p>
                     <p className="text-xs text-gray-400 mt-0.5">{quiz.course?.title}</p>
                     <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
-                      {quiz.time_limit_minutes && (
-                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{quiz.time_limit_minutes} min</span>
-                      )}
-                      <span>Pass: {quiz.pass_mark}%</span>
+                      <span>Pass: {passMark}%</span>
                       {best && (
                         <span className={best.passed ? 'text-emerald-600 font-semibold' : 'text-red-500'}>
-                          Best: {best.score}%
+                          Best: {best.percentage}%
                         </span>
                       )}
                       <span className={left <= 0 ? 'text-red-500 font-semibold' : left === 1 ? 'text-amber-500 font-semibold' : ''}>
@@ -387,7 +441,7 @@ export default function StudentQuizzes() {
                         <div key={attempt.id} className="flex items-center gap-4 px-5 py-3">
                           <span className="text-xs text-gray-400 w-16">#{sortedAttempts.length - i}</span>
                           <span className={`text-sm font-bold ${attempt.passed ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {attempt.score}%
+                            {attempt.percentage}%
                           </span>
                           <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
                             attempt.passed
@@ -397,7 +451,7 @@ export default function StudentQuizzes() {
                             {attempt.passed ? 'Passed' : 'Failed'}
                           </span>
                           <span className="text-xs text-gray-400 ml-auto">
-                            {new Date(attempt.submitted_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            {new Date(attempt.submitted_at ?? attempt.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
                           </span>
                         </div>
                       ))}
