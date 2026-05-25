@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, BookOpen, Mail, Plus, X, UserCheck, UserX, RefreshCw, ChevronDown, Check } from 'lucide-react';
+import { Search, BookOpen, Mail, Plus, X, UserCheck, UserX, RefreshCw, ChevronDown, Check, Send } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
 import { supabase } from '../../lib/supabase';
@@ -7,6 +7,8 @@ import { useToast } from '../../contexts/ToastContext';
 import type { Profile } from '../../types';
 
 interface Course { id: string; title: string; }
+
+interface EmailTarget { id: string; full_name: string; email: string; }
 
 interface AddTeacherForm {
   full_name: string;
@@ -34,6 +36,10 @@ export default function CoAdminTeachers() {
     full_name: '', email: '', password: generatePassword(), course_ids: [],
   });
   const dropRef = useRef<HTMLDivElement>(null);
+  const [emailTarget, setEmailTarget]   = useState<EmailTarget | null>(null);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody]       = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
   const { toast } = useToast();
 
   const fetchTeachers = async () => {
@@ -80,6 +86,39 @@ export default function CoAdminTeachers() {
       ...f,
       course_ids: f.course_ids.includes(id) ? f.course_ids.filter(c => c !== id) : [...f.course_ids, id],
     }));
+  };
+
+  const openEmail = (t: Profile & { courseCount: number }) => {
+    setEmailTarget({ id: t.id, full_name: t.full_name || t.email, email: t.email });
+    setEmailSubject('');
+    setEmailBody('');
+  };
+
+  const handleSendEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailTarget) return;
+    setSendingEmail(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-admin-message`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ to_user_id: emailTarget.id, subject: emailSubject, body: emailBody }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        toast.error(result.error || 'Failed to send message');
+      } else {
+        toast.success(`Message sent to ${emailTarget.full_name}`);
+        setEmailTarget(null);
+      }
+    } catch {
+      toast.error('Network error — please try again');
+    }
+    setSendingEmail(false);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -180,9 +219,9 @@ export default function CoAdminTeachers() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <a href={`mailto:${t.email}`} className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors inline-flex" title="Email">
+                        <button onClick={() => openEmail(t)} className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-900/20 transition-colors inline-flex" title="Send message">
                           <Mail className="w-4 h-4" />
-                        </a>
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -192,6 +231,47 @@ export default function CoAdminTeachers() {
           )}
         </div>
       </div>
+
+      {/* Send Email Modal */}
+      {emailTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setEmailTarget(null)} />
+          <div className="relative bg-white dark:bg-navy-800 rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-slide-up">
+            <button onClick={() => setEmailTarget(null)} className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
+                <Mail className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 dark:text-white">Send Message</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">To: <span className="font-medium text-gray-700 dark:text-gray-300">{emailTarget.full_name}</span> &middot; {emailTarget.email}</p>
+              </div>
+            </div>
+            <form onSubmit={handleSendEmail} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Subject</label>
+                <input type="text" required placeholder="e.g. Course update notification" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} className="input-field" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Message</label>
+                <textarea required rows={6} placeholder="Write your message here..." value={emailBody} onChange={e => setEmailBody(e.target.value)} className="input-field resize-none" />
+              </div>
+              <div className="flex gap-3 justify-end pt-1">
+                <button type="button" onClick={() => setEmailTarget(null)} className="px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-navy-600 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">Cancel</button>
+                <button type="submit" disabled={sendingEmail} className="btn-primary text-sm py-2.5 px-5 disabled:opacity-60 flex items-center gap-2">
+                  {sendingEmail ? (
+                    <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Sending...</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> Send Message</>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
