@@ -156,8 +156,7 @@ export default function AdminDashboard() {
                         />
                         {day.amount > 0 && (
                           <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:block bg-navy-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
-                            A${day.amount.toFixed(0)}<br />
-                            <span className="text-gray-400">{day.date.slice(5)}</span>
+                            A${day.amount.toFixed(0)}
                           </div>
                         )}
                       </div>
@@ -166,7 +165,7 @@ export default function AdminDashboard() {
                 </div>
               )}
               <div className="flex justify-between text-xs text-gray-400 mt-2">
-                <span>{revenueData[0]?.date.slice(5)}</span>
+                <span>30 days ago</span>
                 <span>Today</span>
               </div>
             </div>

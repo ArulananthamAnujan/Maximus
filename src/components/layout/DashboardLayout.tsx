@@ -72,7 +72,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
           {logo_url ? (
             <img src={logo_url} alt={platform_name} className="h-8 w-auto object-contain shrink-0" />
           ) : (
-            <img src="/image.png" alt={platform_name} className="h-8 w-auto brightness-0 invert shrink-0" />
+            <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-8 w-auto object-contain shrink-0 rounded" style={{background: 'white', padding: '2px 4px'}} />
           )}
         </Link>
         {mobile && (

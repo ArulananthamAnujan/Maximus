@@ -6,12 +6,6 @@ import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
 import { useSiteSettings } from '../../hooks/useSiteSettings';
 
-const DEMO_ACCOUNTS = [
-  { role: 'Admin', email: 'admin@maximus.edu.au', password: 'Admin1234!', color: 'text-red-600' },
-  { role: 'Teacher', email: 'teacher@maximus.edu.au', password: 'Teacher1234!', color: 'text-blue-600' },
-  { role: 'Student', email: 'student@maximus.edu.au', password: 'Student1234!', color: 'text-green-600' },
-];
-
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,19 +32,6 @@ export default function Login() {
     }
   };
 
-  const handleDemo = async (demoEmail: string, demoPassword: string) => {
-    setLoading(true);
-    setError('');
-    const { error } = await signIn(demoEmail, demoPassword);
-    if (error) {
-      setError(`Login failed: ${(error as { message?: string }).message || 'Invalid credentials. Please try again.'}`);
-      setLoading(false);
-    } else {
-      toast.success('Logged in with demo account!');
-      navigate('/dashboard');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-navy-950 flex">
       <div className="hidden lg:flex lg:w-1/2 bg-navy-900 relative overflow-hidden">
@@ -60,14 +41,8 @@ export default function Login() {
             {logo_url ? (
               <img src={logo_url} alt={platform_name} className="h-12 w-auto object-contain" />
             ) : (
-              <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
-                <GraduationCap className="w-7 h-7 text-white" />
-              </div>
+              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-12 w-auto object-contain rounded-lg" />
             )}
-            <div>
-              <p className="font-playfair font-bold text-white text-2xl">{platform_name}</p>
-              <p className="text-gold-400 text-sm font-medium tracking-widest">AUSTRALIA</p>
-            </div>
           </Link>
           <h2 className="font-playfair text-4xl font-bold text-white mb-6 leading-tight">
             Transform Your Career with World-Class Education
@@ -100,9 +75,7 @@ export default function Login() {
               {logo_url ? (
                 <img src={logo_url} alt={platform_name} className="h-7 w-auto object-contain" />
               ) : (
-                <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
-                  <GraduationCap className="w-5 h-5 text-white" />
-                </div>
+                <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-7 w-auto object-contain rounded" />
               )}
               <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">{platform_name}</span>
             </Link>
@@ -114,23 +87,6 @@ export default function Login() {
           <div className="w-full max-w-md">
             <h1 className="text-3xl font-bold text-navy-900 dark:text-white mb-2">Welcome back</h1>
             <p className="text-gray-500 dark:text-gray-400 mb-8">Sign in to your Maximus Academy account</p>
-
-            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl p-4 mb-6">
-              <p className="text-sm font-semibold text-amber-800 dark:text-amber-400 mb-3">Demo Accounts — Click to Login</p>
-              <div className="flex flex-col gap-2">
-                {DEMO_ACCOUNTS.map(acc => (
-                  <button
-                    key={acc.role}
-                    onClick={() => handleDemo(acc.email, acc.password)}
-                    disabled={loading}
-                    className="flex items-center justify-between px-3 py-2 bg-white dark:bg-navy-800 rounded-lg text-sm hover:bg-amber-50 dark:hover:bg-navy-700 transition-colors border border-amber-100 dark:border-navy-600"
-                  >
-                    <span className={`font-semibold ${acc.color}`}>{acc.role}</span>
-                    <span className="text-gray-500 dark:text-gray-400 text-xs">{acc.email}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
 
             <div className="flex gap-3 mb-6">
               <button

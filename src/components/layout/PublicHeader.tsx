@@ -70,13 +70,9 @@ export default function PublicHeader() {
         <div className="flex items-center justify-between h-16 lg:h-[70px]">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             {logo_url ? (
-              <div className="rounded-md overflow-hidden bg-sky-700 px-1">
-                <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain mix-blend-multiply" />
-              </div>
+              <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain drop-shadow-sm" />
             ) : (
-              <div className="rounded-md overflow-hidden bg-sky-700 px-1">
-                <img src="/image.png" alt={platform_name} className="h-10 w-auto object-contain mix-blend-multiply" />
-              </div>
+              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-10 w-auto object-contain drop-shadow-sm" style={{filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.15)) brightness(1.05)'}} />
             )}
           </Link>
 
