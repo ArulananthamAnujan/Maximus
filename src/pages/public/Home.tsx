@@ -18,7 +18,7 @@ const CATEGORIES = [
   {
     icon: FlaskConical,
     title: 'Test Preparation',
-    desc: 'IELTS, PTE & General Test Prep',
+    desc: 'Structured preparation for global English exams with expert guidance and proven strategies.',
     color: 'bg-sky-50',
     iconColor: 'text-sky-600',
     border: 'border-sky-100',
@@ -27,7 +27,7 @@ const CATEGORIES = [
   {
     icon: Globe,
     title: 'Language Learning',
-    desc: 'Japanese, French & Spanish',
+    desc: 'Build fluency, confidence, and cultural understanding through foreign language programs.',
     color: 'bg-emerald-50',
     iconColor: 'text-emerald-600',
     border: 'border-emerald-100',
@@ -36,7 +36,7 @@ const CATEGORIES = [
   {
     icon: Briefcase,
     title: 'Professional Skills',
-    desc: 'Xero Accounting & Career Skills',
+    desc: 'Develop practical, job-ready skills designed to support career growth and workplace success.',
     color: 'bg-amber-50',
     iconColor: 'text-amber-600',
     border: 'border-amber-100',
@@ -44,8 +44,8 @@ const CATEGORIES = [
   },
   {
     icon: BookOpen,
-    title: 'Short Courses',
-    desc: 'Workshops & Intensive Programs',
+    title: 'Short Courses & Workshops',
+    desc: 'Focused programs delivering quick skill development, practical insights, and measurable learning outcomes.',
     color: 'bg-rose-50',
     iconColor: 'text-rose-600',
     border: 'border-rose-100',
@@ -65,12 +65,12 @@ const STUDENT_BENEFITS = [
 ];
 
 const WHY_US = [
-  { title: 'Experienced Instructors', desc: 'Our educators bring real-world expertise and a passion for teaching.' },
-  { title: 'Proven Results', desc: 'Thousands of students have achieved their target scores and career goals.' },
-  { title: 'Flexible Learning', desc: 'Study at your own pace with both online and in-person options.' },
-  { title: 'Affordable Pricing', desc: 'Quality education at accessible prices with flexible payment options.' },
-  { title: 'Comprehensive Support', desc: 'From enrolment to certification, we are with you every step.' },
-  { title: 'Recognised Certificates', desc: 'Our qualifications are acknowledged by employers and institutions.' },
+  { title: 'Expert Trainers', desc: 'Learn from industry professionals with real hands-on experience and a passion for teaching.' },
+  { title: 'Practical Learning', desc: 'Courses designed with real-world applications and workplace relevance — not just theory.' },
+  { title: 'Flexible Access', desc: 'Study anytime, anywhere with easy online learning access to live and recorded sessions.' },
+  { title: 'Career-Focused Content', desc: 'Training built to improve skills, confidence, and job readiness for the global workforce.' },
+  { title: 'Certification Support', desc: 'Earn recognized certificates to boost your professional profile and career prospects.' },
+  { title: 'Continuous Guidance', desc: 'Get ongoing support, mentorship, and answers — dedicated doubt-clearing and academic assistance.' },
 ];
 
 const GALLERY = [
@@ -133,8 +133,7 @@ export default function Home() {
             </h1>
             <p className="text-xl text-slate-700 font-semibold mb-3">Empowering Learners for Global Success</p>
             <p className="text-lg text-slate-600 leading-relaxed mb-10 max-w-xl">
-              Maximus Academy offers expert-led courses in IELTS, PTE, language learning, and professional skills —
-              helping you reach your goals with confidence and clarity.
+              Expert-led training in IELTS, PTE, foreign languages, and professional skills designed to help you grow, succeed, and stand out.
             </p>
             <div className="flex flex-wrap gap-4">
               <Link to="/courses" className="flex items-center gap-2 px-8 py-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold transition-all text-base shadow-lg shadow-sky-600/30">
@@ -342,7 +341,7 @@ export default function Home() {
           <div className="relative">
             <Quote className="w-12 h-12 text-sky-200 mx-auto mb-6" />
             <blockquote className="font-playfair text-2xl sm:text-3xl text-slate-900 font-medium leading-relaxed mb-8 italic">
-              "Maximus Academy completely transformed my IELTS preparation. The structured lessons, personalised feedback, and supportive instructors helped me achieve Band 8 — far beyond what I expected. I cannot recommend this academy enough!"
+              "The classroom environment at Maximus Academy is very engaging and supportive. The trainers explain concepts clearly and focus on individual improvement."
             </blockquote>
             <div className="flex items-center justify-center gap-4">
               <div className="w-16 h-16 rounded-full overflow-hidden border-4 border-sky-200">
@@ -354,7 +353,7 @@ export default function Home() {
               </div>
               <div className="text-left">
                 <p className="font-semibold text-slate-900">Michael Johnson</p>
-                <p className="text-sm text-slate-500">IELTS Band 8 Graduate</p>
+                <p className="text-sm text-slate-500">IELTS Preparation</p>
                 <div className="flex items-center gap-0.5 mt-1">
                   {[1,2,3,4,5].map(i => (
                     <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />

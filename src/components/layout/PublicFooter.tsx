@@ -14,7 +14,7 @@ export default function PublicFooter() {
               <MaximusLogo height={40} variant="light" />
             </Link>
             <p className="text-sm text-slate-400 leading-relaxed mb-5">
-              Empowering Learners for Global Success. We offer expert-led courses in language proficiency, test preparation, and professional skills development.
+              Guiding aspirants with care, clarity, and commitment. Expert-led courses in language proficiency, test preparation, and professional skills development.
             </p>
             <ul className="space-y-3 mb-6">
               <li className="flex items-start gap-3">
@@ -106,7 +106,7 @@ export default function PublicFooter() {
 
         <div className="py-6 border-t border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-sm text-slate-500">&copy; {currentYear} Maximus Academy. All rights reserved.</p>
-          <p className="text-sm text-slate-500">Empowering Learners for Global Success</p>
+          <p className="text-sm text-slate-500">Guiding aspirants with care, clarity, and commitment.</p>
         </div>
       </div>
     </footer>

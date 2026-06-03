@@ -61,9 +61,9 @@ export default function Courses() {
         <div className="bg-slate-900 py-16 relative overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,rgba(14,165,233,0.1),transparent_60%)]" />
           <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <p className="text-sky-400 font-semibold text-sm uppercase tracking-wider mb-2">Learn Anything</p>
-            <h1 className="font-playfair text-4xl lg:text-5xl font-bold text-white mb-4">All Courses</h1>
-            <p className="text-slate-300 text-lg mb-8">Discover your next skill. Browse our full catalogue of professional courses.</p>
+            <p className="text-sky-400 font-semibold text-sm uppercase tracking-wider mb-2">Our Courses</p>
+            <h1 className="font-playfair text-4xl lg:text-5xl font-bold text-white mb-4">Our Courses</h1>
+            <p className="text-slate-300 text-lg mb-8">Build practical skills with industry-focused training designed for real career growth.</p>
             <div className="max-w-2xl mx-auto relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
