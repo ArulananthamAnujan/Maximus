@@ -70,7 +70,7 @@ export default function PublicHeader() {
         <div className="flex items-center justify-between h-16 lg:h-[70px]">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-9 w-auto object-contain" />
+              <img src={logo_url} alt={platform_name} className="h-9 w-auto object-contain mix-blend-screen brightness-150" />
             ) : (
               <img src="/image.png" alt={platform_name} className="h-9 w-auto brightness-0 invert" />
             )}

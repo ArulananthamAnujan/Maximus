@@ -74,12 +74,12 @@ const WHY_US = [
 ];
 
 const GALLERY = [
-  'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg',
-  'https://images.pexels.com/photos/5427869/pexels-photo-5427869.jpeg',
-  'https://images.pexels.com/photos/4144923/pexels-photo-4144923.jpeg',
-  'https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg',
-  'https://images.pexels.com/photos/5935791/pexels-photo-5935791.jpeg',
-  'https://images.pexels.com/photos/6693661/pexels-photo-6693661.jpeg',
+  'https://images.pexels.com/photos/1438081/pexels-photo-1438081.jpeg',
+  'https://images.pexels.com/photos/1516440/pexels-photo-1516440.jpeg',
+  'https://images.pexels.com/photos/3184299/pexels-photo-3184299.jpeg',
+  'https://images.pexels.com/photos/3769021/pexels-photo-3769021.jpeg',
+  'https://images.pexels.com/photos/4050315/pexels-photo-4050315.jpeg',
+  'https://images.pexels.com/photos/6238297/pexels-photo-6238297.jpeg',
 ];
 
 export default function Home() {
@@ -114,8 +114,8 @@ export default function Home() {
       <section className="relative min-h-screen flex items-center overflow-hidden">
         <div className="absolute inset-0">
           <img
-            src="https://images.pexels.com/photos/5212345/pexels-photo-5212345.jpeg"
-            alt="Students learning"
+            src="https://images.pexels.com/photos/1438081/pexels-photo-1438081.jpeg"
+            alt="University students learning"
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-r from-white/90 via-white/75 to-white/30" />
