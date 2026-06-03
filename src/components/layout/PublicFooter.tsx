@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { Mail, Phone, MapPin, Facebook, Instagram, GraduationCap } from 'lucide-react';
+import { Mail, Phone, MapPin, Facebook, Instagram } from 'lucide-react';
+import MaximusLogo from '../ui/MaximusLogo';
 
 export default function PublicFooter() {
   const currentYear = new Date().getFullYear();
@@ -10,13 +11,7 @@ export default function PublicFooter() {
         <div className="py-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10">
           <div className="lg:col-span-2">
             <Link to="/" className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 bg-sky-600 rounded-xl flex items-center justify-center">
-                <GraduationCap className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <p className="font-playfair font-bold text-white text-lg leading-none">Maximus Academy</p>
-                <p className="text-sky-400 text-xs font-semibold tracking-wider uppercase mt-0.5">Empowering Learners</p>
-              </div>
+              <MaximusLogo height={40} variant="light" />
             </Link>
             <p className="text-sm text-slate-400 leading-relaxed mb-5">
               Empowering Learners for Global Success. We offer expert-led courses in language proficiency, test preparation, and professional skills development.

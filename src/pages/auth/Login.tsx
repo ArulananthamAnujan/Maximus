@@ -35,8 +35,9 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-navy-950 flex">
-      <div className="hidden lg:flex lg:w-1/2 bg-navy-900 relative overflow-hidden">
-        <div className="absolute inset-0 bg-pattern opacity-30" />
+      <div className="hidden lg:flex lg:w-1/2 bg-sky-600 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{backgroundImage: 'radial-gradient(circle at 25% 25%, white 1px, transparent 1px), radial-gradient(circle at 75% 75%, white 1px, transparent 1px)', backgroundSize: '40px 40px'}} />
+        <div className="absolute bottom-0 left-0 right-0 h-64 bg-gradient-to-t from-sky-800/60 to-transparent" />
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
             {logo_url ? (
@@ -48,14 +49,14 @@ export default function Login() {
           <h2 className="font-playfair text-4xl font-bold text-white mb-6 leading-tight">
             Transform Your Career with World-Class Education
           </h2>
-          <p className="text-gray-300 text-lg leading-relaxed mb-10">
+          <p className="text-sky-100 text-lg leading-relaxed mb-10">
             Join thousands of Australians upskilling through our premium online courses designed by industry experts.
           </p>
           <div className="grid grid-cols-3 gap-6">
             {[['10,000+', 'Students'], ['200+', 'Courses'], ['98%', 'Satisfaction']].map(([val, label]) => (
-              <div key={label} className="text-center">
-                <p className="text-3xl font-bold text-gold-400 font-playfair">{val}</p>
-                <p className="text-gray-400 text-sm mt-1">{label}</p>
+              <div key={label} className="text-center bg-white/10 rounded-xl py-4 px-2 backdrop-blur-sm">
+                <p className="text-3xl font-bold text-white font-playfair">{val}</p>
+                <p className="text-sky-100 text-sm mt-1">{label}</p>
               </div>
             ))}
           </div>

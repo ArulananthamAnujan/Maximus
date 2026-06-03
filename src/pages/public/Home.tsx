@@ -388,7 +388,7 @@ export default function Home() {
       </section>
 
       {/* Newsletter */}
-      <section className="py-20 bg-sky-700">
+      <section className="py-20 bg-sky-600">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <div className="w-16 h-16 bg-white/15 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <Mail className="w-8 h-8 text-white" />

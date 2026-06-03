@@ -53,9 +53,9 @@ export default function Register() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-navy-950 flex">
       {/* Left panel */}
-      <div className="hidden lg:flex lg:w-1/2 bg-navy-900 relative overflow-hidden">
-        <div className="absolute inset-0 bg-pattern opacity-10" />
-        <div className="absolute inset-0 bg-gradient-to-br from-navy-900/80 via-navy-900/60 to-navy-800/80" />
+      <div className="hidden lg:flex lg:w-1/2 bg-sky-600 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{backgroundImage: 'radial-gradient(circle at 25% 25%, white 1px, transparent 1px), radial-gradient(circle at 75% 75%, white 1px, transparent 1px)', backgroundSize: '40px 40px'}} />
+        <div className="absolute bottom-0 left-0 right-0 h-64 bg-gradient-to-t from-sky-800/60 to-transparent" />
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
             {logo_url ? (
@@ -67,7 +67,7 @@ export default function Register() {
           <h2 className="font-playfair text-4xl font-bold text-white mb-6">
             Start Your Learning Journey Today
           </h2>
-          <p className="text-white/90 text-lg leading-relaxed mb-8">
+          <p className="text-sky-100 text-lg leading-relaxed mb-8">
             Create your student account and access hundreds of professional courses designed for the Australian workforce.
           </p>
           <div className="space-y-4">
@@ -79,10 +79,10 @@ export default function Register() {
               'Request face-to-face sessions with teachers',
             ].map(item => (
               <div key={item} className="flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full bg-gold-500 flex items-center justify-center shrink-0">
+                <div className="w-6 h-6 rounded-full bg-white/20 border border-white/40 flex items-center justify-center shrink-0">
                   <CheckCircle2 className="w-4 h-4 text-white" />
                 </div>
-                <span className="text-white/85 font-medium">{item}</span>
+                <span className="text-white font-medium">{item}</span>
               </div>
             ))}
           </div>
@@ -90,12 +90,12 @@ export default function Register() {
           {/* Teacher access note */}
           <div className="mt-10 p-4 rounded-xl bg-white/10 border border-white/20">
             <div className="flex items-start gap-3">
-              <Info className="w-4 h-4 text-gold-400 shrink-0 mt-0.5" />
+              <Info className="w-4 h-4 text-sky-100 shrink-0 mt-0.5" />
               <div>
                 <p className="text-white font-semibold text-sm">Are you a teacher?</p>
-                <p className="text-white/70 text-xs mt-1 leading-relaxed">
+                <p className="text-sky-100 text-xs mt-1 leading-relaxed">
                   Teacher accounts are provisioned by Maximus Academy. Contact us at{' '}
-                  <a href="/contact" className="text-gold-400 hover:text-gold-300 underline">our contact page</a>{' '}
+                  <a href="/contact" className="text-white underline hover:text-sky-200">our contact page</a>{' '}
                   to apply for a teacher account.
                 </p>
               </div>

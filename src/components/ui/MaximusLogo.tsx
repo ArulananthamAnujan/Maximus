@@ -4,10 +4,12 @@ interface MaximusLogoProps {
 }
 
 export default function MaximusLogo({ height = 64, variant = 'light' }: MaximusLogoProps) {
+  // light: white box + sky text — for sky-blue/colored backgrounds
+  // dark: sky-600 box + white M + sky-600 text — for white/light backgrounds
   const iconBg = variant === 'light' ? 'white' : '#0369a1';
   const iconColor = variant === 'light' ? '#0369a1' : 'white';
-  const textColor = variant === 'light' ? 'white' : '#0c1a2e';
-  const subColor = variant === 'light' ? 'rgba(255,255,255,0.75)' : '#64748b';
+  const textColor = variant === 'light' ? 'white' : '#0369a1';
+  const subColor = variant === 'light' ? 'rgba(255,255,255,0.78)' : '#0284c7';
 
   const iconSize = height;
   const gap = height * 0.18;
@@ -32,18 +34,18 @@ export default function MaximusLogo({ height = 64, variant = 'light' }: MaximusL
         fill={iconBg}
       />
 
-      {/* M letter — two outer uprights + centre V */}
+      {/* M letterform — two uprights with a V notch in the middle */}
       {(() => {
-        const p = iconSize * 0.18;   // padding from edge
-        const w = iconSize - p * 2;  // usable width
-        const t = iconSize * 0.11;   // stroke thickness
+        const p = iconSize * 0.18;
+        const w = iconSize - p * 2;
+        const t = iconSize * 0.11;
         const top = p;
         const bot = iconSize - p;
-        const mid = iconSize * 0.56; // depth of V dip
+        const mid = iconSize * 0.56;
 
-        const lx = p;               // left upright x
-        const rx = p + w;           // right upright x
-        const mx = p + w / 2;       // centre x
+        const lx = p;
+        const rx = p + w;
+        const mx = p + w / 2;
 
         return (
           <path
@@ -65,7 +67,7 @@ export default function MaximusLogo({ height = 64, variant = 'light' }: MaximusL
         );
       })()}
 
-      {/* MAXIMUS text */}
+      {/* MAXIMUS */}
       <text
         x={iconSize + gap}
         y={height * 0.52}
@@ -79,7 +81,7 @@ export default function MaximusLogo({ height = 64, variant = 'light' }: MaximusL
         MAXIMUS
       </text>
 
-      {/* ACADEMY subtext */}
+      {/* ACADEMY */}
       <text
         x={iconSize + gap + height * 0.02}
         y={height * 0.79}

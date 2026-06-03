@@ -41,7 +41,6 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Close sidebar on route change (mobile)
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
@@ -68,17 +67,17 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
   const SidebarContent = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-20 border-b border-white/10 shrink-0">
+      <div className="flex items-center gap-3 px-4 h-20 border-b border-slate-200 dark:border-navy-700 shrink-0">
         <Link to="/" className="flex items-center min-w-0 flex-1">
           {logo_url ? (
             <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain shrink-0" />
           ) : (
-            <MaximusLogo height={48} variant="light" />
+            <MaximusLogo height={48} variant="dark" />
           )}
         </Link>
         {mobile && (
           <button onClick={() => setSidebarOpen(false)}
-            className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors">
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-navy-700 transition-colors">
             <X className="w-4 h-4" />
           </button>
         )}
@@ -89,7 +88,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
         {Object.entries(groups).map(([group, items]) => (
           <div key={group}>
             {group && (
-              <p className="text-xs font-semibold text-white/35 uppercase tracking-wider px-2 mb-1.5">{group}</p>
+              <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-2 mb-1.5">{group}</p>
             )}
             <div className="space-y-0.5">
               {items.map(item => {
@@ -98,17 +97,17 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
                   <Link key={item.href + item.label} to={item.href}
                     className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
                       active
-                        ? 'bg-white/15 text-white shadow-sm'
-                        : 'text-white/65 hover:text-white hover:bg-white/10'
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-900/20 dark:hover:text-sky-300'
                     }`}>
-                    <item.icon className={`w-4 h-4 shrink-0 transition-colors ${active ? 'text-white' : 'text-white/50 group-hover:text-white/80'}`} />
+                    <item.icon className={`w-4 h-4 shrink-0 transition-colors ${active ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-sky-600 dark:group-hover:text-sky-400'}`} />
                     <span className="truncate flex-1">{item.label}</span>
                     {item.badge !== undefined && (
-                      <span className="ml-auto bg-sky-400 text-white text-xs px-1.5 py-0.5 rounded-full font-bold min-w-[20px] text-center leading-none">
+                      <span className={`ml-auto text-xs px-1.5 py-0.5 rounded-full font-bold min-w-[20px] text-center leading-none ${active ? 'bg-white/20 text-white' : 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300'}`}>
                         {item.badge}
                       </span>
                     )}
-                    {active && <ChevronRight className="w-3.5 h-3.5 text-white/40 shrink-0" />}
+                    {active && <ChevronRight className="w-3.5 h-3.5 text-white/60 shrink-0" />}
                   </Link>
                 );
               })}
@@ -118,17 +117,17 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
       </nav>
 
       {/* User footer */}
-      <div className="p-3 border-t border-white/10 shrink-0">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/10 transition-colors cursor-default">
-          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold text-white shrink-0 ring-2 ring-white/25">
+      <div className="p-3 border-t border-slate-200 dark:border-navy-700 shrink-0">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-navy-700 transition-colors cursor-default">
+          <div className="w-9 h-9 rounded-full bg-sky-600 flex items-center justify-center text-sm font-bold text-white shrink-0 ring-2 ring-sky-200 dark:ring-sky-800">
             {initials}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-white truncate leading-tight">{profile?.full_name || 'User'}</p>
-            <p className="text-xs text-white/50 truncate capitalize">{profile?.role}</p>
+            <p className="text-sm font-semibold text-slate-800 dark:text-white truncate leading-tight">{profile?.full_name || 'User'}</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 truncate capitalize">{profile?.role}</p>
           </div>
           <button onClick={handleSignOut} title="Sign out"
-            className="p-1.5 text-white/40 hover:text-white rounded-lg hover:bg-white/10 transition-colors shrink-0">
+            className="p-1.5 text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
             <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -136,14 +135,13 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
     </div>
   );
 
-  // Mobile bottom nav — only show for student role
   const isStudent = profile?.role === 'student';
   const mobileNavItems = isStudent ? navItems.slice(0, 5) : [];
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-navy-950 overflow-hidden">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col w-60 bg-sky-gradient shrink-0 shadow-xl">
+      <aside className="hidden lg:flex flex-col w-60 bg-white dark:bg-navy-900 shrink-0 shadow-md border-r border-slate-200 dark:border-navy-700">
         <SidebarContent />
       </aside>
 
@@ -151,7 +149,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
       {sidebarOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
-          <aside className="relative z-10 w-64 bg-sky-gradient flex flex-col shadow-2xl animate-slide-in">
+          <aside className="relative z-10 w-64 bg-white dark:bg-navy-900 flex flex-col shadow-2xl animate-slide-in border-r border-slate-200 dark:border-navy-700">
             <SidebarContent mobile />
           </aside>
         </div>
@@ -161,7 +159,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
         {/* Top header */}
         <header className="h-14 bg-white dark:bg-navy-800 border-b border-slate-200 dark:border-navy-700 flex items-center gap-3 px-4 shrink-0 shadow-sm">
           <button onClick={() => setSidebarOpen(true)}
-            className="lg:hidden p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-navy-700 rounded-lg transition-colors">
+            className="lg:hidden p-2 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-navy-700 rounded-lg transition-colors">
             <Menu className="w-5 h-5" />
           </button>
 
@@ -175,15 +173,15 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
           <div className="flex items-center gap-1">
             <DarkModeToggle />
 
-            <button className="relative p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-navy-700 rounded-lg transition-colors">
+            <button className="relative p-2 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-navy-700 rounded-lg transition-colors">
               <Bell className="w-4.5 h-4.5" />
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-sky-500 rounded-full ring-2 ring-white dark:ring-navy-800" />
+              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-sky-600 rounded-full ring-2 ring-white dark:ring-navy-800" />
             </button>
 
             <div className="relative" ref={menuRef}>
               <button onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-navy-700 transition-colors">
-                <div className="w-7 h-7 rounded-full bg-sky-500 flex items-center justify-center text-xs font-bold text-white">
+                className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-sky-50 dark:hover:bg-navy-700 transition-colors">
+                <div className="w-7 h-7 rounded-full bg-sky-600 flex items-center justify-center text-xs font-bold text-white">
                   {initials}
                 </div>
                 <span className="hidden sm:block text-sm font-medium text-slate-700 dark:text-slate-200 max-w-[100px] truncate">
@@ -235,7 +233,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
                   }`}>
                   <item.icon className="w-5 h-5 shrink-0" />
                   <span className="text-[10px] font-medium leading-tight truncate max-w-full">{item.label}</span>
-                  {active && <span className="absolute bottom-0 w-8 h-0.5 bg-sky-500 rounded-t-full" />}
+                  {active && <span className="absolute bottom-0 w-8 h-0.5 bg-sky-600 rounded-t-full" />}
                 </Link>
               );
             })}
