@@ -4,6 +4,7 @@ import { Menu, X, LogOut, Bell, ChevronDown, ExternalLink, ChevronRight } from '
 import DarkModeToggle from '../ui/DarkModeToggle';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSiteSettings } from '../../hooks/useSiteSettings';
+import MaximusLogo from '../ui/MaximusLogo';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -72,7 +73,7 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
           {logo_url ? (
             <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain shrink-0" />
           ) : (
-            <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-16 w-auto object-contain shrink-0 rounded" style={{background: 'white', padding: '3px 8px'}} />
+            <MaximusLogo height={48} variant="light" />
           )}
         </Link>
         {mobile && (

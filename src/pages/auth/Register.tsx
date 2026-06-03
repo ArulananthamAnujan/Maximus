@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GraduationCap, Eye, EyeOff, AlertCircle, CheckCircle2, Info, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, CheckCircle2, Info, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
 import { useSiteSettings } from '../../hooks/useSiteSettings';
+import MaximusLogo from '../../components/ui/MaximusLogo';
 
 export default function Register() {
   const [formData, setFormData] = useState({ fullName: '', email: '', password: '', confirmPassword: '' });
@@ -60,14 +61,8 @@ export default function Register() {
             {logo_url ? (
               <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain" />
             ) : (
-              <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
-                <GraduationCap className="w-7 h-7 text-white" />
-              </div>
+              <MaximusLogo height={56} variant="light" />
             )}
-            <div>
-              <p className="font-playfair font-bold text-white text-2xl">{platform_name}</p>
-              <p className="text-gold-400 text-sm font-medium tracking-widest">AUSTRALIA</p>
-            </div>
           </Link>
           <h2 className="font-playfair text-4xl font-bold text-white mb-6">
             Start Your Learning Journey Today
@@ -124,11 +119,8 @@ export default function Register() {
               {logo_url ? (
                 <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain" />
               ) : (
-                <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
-                  <GraduationCap className="w-5 h-5 text-white" />
-                </div>
+                <MaximusLogo height={36} variant="dark" />
               )}
-              <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">{platform_name}</span>
             </Link>
           </div>
           <DarkModeToggle />

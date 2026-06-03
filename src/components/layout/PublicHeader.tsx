@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, User, LogOut, Bell, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSiteSettings } from '../../hooks/useSiteSettings';
+import MaximusLogo from '../ui/MaximusLogo';
 
 export default function PublicHeader() {
   const [isOpen, setIsOpen] = useState(false);
@@ -68,11 +69,11 @@ export default function PublicHeader() {
     <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${headerBg}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20 lg:h-24">
-          <Link to="/" className="flex items-center gap-2.5 shrink-0">
+          <Link to="/" className="flex items-center shrink-0">
             {logo_url ? (
               <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain drop-shadow-sm" />
             ) : (
-              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-16 w-auto object-contain drop-shadow-sm" style={{filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.15)) brightness(1.05)'}} />
+              <MaximusLogo height={56} variant="light" />
             )}
           </Link>
 

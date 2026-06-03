@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GraduationCap, Eye, EyeOff, AlertCircle, Chrome as Google, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Chrome as Google, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
 import { useSiteSettings } from '../../hooks/useSiteSettings';
+import MaximusLogo from '../../components/ui/MaximusLogo';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -41,7 +42,7 @@ export default function Login() {
             {logo_url ? (
               <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain" />
             ) : (
-              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-16 w-auto object-contain rounded-lg" />
+              <MaximusLogo height={56} variant="light" />
             )}
           </Link>
           <h2 className="font-playfair text-4xl font-bold text-white mb-6 leading-tight">
@@ -75,9 +76,8 @@ export default function Login() {
               {logo_url ? (
                 <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain" />
               ) : (
-                <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-10 w-auto object-contain rounded" />
+                <MaximusLogo height={36} variant="dark" />
               )}
-              <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">{platform_name}</span>
             </Link>
           </div>
           <DarkModeToggle />
