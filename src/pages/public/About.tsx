@@ -23,7 +23,7 @@ export default function About() {
   return (
     <div className="bg-white min-h-screen">
       <PublicHeader />
-      <div className="pt-16 lg:pt-20">
+      <div className="pt-20 lg:pt-24">
         <section className="bg-slate-900 py-20 relative overflow-hidden">
           <div className="absolute inset-0">
             <img src="https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg" alt="" className="w-full h-full object-cover opacity-10" />

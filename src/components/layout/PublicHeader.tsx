@@ -67,12 +67,12 @@ export default function PublicHeader() {
   return (
     <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${headerBg}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 lg:h-[70px]">
+        <div className="flex items-center justify-between h-20 lg:h-24">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-14 w-auto object-contain drop-shadow-sm" />
+              <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain drop-shadow-sm" />
             ) : (
-              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-14 w-auto object-contain drop-shadow-sm" style={{filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.15)) brightness(1.05)'}} />
+              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-16 w-auto object-contain drop-shadow-sm" style={{filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.15)) brightness(1.05)'}} />
             )}
           </Link>
 

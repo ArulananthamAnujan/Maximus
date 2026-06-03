@@ -137,7 +137,7 @@ export default function CoursePreview() {
     return (
       <div className="min-h-screen bg-white">
         <PublicHeader />
-        <div className="pt-20 max-w-7xl mx-auto px-4 py-16">
+        <div className="pt-24 max-w-7xl mx-auto px-4 py-16">
           <div className="animate-pulse space-y-8">
             <div className="h-12 bg-slate-200 rounded w-3/4" />
             <div className="h-6 bg-slate-200 rounded w-full" />
@@ -151,7 +151,7 @@ export default function CoursePreview() {
   if (!course) return (
     <div className="min-h-screen bg-white">
       <PublicHeader />
-      <div className="pt-20 text-center py-20">
+      <div className="pt-24 text-center py-20">
         <h1 className="text-2xl font-bold text-slate-900">Course not found</h1>
         <Link to="/courses" className="mt-4 inline-block text-sky-600">Browse all courses</Link>
       </div>
@@ -258,7 +258,7 @@ export default function CoursePreview() {
   return (
     <div className="bg-white min-h-screen">
       <PublicHeader />
-      <div className="pt-16 lg:pt-20">
+      <div className="pt-20 lg:pt-24">
         <div className="bg-slate-900 py-12">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <Link to="/courses" className="inline-flex items-center gap-2 text-slate-400 hover:text-white mb-6 transition-colors text-sm">

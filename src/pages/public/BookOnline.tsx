@@ -36,7 +36,7 @@ export default function BookOnline() {
     return (
       <div className="bg-white min-h-screen">
         <PublicHeader />
-        <div className="pt-20 flex items-center justify-center min-h-screen">
+        <div className="pt-24 flex items-center justify-center min-h-screen">
           <div className="text-center max-w-md px-4">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <CheckCircle className="w-12 h-12 text-emerald-600" />
@@ -56,7 +56,7 @@ export default function BookOnline() {
   return (
     <div className="bg-white min-h-screen">
       <PublicHeader />
-      <div className="pt-16 lg:pt-20">
+      <div className="pt-20 lg:pt-24">
         <section className="bg-slate-900 py-16 relative overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,rgba(14,165,233,0.1),transparent_60%)]" />
           <div className="relative max-w-4xl mx-auto px-4 text-center">

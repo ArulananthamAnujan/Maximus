@@ -19,7 +19,7 @@ export default function Contact() {
   return (
     <div className="bg-white min-h-screen">
       <PublicHeader />
-      <div className="pt-16 lg:pt-20">
+      <div className="pt-20 lg:pt-24">
         <section className="bg-slate-900 py-20 relative overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(14,165,233,0.1),transparent_60%)]" />
           <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
