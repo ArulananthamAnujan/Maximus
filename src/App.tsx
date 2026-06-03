@@ -85,6 +85,8 @@ const AdminAIUsage = lazy(() => import('./pages/admin/AdminAIUsage'));
 const AdminOrganizations = lazy(() => import('./pages/admin/AdminOrganizations'));
 const AdminOrgDetail = lazy(() => import('./pages/admin/AdminOrgDetail'));
 const AdminTokenPackages = lazy(() => import('./pages/admin/AdminTokenPackages'));
+const AdminContactMessages = lazy(() => import('./pages/admin/AdminContactMessages'));
+const AdminFAQs = lazy(() => import('./pages/admin/AdminFAQs'));
 
 const CoAdminDashboard = lazy(() => import('./pages/co-admin/CoAdminDashboard'));
 const CoAdminStudents = lazy(() => import('./pages/co-admin/CoAdminStudents'));
@@ -92,6 +94,8 @@ const CoAdminTeachers = lazy(() => import('./pages/co-admin/CoAdminTeachers'));
 const CoAdminEnrollments = lazy(() => import('./pages/co-admin/CoAdminEnrollments'));
 const CoAdminCertificates = lazy(() => import('./pages/co-admin/CoAdminCertificates'));
 const CoAdminPayments = lazy(() => import('./pages/co-admin/CoAdminPayments'));
+const CoAdminContactMessages = lazy(() => import('./pages/co-admin/CoAdminContactMessages'));
+const CoAdminFAQs = lazy(() => import('./pages/co-admin/CoAdminFAQs'));
 
 const OrgDashboard = lazy(() => import('./pages/org/OrgDashboard'));
 const OrgTeachers = lazy(() => import('./pages/org/OrgTeachers'));
@@ -220,6 +224,8 @@ export default function App() {
                 <Route path="/admin/organizations" element={<ProtectedRoute role="admin"><AdminOrganizations /></ProtectedRoute>} />
                 <Route path="/admin/organizations/:orgId" element={<ProtectedRoute role="admin"><AdminOrgDetail /></ProtectedRoute>} />
                 <Route path="/admin/token-packages" element={<ProtectedRoute role="admin"><AdminTokenPackages /></ProtectedRoute>} />
+                <Route path="/admin/contact-messages" element={<ProtectedRoute role="admin"><AdminContactMessages /></ProtectedRoute>} />
+                <Route path="/admin/faqs" element={<ProtectedRoute role="admin"><AdminFAQs /></ProtectedRoute>} />
 
                 <Route path="/co-admin" element={<ProtectedRoute role="co_admin"><CoAdminDashboard /></ProtectedRoute>} />
                 <Route path="/co-admin/students" element={<ProtectedRoute role="co_admin"><CoAdminStudents /></ProtectedRoute>} />
@@ -227,6 +233,8 @@ export default function App() {
                 <Route path="/co-admin/enrollments" element={<ProtectedRoute role="co_admin"><CoAdminEnrollments /></ProtectedRoute>} />
                 <Route path="/co-admin/certificates" element={<ProtectedRoute role="co_admin"><CoAdminCertificates /></ProtectedRoute>} />
                 <Route path="/co-admin/payments" element={<ProtectedRoute role="co_admin"><CoAdminPayments /></ProtectedRoute>} />
+                <Route path="/co-admin/contact-messages" element={<ProtectedRoute role="co_admin"><CoAdminContactMessages /></ProtectedRoute>} />
+                <Route path="/co-admin/faqs" element={<ProtectedRoute role="co_admin"><CoAdminFAQs /></ProtectedRoute>} />
 
                 <Route path="/org" element={<ProtectedRoute role="org_admin"><OrgDashboard /></ProtectedRoute>} />
                 <Route path="/org/teachers" element={<ProtectedRoute role="org_admin"><OrgTeachers /></ProtectedRoute>} />
