@@ -70,9 +70,9 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
       <div className="flex items-center gap-3 px-5 h-16 border-b border-white/10 shrink-0">
         <Link to="/" className="flex items-center gap-2.5 min-w-0 flex-1">
           {logo_url ? (
-            <img src={logo_url} alt={platform_name} className="h-8 w-auto object-contain shrink-0" />
+            <img src={logo_url} alt={platform_name} className="h-12 w-auto object-contain shrink-0" />
           ) : (
-            <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-8 w-auto object-contain shrink-0 rounded" style={{background: 'white', padding: '2px 4px'}} />
+            <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-12 w-auto object-contain shrink-0 rounded" style={{background: 'white', padding: '2px 6px'}} />
           )}
         </Link>
         {mobile && (

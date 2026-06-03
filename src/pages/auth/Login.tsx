@@ -39,9 +39,9 @@ export default function Login() {
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
             {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-12 w-auto object-contain" />
+              <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain" />
             ) : (
-              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-12 w-auto object-contain rounded-lg" />
+              <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-16 w-auto object-contain rounded-lg" />
             )}
           </Link>
           <h2 className="font-playfair text-4xl font-bold text-white mb-6 leading-tight">
@@ -73,9 +73,9 @@ export default function Login() {
             </Link>
             <Link to="/" className="lg:hidden flex items-center gap-2 ml-2">
               {logo_url ? (
-                <img src={logo_url} alt={platform_name} className="h-7 w-auto object-contain" />
+                <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain" />
               ) : (
-                <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-7 w-auto object-contain rounded" />
+                <img src="/image copy copy copy copy copy.png" alt={platform_name} className="h-10 w-auto object-contain rounded" />
               )}
               <span className="font-playfair font-bold text-navy-900 dark:text-white text-sm">{platform_name}</span>
             </Link>

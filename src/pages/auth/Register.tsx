@@ -58,7 +58,7 @@ export default function Register() {
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
             {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-12 w-auto object-contain" />
+              <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain" />
             ) : (
               <div className="w-12 h-12 bg-gold-500 rounded-xl flex items-center justify-center">
                 <GraduationCap className="w-7 h-7 text-white" />
@@ -122,7 +122,7 @@ export default function Register() {
             </Link>
             <Link to="/" className="lg:hidden flex items-center gap-2 ml-2">
               {logo_url ? (
-                <img src={logo_url} alt={platform_name} className="h-7 w-auto object-contain" />
+                <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain" />
               ) : (
                 <div className="w-8 h-8 bg-gold-500 rounded-lg flex items-center justify-center">
                   <GraduationCap className="w-5 h-5 text-white" />
