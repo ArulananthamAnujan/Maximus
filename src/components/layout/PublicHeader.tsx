@@ -65,14 +65,18 @@ export default function PublicHeader() {
     : 'bg-sky-700/95 backdrop-blur-md';
 
   return (
-    <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 isolate ${headerBg}`}>
+    <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${headerBg}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 lg:h-[70px]">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-9 w-auto object-contain mix-blend-multiply" />
+              <div className="bg-white rounded-lg px-2 py-1">
+                <img src={logo_url} alt={platform_name} className="h-7 w-auto object-contain" />
+              </div>
             ) : (
-              <img src="/image.png" alt={platform_name} className="h-9 w-auto brightness-0 invert" />
+              <div className="bg-white rounded-lg px-2 py-1">
+                <img src="/image.png" alt={platform_name} className="h-7 w-auto object-contain" />
+              </div>
             )}
           </Link>
 
