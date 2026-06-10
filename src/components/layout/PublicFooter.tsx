@@ -10,8 +10,8 @@ export default function PublicFooter() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="py-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10">
           <div className="lg:col-span-2">
-            <Link to="/" className="flex items-center gap-3 mb-5">
-              <MaximusLogo height={40} variant="light" />
+            <Link to="/" className="inline-flex items-center gap-3 mb-5 bg-white rounded-xl px-3 py-2">
+              <MaximusLogo height={52} variant="dark" />
             </Link>
             <p className="text-sm text-slate-400 leading-relaxed mb-5">
               Guiding aspirants with care, clarity, and commitment. Expert-led courses in language proficiency, test preparation, and professional skills development.

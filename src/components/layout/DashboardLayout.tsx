@@ -65,9 +65,9 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
   const SidebarContent = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-20 border-b border-slate-200 dark:border-navy-700 shrink-0">
-        <Link to="/" className="flex items-center min-w-0 flex-1">
-            <MaximusLogo height={48} variant="dark" />
+      <div className="flex items-center gap-3 px-4 h-24 border-b border-slate-200 dark:border-navy-700 shrink-0 bg-white dark:bg-navy-900">
+        <Link to="/" className="flex items-center min-w-0 flex-1 bg-white rounded-xl px-2 py-1.5">
+            <MaximusLogo height={60} variant="dark" />
           </Link>
         {mobile && (
           <button onClick={() => setSidebarOpen(false)}

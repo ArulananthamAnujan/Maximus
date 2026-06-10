@@ -55,8 +55,8 @@ export default function Register() {
         <div className="absolute inset-0 opacity-10" style={{backgroundImage: 'radial-gradient(circle at 25% 25%, white 1px, transparent 1px), radial-gradient(circle at 75% 75%, white 1px, transparent 1px)', backgroundSize: '40px 40px'}} />
         <div className="absolute bottom-0 left-0 right-0 h-64 bg-gradient-to-t from-sky-800/60 to-transparent" />
         <div className="relative z-10 flex flex-col justify-center p-16">
-          <Link to="/" className="flex items-center gap-3 mb-16">
-            <MaximusLogo height={56} variant="light" />
+          <Link to="/" className="flex items-center gap-3 mb-16 bg-white rounded-xl px-4 py-3 self-start">
+            <MaximusLogo height={64} variant="dark" />
           </Link>
           <h2 className="font-playfair text-4xl font-bold text-white mb-6">
             Start Your Learning Journey Today
@@ -110,7 +110,7 @@ export default function Register() {
               <span className="hidden sm:inline">Back to home</span>
             </Link>
             <Link to="/" className="lg:hidden flex items-center gap-2 ml-2">
-              <MaximusLogo height={36} variant="dark" />
+              <MaximusLogo height={44} variant="dark" />
             </Link>
           </div>
           <DarkModeToggle />
