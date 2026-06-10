@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, User, LogOut, Bell, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useSiteSettings } from '../../hooks/useSiteSettings';
 import MaximusLogo from '../ui/MaximusLogo';
 
 export default function PublicHeader() {
@@ -10,7 +9,6 @@ export default function PublicHeader() {
   const [scrolled, setScrolled] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { user, profile, signOut } = useAuth();
-  const { logo_url, platform_name } = useSiteSettings();
   const location = useLocation();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -70,11 +68,7 @@ export default function PublicHeader() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20 lg:h-24">
           <Link to="/" className="flex items-center shrink-0">
-            {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain" />
-            ) : (
-              <MaximusLogo height={56} variant="dark" />
-            )}
+            <MaximusLogo height={56} variant="dark" />
           </Link>
 
           <nav className="hidden lg:flex items-center gap-0.5">

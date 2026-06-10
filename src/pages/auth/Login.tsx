@@ -4,7 +4,6 @@ import { Eye, EyeOff, AlertCircle, Chrome as Google, ArrowLeft } from 'lucide-re
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import DarkModeToggle from '../../components/ui/DarkModeToggle';
-import { useSiteSettings } from '../../hooks/useSiteSettings';
 import MaximusLogo from '../../components/ui/MaximusLogo';
 
 export default function Login() {
@@ -16,7 +15,6 @@ export default function Login() {
   const { signIn, signInWithGoogle, signInWithMicrosoft } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { logo_url, platform_name } = useSiteSettings();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,11 +38,7 @@ export default function Login() {
         <div className="absolute bottom-0 left-0 right-0 h-64 bg-gradient-to-t from-sky-800/60 to-transparent" />
         <div className="relative z-10 flex flex-col justify-center p-16">
           <Link to="/" className="flex items-center gap-3 mb-16">
-            {logo_url ? (
-              <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain" />
-            ) : (
-              <MaximusLogo height={56} variant="light" />
-            )}
+            <MaximusLogo height={56} variant="light" />
           </Link>
           <h2 className="font-playfair text-4xl font-bold text-white mb-6 leading-tight">
             Transform Your Career with World-Class Education
@@ -74,11 +68,7 @@ export default function Login() {
               <span className="hidden sm:inline">Back to home</span>
             </Link>
             <Link to="/" className="lg:hidden flex items-center gap-2 ml-2">
-              {logo_url ? (
-                <img src={logo_url} alt={platform_name} className="h-10 w-auto object-contain" />
-              ) : (
-                <MaximusLogo height={36} variant="dark" />
-              )}
+              <MaximusLogo height={36} variant="dark" />
             </Link>
           </div>
           <DarkModeToggle />

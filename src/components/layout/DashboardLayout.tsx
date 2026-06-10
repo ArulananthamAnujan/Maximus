@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, LogOut, Bell, ChevronDown, ExternalLink, ChevronRight } from 'lucide-react';
 import DarkModeToggle from '../ui/DarkModeToggle';
 import { useAuth } from '../../contexts/AuthContext';
-import { useSiteSettings } from '../../hooks/useSiteSettings';
 import MaximusLogo from '../ui/MaximusLogo';
 import type { LucideIcon } from 'lucide-react';
 
@@ -26,7 +25,6 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { profile, signOut } = useAuth();
-  const { logo_url, platform_name } = useSiteSettings();
   const location = useLocation();
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -69,12 +67,8 @@ export default function DashboardLayout({ navItems, children, title, subtitle }:
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-20 border-b border-slate-200 dark:border-navy-700 shrink-0">
         <Link to="/" className="flex items-center min-w-0 flex-1">
-          {logo_url ? (
-            <img src={logo_url} alt={platform_name} className="h-16 w-auto object-contain shrink-0" />
-          ) : (
             <MaximusLogo height={48} variant="dark" />
-          )}
-        </Link>
+          </Link>
         {mobile && (
           <button onClick={() => setSidebarOpen(false)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-navy-700 transition-colors">

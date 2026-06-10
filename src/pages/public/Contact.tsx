@@ -40,6 +40,8 @@ export default function Contact() {
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [lastSubmit, setLastSubmit] = useState(0);
   const [faqs, setFaqs] = useState<FAQ[]>([]);
   const [openFaq, setOpenFaq] = useState<string | null>(null);
 
@@ -54,17 +56,45 @@ export default function Contact() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
+
+    // Basic validation
+    if (!form.name.trim() || form.name.trim().length < 2) {
+      setFormError('Please enter your full name (at least 2 characters).'); return;
+    }
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(form.email.trim())) {
+      setFormError('Please enter a valid email address.'); return;
+    }
+    if (!form.subject) { setFormError('Please select a subject.'); return; }
+    if (!form.message.trim() || form.message.trim().length < 10) {
+      setFormError('Please enter a message (at least 10 characters).'); return;
+    }
+    if (form.message.trim().length > 5000) {
+      setFormError('Message is too long (max 5000 characters).'); return;
+    }
+
+    // Client-side rate limit: 60s between submissions
+    const now = Date.now();
+    if (now - lastSubmit < 60_000) {
+      setFormError('Please wait a moment before sending another message.'); return;
+    }
+
     setLoading(true);
     try {
-      await supabase.from('contact_messages').insert({
-        name: form.name,
-        email: form.email,
-        subject: form.subject,
-        message: form.message,
+      const { error } = await supabase.from('contact_messages').insert({
+        name: form.name.trim().slice(0, 200),
+        email: form.email.trim().slice(0, 200),
+        subject: form.subject.slice(0, 200),
+        message: form.message.trim().slice(0, 5000),
         status: 'open',
       });
-    } finally {
+      if (error) throw error;
+      setLastSubmit(Date.now());
       setSent(true);
+    } catch {
+      setFormError('Failed to send your message. Please try again or email us directly.');
+    } finally {
       setLoading(false);
     }
   };
@@ -213,6 +243,9 @@ export default function Contact() {
                         <Send className="w-4 h-4" />
                         {loading ? 'Sending...' : 'Send Message'}
                       </button>
+                      {formError && (
+                        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">{formError}</p>
+                      )}
                     </form>
                   </>
                 )}
