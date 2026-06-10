@@ -66,9 +66,9 @@ export default function PublicHeader() {
   return (
     <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${headerBg}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20 lg:h-24">
-          <Link to="/" className="flex items-center shrink-0 bg-white rounded-xl px-3 py-2">
-            <MaximusLogo height={72} variant="dark" />
+        <div className="flex items-center justify-between h-20 lg:h-28">
+          <Link to="/" className="flex items-center shrink-0 py-3">
+            <MaximusLogo height={80} variant="dark" />
           </Link>
 
           <nav className="hidden lg:flex items-center gap-0.5">
