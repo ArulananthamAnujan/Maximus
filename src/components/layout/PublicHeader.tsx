@@ -34,14 +34,12 @@ export default function PublicHeader() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const PTE_URL = 'https://synapvexpte.netlify.app/dashboard';
-
   const navLinks = [
     { label: 'Home', href: '/' },
     { label: 'About Us', href: '/about' },
     { label: 'Our Mission', href: '/our-mission' },
     { label: 'Courses', href: '/courses' },
-    { label: 'PTE', href: PTE_URL, external: true },
+    { label: 'PTE', href: '/pte' },
     { label: 'Contact', href: '/contact' },
     { label: 'Book Online', href: '/book-online' },
   ];
@@ -76,29 +74,17 @@ export default function PublicHeader() {
 
           <nav className="hidden lg:flex items-center gap-0.5">
             {navLinks.map(link => (
-              link.external ? (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3.5 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap text-slate-700 hover:bg-sky-50 hover:text-sky-700"
-                >
-                  {link.label}
-                </a>
-              ) : (
-                <Link
-                  key={link.href}
-                  to={link.href}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${
-                    isActive(link.href)
-                      ? 'bg-sky-600 text-white'
-                      : 'text-slate-700 hover:bg-sky-50 hover:text-sky-700'
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              )
+              <Link
+                key={link.href}
+                to={link.href}
+                className={`px-3.5 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${
+                  isActive(link.href)
+                    ? 'bg-sky-600 text-white'
+                    : 'text-slate-700 hover:bg-sky-50 hover:text-sky-700'
+                }`}
+              >
+                {link.label}
+              </Link>
             ))}
           </nav>
 
@@ -176,29 +162,17 @@ export default function PublicHeader() {
         {isOpen && (
           <div className="lg:hidden border-t border-slate-100 py-4 space-y-1 animate-slide-down">
             {navLinks.map(link => (
-              link.external ? (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors text-slate-700 hover:bg-sky-50 hover:text-sky-700"
-                >
-                  {link.label}
-                </a>
-              ) : (
-                <Link
-                  key={link.href}
-                  to={link.href}
-                  className={`block px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-                    isActive(link.href)
-                      ? 'bg-sky-600 text-white'
-                      : 'text-slate-700 hover:bg-sky-50 hover:text-sky-700'
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              )
+              <Link
+                key={link.href}
+                to={link.href}
+                className={`block px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+                  isActive(link.href)
+                    ? 'bg-sky-600 text-white'
+                    : 'text-slate-700 hover:bg-sky-50 hover:text-sky-700'
+                }`}
+              >
+                {link.label}
+              </Link>
             ))}
             <Link
               to="/notifications"

@@ -63,6 +63,7 @@ const Contact = lazy(() => import('./pages/public/Contact'));
 const BookOnline = lazy(() => import('./pages/public/BookOnline'));
 const VerifyCertificate = lazy(() => import('./pages/public/VerifyCertificate'));
 const OurMission = lazy(() => import('./pages/public/OurMission'));
+const PTE = lazy(() => import('./pages/public/PTE'));
 const Notifications = lazy(() => import('./pages/public/Notifications'));
 
 const Login = lazy(() => import('./pages/auth/Login'));
@@ -198,6 +199,7 @@ export default function App() {
                 <Route path="/courses/:id" element={<CoursePreview />} />
                 <Route path="/about" element={<About />} />
                 <Route path="/our-mission" element={<OurMission />} />
+                <Route path="/pte" element={<PTE />} />
                 <Route path="/contact" element={<Contact />} />
                 <Route path="/book-online" element={<BookOnline />} />
                 <Route path="/notifications" element={<Notifications />} />

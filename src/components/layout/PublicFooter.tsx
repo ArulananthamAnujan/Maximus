@@ -63,7 +63,7 @@ export default function PublicFooter() {
             <ul className="space-y-3">
               {[
                 { label: 'IELTS Preparation', href: '/courses' },
-                { label: 'PTE Academic Preparation', href: 'https://synapvexpte.netlify.app/dashboard', external: true },
+                { label: 'PTE Academic Preparation', href: '/pte' },
                 { label: 'Japanese Language Course', href: '/courses' },
                 { label: 'French Language Course', href: '/courses' },
                 { label: 'Spanish Language Course', href: '/courses' },
@@ -72,11 +72,7 @@ export default function PublicFooter() {
                 { label: 'Short Courses & Workshops', href: '/courses' },
               ].map(course => (
                 <li key={course.label}>
-                  {course.external ? (
-                    <a href={course.href} target="_blank" rel="noopener noreferrer" className="text-sm text-slate-500 hover:text-sky-600 transition-colors">{course.label}</a>
-                  ) : (
-                    <Link to={course.href} className="text-sm text-slate-500 hover:text-sky-600 transition-colors">{course.label}</Link>
-                  )}
+                  <Link to={course.href} className="text-sm text-slate-500 hover:text-sky-600 transition-colors">{course.label}</Link>
                 </li>
               ))}
             </ul>
