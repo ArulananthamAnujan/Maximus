@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-const PTE_SITE_URL = 'https://synapvexpte.netlify.app/';
+const PTE_SITE_URL = 'https://practice.maximusacademy.edu/';
 
 export default function PTE() {
   useEffect(() => {
