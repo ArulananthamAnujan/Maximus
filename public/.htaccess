@@ -1,0 +1,12 @@
+# SPA fallback for React Router on Apache / LiteSpeed (Hostinger).
+# Any request that is not a real file or directory is served index.html
+# so client-side routing (e.g. /dashboard, /courses, /pte) works on direct load.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  # Don't rewrite requests for real files or directories
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  # Everything else -> index.html
+  RewriteRule ^ index.html [L]
+</IfModule>
