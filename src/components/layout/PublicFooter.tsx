@@ -62,17 +62,21 @@ export default function PublicFooter() {
             <h4 className="text-slate-900 font-bold mb-5 text-sm uppercase tracking-wider">Our Courses</h4>
             <ul className="space-y-3">
               {[
-                'IELTS Preparation',
-                'PTE Academic Preparation',
-                'Japanese Language Course',
-                'French Language Course',
-                'Spanish Language Course',
-                'Xero Beginner Course',
-                'Test Preparation',
-                'Short Courses & Workshops',
+                { label: 'IELTS Preparation', href: '/courses' },
+                { label: 'PTE Academic Preparation', href: 'https://synapvexpte.netlify.app/dashboard', external: true },
+                { label: 'Japanese Language Course', href: '/courses' },
+                { label: 'French Language Course', href: '/courses' },
+                { label: 'Spanish Language Course', href: '/courses' },
+                { label: 'Xero Beginner Course', href: '/courses' },
+                { label: 'Test Preparation', href: '/courses' },
+                { label: 'Short Courses & Workshops', href: '/courses' },
               ].map(course => (
-                <li key={course}>
-                  <Link to="/courses" className="text-sm text-slate-500 hover:text-sky-600 transition-colors">{course}</Link>
+                <li key={course.label}>
+                  {course.external ? (
+                    <a href={course.href} target="_blank" rel="noopener noreferrer" className="text-sm text-slate-500 hover:text-sky-600 transition-colors">{course.label}</a>
+                  ) : (
+                    <Link to={course.href} className="text-sm text-slate-500 hover:text-sky-600 transition-colors">{course.label}</Link>
+                  )}
                 </li>
               ))}
             </ul>
