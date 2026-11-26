@@ -17,7 +17,7 @@ Deploy in this order so nothing breaks in between:
 
 1. **Frontend** (it works against both the old and new database).
 2. **Database migrations** in `supabase/migrations`, in filename order.
-3. **Edge functions** in `supabase/functions`.
+3. **Edge functions** in `supabase/functions` (`npx supabase functions deploy`, then `npx supabase functions deploy stripe-webhook --no-verify-jwt`).
 
 ### Edge function secrets
 
@@ -28,6 +28,7 @@ Set these in Supabase Dashboard → Edge Functions → Secrets.
 | `SITE_URL` | Links in emails and Stripe return pages, e.g. `https://yourdomain.com` |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Course, student-token and teacher-token payments |
 | `ANTHROPIC_API_KEY` | AI course tools, student study tools, exam marking |
+| `HEYGEN_API_KEY` | AI presenter lecture videos ("AI lecture" button on each module). Create a pay-as-you-go API key at [heygen.com](https://www.heygen.com/api); videos are billed by HeyGen per minute. Optional `LECTURE_VIDEO_TOKENS_PER_PART` sets how many organisation tokens each video part costs (default 60). |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Welcome, enrolment and admin-message emails ([resend.com](https://resend.com)); `EMAIL_FROM` must be a sender on a domain verified in Resend. Without these, no email is sent. |
 
 In Stripe, point a webhook for `checkout.session.completed` at

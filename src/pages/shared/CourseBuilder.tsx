@@ -23,6 +23,7 @@ const AILessonToolbar = lazy(() => import('../../components/ai/AILessonToolbar')
 const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocumentViewer').then(m => ({ default: m.default })));
 import { LessonDocumentBadges } from '../../components/ui/LessonDocumentViewer';
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
+const LectureVideoModal = lazy(() => import('../../components/ai/LectureVideoModal'));
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
 
 // Maps both UI type names and DB type names
@@ -380,7 +381,7 @@ function LessonActivitiesPanel({ lessonId }: { lessonId: string }) {
   );
 }
 
-function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, onGenerateDocs, generatingDocs, children }: {
+function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, onAddLesson, onGenerateDocs, onLectureVideo, generatingDocs, children }: {
   section: Section & { lessons: Lesson[] };
   sIdx: number;
   expanded: boolean;
@@ -389,6 +390,7 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
   onDelete: () => void;
   onAddLesson: () => void;
   onGenerateDocs: () => void;
+  onLectureVideo: () => void;
   generatingDocs: boolean;
   children?: React.ReactNode;
 }) {
@@ -404,6 +406,15 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
           <span className="text-xs text-slate-400 shrink-0">{section.lessons?.length || 0} lesson{(section.lessons?.length || 0) !== 1 ? 's' : ''}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onLectureVideo}
+            disabled={section.lessons?.length === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all disabled:opacity-50 bg-white border-sky-300 text-sky-700 hover:bg-sky-50"
+            title="Create an AI presenter lecture video for this module"
+          >
+            <Video className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">AI lecture</span>
+          </button>
           <button
             onClick={onGenerateDocs}
             disabled={generatingDocs || section.lessons?.length === 0}
@@ -493,6 +504,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
   // AI Quiz from Curriculum
   const [showAIQuizFromCurriculum, setShowAIQuizFromCurriculum] = useState(false);
+  const [lectureSection, setLectureSection] = useState<{ id: string; title: string } | null>(null);
   const [aiQuizNewName, setAIQuizNewName] = useState('');
   const [aiQuizCreating, setAIQuizCreating] = useState(false);
 
@@ -1917,6 +1929,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     onDelete={() => setDeleteTarget({ type: 'section', id: section.id, name: section.title })}
                     onAddLesson={() => { setAddingLessonTo(section.id); setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true }); }}
                     onGenerateDocs={() => handleGenerateSectionDocs(section)}
+                    onLectureVideo={() => setLectureSection({ id: section.id, title: section.title })}
                     generatingDocs={generatingSectionDocsId === section.id}
                   >
                     {editingSectionId === section.id && (
@@ -2969,6 +2982,17 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       </div>
 
       {/* AI Quiz from Curriculum modal */}
+      {lectureSection && (
+        <Suspense fallback={null}>
+          <LectureVideoModal
+            sectionId={lectureSection.id}
+            sectionTitle={lectureSection.title}
+            onClose={() => setLectureSection(null)}
+            onLessonAdded={() => { fetchSections().catch(() => {}); }}
+          />
+        </Suspense>
+      )}
+
       {showAIQuizFromCurriculum && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!aiQuizCreating) setShowAIQuizFromCurriculum(false); }} />
