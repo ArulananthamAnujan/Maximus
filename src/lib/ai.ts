@@ -8,6 +8,41 @@ export interface CourseOutlineInput {
   difficulty: 'beginner' | 'intermediate' | 'advanced';
   num_modules: number;
   lessons_per_module: number;
+  /** Plan agreed with the AI course planner; shapes the style, pacing and content. */
+  brief?: CourseBrief;
+}
+
+export interface CourseBrief {
+  title_idea: string;
+  topic: string;
+  audience: string;
+  starting_level: string;
+  outcome: string;
+  target_roles: string[];
+  market: string;
+  duration_weeks: number;
+  hours_per_week: number;
+  approach: string;
+  must_include: string[];
+  projects: string[];
+  assessment: string;
+  tone: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  num_modules: number;
+  lessons_per_module: number;
+  lesson_minutes: number;
+}
+
+export interface PlannerMessage {
+  role: 'teacher' | 'planner';
+  content: string;
+}
+
+export interface PlannerReply {
+  reply: string;
+  suggestions?: string[];
+  ready: boolean;
+  brief: CourseBrief | null;
 }
 
 export interface LessonContentInput {
@@ -266,6 +301,10 @@ async function withOneRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** One turn of the course-planning conversation. Send the whole conversation each time. */
+export const plannerChat = (messages: PlannerMessage[]) =>
+  callAI<PlannerReply>('course_planner_chat', { messages });
+
 export async function generateCourseOutline(
   input: CourseOutlineInput,
   onProgress?: (p: OutlineProgress) => void,
@@ -282,7 +321,7 @@ export async function generateCourseOutline(
   onProgress?.({ stage: 'structure', done: 0, total: 1 });
   const skeleton = await withOneRetry(() => callAI<{ title: string; description: string; modules: Array<{ title: string; description: string }> }>(
     'course_skeleton',
-    { topic: input.topic, target_audience: input.target_audience, difficulty: input.difficulty, num_modules: numModules },
+    { topic: input.topic, target_audience: input.target_audience, difficulty: input.difficulty, num_modules: numModules, brief: input.brief },
   ));
   const modules = (skeleton.modules || []).slice(0, numModules);
   if (modules.length === 0) throw new Error('AI generation failed. Please try again.');
@@ -307,6 +346,7 @@ export async function generateCourseOutline(
         all_modules: allTitles,
         modules: batches[index],
         lessons_per_module: lessonsPerModule,
+        brief: input.brief,
       }));
     } catch {
       // One part failing twice must not throw away the parts that worked.
@@ -338,7 +378,7 @@ export async function generateCourseOutline(
         .map(l => ({
           title: String(l.title),
           description: String(l.description ?? ''),
-          estimated_duration_minutes: Number(l.estimated_duration_minutes) || 60,
+          estimated_duration_minutes: Number(l.estimated_duration_minutes) || input.brief?.lesson_minutes || 60,
         }));
       outModules.push({ title: mod.title, description: mod.description ?? '', lessons });
     });

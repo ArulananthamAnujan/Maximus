@@ -4,15 +4,16 @@ import { X, Sparkles, ChevronUp, ChevronDown, Trash2, Plus, Loader2, BookOpen, L
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import AILoader from '../ui/AILoader';
+import CoursePlannerChat, { PLANNER_GREETING } from './CoursePlannerChat';
 import { generateCourseOutline } from '../../lib/ai';
-import type { CourseOutlineOutput, AIModuleItem, AILessonItem, OutlineProgress } from '../../lib/ai';
+import type { CourseOutlineOutput, CourseOutlineInput, CourseBrief, PlannerMessage, AIModuleItem, AILessonItem, OutlineProgress } from '../../lib/ai';
 
 interface Props {
   onClose: () => void;
   navigatePrefix: string; // '/teacher/builder' or '/admin/builder'
 }
 
-type Step = 'form' | 'generating' | 'preview' | 'saving';
+type Step = 'chat' | 'form' | 'generating' | 'preview' | 'saving';
 
 const TARGET_AUDIENCES = [
   { value: 'school students K-12', label: 'School Students (K-12)' },
@@ -24,7 +25,11 @@ const TARGET_AUDIENCES = [
 export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Props) {
   const navigate = useNavigate();
 
-  const [step, setStep] = useState<Step>('form');
+  // The conversation is the default way in; the quick form remains for people who know exactly what they want.
+  const [step, setStep] = useState<Step>('chat');
+  const [startedFrom, setStartedFrom] = useState<'chat' | 'form'>('chat');
+  const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([PLANNER_GREETING]);
+  const [brief, setBrief] = useState<CourseBrief | null>(null);
   const [form, setForm] = useState({
     topic: '',
     target_audience: 'professionals',
@@ -37,13 +42,13 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
   const [error, setError] = useState('');
   const [progress, setProgress] = useState<OutlineProgress | null>(null);
 
-  const handleGenerate = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const runGeneration = async (input: CourseOutlineInput, from: 'chat' | 'form') => {
     setError('');
     setProgress(null);
+    setStartedFrom(from);
     setStep('generating');
     try {
-      const result = await generateCourseOutline(form, setProgress);
+      const result = await generateCourseOutline(input, setProgress);
       // Some modules may come back without lessons if one part failed twice; keep what worked.
       const missing = result.modules.filter(m => m.lessons.length === 0).length;
       setOutline(result);
@@ -51,8 +56,27 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
       if (missing > 0) setError(`${missing} module${missing === 1 ? '' : 's'} came back without lessons. You can add lessons to ${missing === 1 ? 'it' : 'them'} below, or close and generate again.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
-      setStep('form');
+      setStep(from);
     }
+  };
+
+  const handleGenerate = (e: React.FormEvent) => {
+    e.preventDefault();
+    runGeneration(form, 'form');
+  };
+
+  const handleCreateFromBrief = (b: CourseBrief) => {
+    const clampSize = (n: number, fallback: number) => Math.min(Math.max(Math.round(Number(n)) || fallback, 3), 12);
+    const difficulty = (['beginner', 'intermediate', 'advanced'] as const).includes(b.difficulty) ? b.difficulty : 'beginner';
+    setForm(f => ({ ...f, difficulty }));
+    runGeneration({
+      topic: b.title_idea || b.topic,
+      target_audience: [b.audience, b.starting_level].filter(Boolean).join(', '),
+      difficulty,
+      num_modules: clampSize(b.num_modules, 5),
+      lessons_per_module: clampSize(b.lessons_per_module, 4),
+      brief: b,
+    }, 'chat');
   };
 
   const updateTitle = (v: string) => setOutline(o => o ? { ...o, title: v } : o);
@@ -128,7 +152,7 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={step === 'generating' || step === 'saving' ? undefined : onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+      <div className={`relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col ${step === 'chat' ? 'h-[80vh]' : ''}`}>
         {/* Header */}
         <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100 shrink-0">
           <div className="w-9 h-9 bg-sky-100 rounded-xl flex items-center justify-center">
@@ -137,6 +161,7 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
           <div>
             <h2 className="font-bold text-slate-900">Generate Course with AI</h2>
             <p className="text-xs text-slate-400">
+              {step === 'chat' && 'Talk it through with the AI planner, then create the curriculum'}
               {step === 'form' && 'Fill in details to generate a complete course outline'}
               {step === 'generating' && 'AI is designing your course...'}
               {step === 'preview' && 'Review and edit before creating'}
@@ -151,7 +176,21 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto">
+        <div className={`flex-1 min-h-0 ${step === 'chat' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
+          {step === 'chat' && (
+            <>
+              {error && (
+                <div role="alert" className="mx-6 mt-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{error}</div>
+              )}
+              <CoursePlannerChat
+                messages={plannerMessages}
+                onMessagesChange={setPlannerMessages}
+                brief={brief}
+                onBriefChange={setBrief}
+                onCreate={handleCreateFromBrief}
+              />
+            </>
+          )}
           {step === 'form' && (
             <form id="ai-course-form" onSubmit={handleGenerate} className="p-6 space-y-5">
               {error && (
@@ -305,10 +344,20 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-slate-100 shrink-0">
-          {step === 'form' && (
+          {step === 'chat' && (
             <>
               <button type="button" onClick={onClose} className="px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium">
                 Cancel
+              </button>
+              <button type="button" onClick={() => { setError(''); setStep('form'); }} className="text-sm font-medium text-slate-500 hover:text-sky-700">
+                Skip the conversation and use the quick form
+              </button>
+            </>
+          )}
+          {step === 'form' && (
+            <>
+              <button type="button" onClick={() => { setError(''); setStep('chat'); }} className="px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium">
+                Back to the planner
               </button>
               <button type="submit" form="ai-course-form" className="btn-primary text-sm py-2.5 px-6 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> Generate Course Outline
@@ -317,8 +366,8 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
           )}
           {step === 'preview' && (
             <>
-              <button onClick={() => { setStep('form'); setOutline(null); }} className="px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium">
-                Start Over
+              <button onClick={() => { setError(''); setStep(startedFrom); setOutline(null); }} className="px-4 py-2.5 text-sm border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium">
+                {startedFrom === 'chat' ? 'Back to the plan' : 'Start Over'}
               </button>
               <button onClick={handleCreate} className="btn-primary text-sm py-2.5 px-6 flex items-center gap-2">
                 <BookOpen className="w-4 h-4" /> Create This Course

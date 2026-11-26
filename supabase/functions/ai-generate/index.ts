@@ -74,7 +74,14 @@ function validateModuleLessons(obj: unknown): boolean {
     && (o.modules as Array<Record<string, unknown>>).every(m => Array.isArray(m.lessons));
 }
 
+function validatePlannerChat(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  if (typeof o.reply !== 'string' || !o.reply.trim() || typeof o.ready !== 'boolean') return false;
+  return !o.ready || (o.brief !== null && typeof o.brief === 'object');
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
+  course_planner_chat: validatePlannerChat,
   course_outline: validateCourseOutline,
   course_skeleton: validateCourseSkeleton,
   module_lessons: validateModuleLessons,
@@ -141,7 +148,22 @@ Standards:
 - Each lesson description: 1-2 sentences covering the specific concept, theory, or skill addressed
 - estimated_duration_minutes: 45-90 minutes per lesson (university lecture/seminar pacing)`,
 
-    course_skeleton: `You are a senior university curriculum architect. ${jsonRule}
+    course_planner_chat: `You are an experienced curriculum consultant. A teacher is planning a new course with you in a conversation. Your job is to understand who the course is for and what result the learners need, recommend the best way to teach it, and then hand over a clear course brief. ${jsonRule}
+Output shape: {"reply": string, "suggestions": string[], "ready": boolean, "brief": null | {"title_idea": string, "topic": string, "audience": string, "starting_level": string, "outcome": string, "target_roles": string[], "market": string, "duration_weeks": number, "hours_per_week": number, "approach": string, "must_include": string[], "projects": string[], "assessment": string, "tone": string, "difficulty": "beginner"|"intermediate"|"advanced", "num_modules": number, "lessons_per_module": number, "lesson_minutes": number}}
+
+How to run the conversation:
+- Work out, over the conversation: (1) who the learners are: background, current level, situation; (2) the result they need: a specific job role, freelance work, an exam, a promotion; (3) time available: total weeks and hours per week; (4) the market: country or industry, and what employers there actually ask for; (5) how learners will prove the skill: projects, a portfolio, a capstone, a certificate; (6) limits: tools, budget, language, prerequisites.
+- Ask at most two short questions per turn, in plain everyday language. Never repeat a question that has been answered. Where the teacher is unsure, propose a sensible answer yourself and say you are assuming it.
+- Be an adviser, not a form. Give your own recommendation. For example, a short course meant to get people hired should be built around real tasks from the job, the tools employers list in job ads, a few portfolio pieces the learner can show, and job-search preparation, with little theory beyond what the tasks need.
+- "suggestions": two to four short answers the teacher could tap in reply to your question (a few words each). Use an empty array when ready is true.
+- Set "ready" to true once you know enough to design a good course (usually after three to five teacher messages), or as soon as the teacher asks you to go ahead. Do not keep asking for the sake of it.
+- When ready is true: "reply" is a short plain summary of the plan: who it is for, what they will be able to do at the end, how long it runs, the teaching approach and why, and the projects. End by saying they can create the curriculum now or ask for changes. Fill in every field of "brief"; make reasonable choices for anything not discussed.
+- When ready is false, "brief" is null.
+- If the teacher asks for changes after a brief was given, apply them and return the updated brief with ready true.
+- Brief sizing: num_modules 3 to 12 and lessons_per_module 3 to 12, sized to the time available (a short job-skills course is usually 4 to 6 modules of 3 to 5 lessons); lesson_minutes 15 to 90.
+- "reply" is plain text: no markdown, no headings, no bullet symbols.`,
+
+    course_skeleton: `You are an expert curriculum designer. Match the style and level to the learners described; when a course brief is given it decides the style. ${jsonRule}
 Output shape: {"title": string, "description": string, "modules": [{"title": string, "description": string}]}
 Standards:
 - title: a precise, academic course title
@@ -150,14 +172,14 @@ Standards:
 - Each module title is topic-focused (e.g. "Module 3: Epigenetic Mechanisms and Chromatin Remodelling"); each module description is 2 sentences
 - Do NOT include lessons`,
 
-    module_lessons: `You are a senior university curriculum architect writing the lesson plan for some modules of an existing course. ${jsonRule}
+    module_lessons: `You are an expert curriculum designer writing the lesson plan for some modules of an existing course. Match the style and level to the learners described; when a course brief is given it decides the style. ${jsonRule}
 Output shape: {"modules": [{"title": string, "lessons": [{"title": string, "description": string, "estimated_duration_minutes": number}]}]}
 Standards:
 - Return one entry per module you were asked to plan, in the same order, with "title" copied exactly as given
 - Exactly the requested number of lessons per module
 - Each lesson title is specific and descriptive; each lesson description is 1-2 sentences
 - Lessons must not duplicate topics that belong to the other modules of the course
-- estimated_duration_minutes: 45-90`,
+- estimated_duration_minutes: 45-90, unless a course brief gives a typical lesson length, in which case use that`,
 
     lesson_content: `You are a university lecturer and academic content author writing scholarly, comprehensive lesson material for tertiary-level students. ${jsonRule}
 Output shape: {"content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
@@ -342,7 +364,29 @@ speaker_notes: 1-2 sentences per slide with teaching tips.`,
   return prompts[task] || jsonRule;
 }
 
+/** Turns the brief agreed with the planner into instructions that override the default style. */
+function briefBlock(brief: unknown): string {
+  if (!brief || typeof brief !== 'object') return '';
+  const b = brief as Record<string, unknown>;
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String).filter(Boolean).join('; ') : String(v ?? ''));
+  const lines = [
+    ['Learners', b.audience], ['Starting level', b.starting_level], ['Result they need', b.outcome],
+    ['Target roles', list(b.target_roles)], ['Market', b.market],
+    ['Time available', b.duration_weeks ? `${b.duration_weeks} weeks, about ${b.hours_per_week ?? '?'} hours a week` : ''],
+    ['Teaching approach', b.approach], ['Must include', list(b.must_include)],
+    ['Projects / portfolio pieces', list(b.projects)], ['Assessment', b.assessment], ['Tone', b.tone],
+    ['Typical lesson length (minutes)', b.lesson_minutes],
+  ].filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
+  if (lines.length === 0) return '';
+  return `
+
+COURSE BRIEF (agreed with the teacher). This overrides any default academic style or pacing above:
+${lines.map(([k, v]) => `- ${k}: ${v}`).join('\n')}
+Design every module and lesson for these learners and this result. Use the tone and lesson length from the brief, name the real tasks, tools and deliverables, and place the projects where they fit. Lesson descriptions should say what the learner will do or be able to do, in plain language.`;
+}
+
 function getUserPrompt(task: string, input: Record<string, unknown>): string {
+  const brief = briefBlock(input.brief);
   switch (task) {
     case 'course_outline':
       return `Design a comprehensive university-level course outline for:
@@ -352,7 +396,16 @@ Academic Level / Difficulty: ${input.difficulty}
 Number of Modules: ${input.num_modules}
 Lessons per Module: ${input.lessons_per_module}
 
-Ensure the course meets tertiary education standards with clear academic progression, rigorous content, and measurable learning outcomes aligned with the discipline.`;
+${brief ? brief : 'Ensure the course meets tertiary education standards with clear academic progression, rigorous content, and measurable learning outcomes aligned with the discipline.'}`;
+
+    case 'course_planner_chat': {
+      const turns = Array.isArray(input.messages) ? (input.messages as Array<{ role?: string; content?: string }>) : [];
+      const transcript = turns
+        .slice(-30)
+        .map(m => `${m.role === 'planner' ? 'You (consultant)' : 'Teacher'}: ${String(m.content ?? '').slice(0, 3000)}`)
+        .join('\n\n');
+      return `Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
+    }
 
     case 'course_skeleton':
       return `Design the top-level structure of a university-level course:
@@ -361,7 +414,7 @@ Target Audience: ${input.target_audience}
 Academic Level / Difficulty: ${input.difficulty}
 Number of Modules: ${input.num_modules}
 
-Return the course title, description and the module list only (no lessons).`;
+Return the course title, description and the module list only (no lessons).${brief}`;
 
     case 'module_lessons':
       return `Course: ${input.course_title}
@@ -374,7 +427,7 @@ ${Array.isArray(input.all_modules) ? (input.all_modules as string[]).map((m, i) 
 Write the lesson plan for ONLY these modules:
 ${Array.isArray(input.modules) ? (input.modules as Array<{ title?: string; description?: string }>).map(m => `- ${m.title}: ${m.description ?? ''}`).join('\n') : ''}
 
-Lessons per Module: ${input.lessons_per_module}`;
+Lessons per Module: ${input.lessons_per_module}${brief}`;
 
     case 'lesson_content':
       return `Write comprehensive university-level lesson content for:
@@ -521,7 +574,7 @@ The examination must meet university assessment standards with questions that va
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'course_skeleton', 'module_lessons', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
+  const creative = ['course_outline', 'course_planner_chat', 'course_skeleton', 'module_lessons', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 
@@ -538,6 +591,7 @@ function getMaxTokens(task: string, input: Record<string, unknown> = {}): number
     const lessons = clampInt(input.lessons_per_module, 1, 12, 4);
     return Math.min(16000, 800 + modules * 150 + modules * lessons * 160);
   }
+  if (task === 'course_planner_chat') return 1800;
   if (task === 'course_skeleton') {
     return Math.min(4000, 600 + clampInt(input.num_modules, 1, 12, 5) * 160);
   }
@@ -887,6 +941,7 @@ Deno.serve(async (req: Request) => {
         const TASK_FEATURE_MAP: Record<string, string> = {
           course_outline: 'ai_course_outline',
           course_skeleton: 'ai_course_outline',
+          course_planner_chat: 'ai_course_outline',
           module_lessons: 'ai_course_outline',
           section_content: 'ai_course_outline',
           lesson_content: 'ai_lesson_content',
@@ -1063,7 +1118,7 @@ Deno.serve(async (req: Request) => {
 
     // ── Deduct org tokens if user belongs to an org ───────────────────────────
     const TOKEN_COSTS: Record<string, number> = {
-      course_outline: 5, course_skeleton: 2, module_lessons: 1, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
+      course_outline: 5, course_planner_chat: 1, course_skeleton: 2, module_lessons: 1, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
       summarize_lesson: 3, rewrite_content: 5, translate_content: 7, activity_ideas: 4,
       full_curriculum: 20, lesson_notes: 5, presentation_slides: 10,
       section_content: 8, section_notes: 5, section_slides: 10, generate_exam: 10,
