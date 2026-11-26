@@ -12,14 +12,23 @@ interface CertificateWithCourse extends Omit<Certificate, 'course'> {
   course: { title: string; category: string; thumbnail_url: string };
 }
 
-const LOGO_URL = 'https://pwnlfbbssvywynffkksd.supabase.co/storage/v1/object/public/course-thumbnails/logo/company-logo.png?t=1779083699690';
 const PLATFORM = 'Maximus Academy';
-const ABN = 'ABN: 12 345 678 901';
+
+/** Organisation details printed on the certificate, from Admin > Settings. */
+async function loadCertificateBranding(): Promise<{ logoUrl: string; abn: string }> {
+  const { data } = await supabase.from('site_settings').select('key, value').in('key', ['logo_url', 'abn']);
+  const map: Record<string, string> = {};
+  (data || []).forEach(row => { map[row.key] = row.value ?? ''; });
+  return { logoUrl: map['logo_url'] || '', abn: (map['abn'] || '').trim() };
+}
 
 async function loadImageAsBase64(url: string): Promise<string | null> {
   try {
+    if (!url) return null;
     const res = await fetch(url);
+    if (!res.ok) return null;
     const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return null;
     return await new Promise(resolve => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
@@ -79,10 +88,16 @@ async function generateCertificatePDF(cert: CertificateWithCourse, studentName: 
   doc.rect(10, 46, W - 20, 1.2, 'F');
 
   // ── Logo ──────────────────────────────────────────────────────────────────
-  const logoB64 = await loadImageAsBase64(LOGO_URL);
+  const branding = await loadCertificateBranding();
+  const logoB64 = await loadImageAsBase64(branding.logoUrl);
+  let logoDrawn = false;
   if (logoB64) {
-    doc.addImage(logoB64, 'PNG', W / 2 - 16, 20, 32, 16, undefined, 'FAST');
-  } else {
+    try {
+      doc.addImage(logoB64, logoB64.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG', W / 2 - 16, 20, 32, 16, undefined, 'FAST');
+      logoDrawn = true;
+    } catch { /* unsupported image: fall back to the name below */ }
+  }
+  if (!logoDrawn) {
     // Fallback: academy name in ribbon
     doc.setTextColor(212, 175, 55);
     doc.setFont('helvetica', 'bold');
@@ -98,7 +113,7 @@ async function generateCertificatePDF(cert: CertificateWithCourse, studentName: 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(130, 110, 70);
-  doc.text(ABN, W / 2, 58, { align: 'center' });
+  if (branding.abn) doc.text(`ABN: ${branding.abn}`, W / 2, 58, { align: 'center' });
 
   // ── "Certificate of Completion" title ─────────────────────────────────────
   // Decorative swash line

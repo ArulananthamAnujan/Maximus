@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { useMediaUrl, parseStorageUrl } from '../../hooks/useMediaUrl';
 import { sanitizeHtml, safeUrl } from '../../lib/utils';
 import { useParams, Link } from 'react-router-dom';
 import {
@@ -80,6 +81,7 @@ export default function StudentCoursePlayer() {
   const courseProgressRows = courseProgressData ?? EMPTY_PROGRESS;
   const updateProgressMutation = useUpdateLessonProgress();
 
+  const activeMediaUrl = useMediaUrl(activeLesson?.url);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressSaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartTime = useRef<number>(Date.now());
@@ -190,13 +192,10 @@ export default function StudentCoursePlayer() {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
         body: JSON.stringify({ task, lesson_id: activeLesson.id, course_id: courseId }),
       });
-      if (!res.ok) throw new Error('Generation failed');
-
-      const { data: deducted } = await supabase.rpc('deduct_student_tokens', {
-        p_user_id: profile.id, p_tokens: cost, p_ai_task: task,
-        p_course_id: courseId, p_lesson_id: activeLesson.id,
-      });
-      if (deducted) setTokenBalance(b => (b ?? 0) - cost);
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.error || 'AI generation failed. Please try again.');
+      // Tokens are charged by the server; just reflect what it charged.
+      if (result.tokens_charged) setTokenBalance(b => (b ?? 0) - result.tokens_charged);
 
       if (task === 'summarize_lesson') {
         const { data } = await supabase.from('lessons').select('ai_summary, ai_summary_generated_at').eq('id', activeLesson.id).maybeSingle();
@@ -214,8 +213,8 @@ export default function StudentCoursePlayer() {
         sonnerToast.success('Activities generated!');
         setActiveTab('activities');
       }
-    } catch {
-      sonnerToast.error('AI generation failed. Please try again.');
+    } catch (err) {
+      sonnerToast.error(err instanceof Error ? err.message : 'AI generation failed. Please try again.');
     } finally {
       setGeneratingAI(null);
     }
@@ -740,7 +739,9 @@ export default function StudentCoursePlayer() {
 
                     {/* Video content */}
                     {activeLesson.type === 'video' && activeLesson.url && (() => {
-                      const url = activeLesson.url;
+                      // Uploaded videos are private: use the signed link (empty while it loads)
+                      const url = parseStorageUrl(activeLesson.url) ? activeMediaUrl : activeLesson.url;
+                      if (!url) return <div className="rounded-2xl bg-black aspect-video flex items-center justify-center text-sm text-gray-400">Loading video…</div>;
                       const ytMatch = url.match(/(?:v=|youtu\.be\/)([^&?\s]+)/);
                       if (ytMatch) {
                         const thumbnail = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
@@ -836,7 +837,7 @@ export default function StudentCoursePlayer() {
                             <p className="text-xs text-gray-400 truncate max-w-xs">{activeLesson.url}</p>
                           </div>
                         </div>
-                        <a href={safeUrl(activeLesson.url)} target="_blank" rel="noopener noreferrer"
+                        <a href={safeUrl(activeMediaUrl) || undefined} target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-xl transition-colors w-fit">
                           <ExternalLink className="w-4 h-4" /> Open Resource
                         </a>
@@ -853,12 +854,12 @@ export default function StudentCoursePlayer() {
                               {activeLesson.url.split('/').pop()?.split('?')[0] || 'Document'}
                             </span>
                           </div>
-                          <a href={safeUrl(activeLesson.url)} target="_blank" rel="noopener noreferrer"
+                          <a href={safeUrl(activeMediaUrl) || undefined} target="_blank" rel="noopener noreferrer"
                             className="text-xs font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 flex items-center gap-1">
                             <ExternalLink className="w-3.5 h-3.5" /> Open
                           </a>
                         </div>
-                        <a href={safeUrl(activeLesson.url)} target="_blank" rel="noopener noreferrer"
+                        <a href={safeUrl(activeMediaUrl) || undefined} target="_blank" rel="noopener noreferrer"
                           className="flex flex-col items-center justify-center gap-4 py-14 px-6 hover:bg-orange-50/50 dark:hover:bg-orange-900/10 transition-colors group">
                           <div className="w-20 h-24 bg-orange-50 dark:bg-orange-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-xl flex flex-col items-center justify-center gap-1.5 group-hover:border-orange-400 transition-colors shadow-sm">
                             <FileText className="w-8 h-8 text-orange-500" />

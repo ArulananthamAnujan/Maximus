@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   DollarSign, TrendingUp, Clock, CheckCircle2, Sparkles, ChevronRight,
   Check, CreditCard, Building2, AlertCircle, Star, Crown, Zap, Info,
@@ -74,7 +74,8 @@ export default function TeacherEarnings() {
   });
   const [payoutAmount, setPayoutAmount] = useState('');
   const [submittingPayout, setSubmittingPayout] = useState(false);
-  const [purchasingPlan] = useState<string | null>(null);
+  const [purchasingPlan, setPurchasingPlan] = useState<string | null>(null);
+  const verifiedRef = useRef(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -139,11 +140,61 @@ export default function TeacherEarnings() {
     setSubmittingPayout(false);
   };
 
-  const handlePurchaseAI = async (_plan: TeacherAIPlan) => {
-    // This button used to add tokens for free with no payment. Token balances can now
-    // only be changed by the server after a verified payment, and teacher plans are not
-    // yet wired to Stripe checkout.
-    toast.error('Online purchase of teacher AI plans is not available yet. Please contact the administrator.');
+  // Returning from Stripe: confirm the payment with the server, which adds the tokens once.
+  useEffect(() => {
+    if (!profile || verifiedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    const sessionId = params.get('session_id');
+    if (!payment) return;
+    verifiedRef.current = true;
+    setTab('ai');
+    window.history.replaceState({}, '', window.location.pathname);
+    if (payment === 'cancelled') { toast.error('Payment cancelled. No charge was made.'); return; }
+    if (payment !== 'success' || !sessionId) return;
+
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-verify-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+        const data = await res.json();
+        if (data.enrolled) {
+          toast.success('Payment successful! Your AI tokens are in your account.');
+          const { data: credits } = await supabase.from('teacher_ai_credits').select('*').eq('user_id', profile.id).maybeSingle();
+          if (credits) setAiCredits(credits);
+        } else {
+          toast.error(data.error || 'Could not verify payment. Please contact support.');
+        }
+      } catch {
+        toast.error('Could not verify payment. Please contact support.');
+      }
+    })();
+  }, [profile]);
+
+  const handlePurchaseAI = async (plan: TeacherAIPlan) => {
+    if (!profile) return;
+    setPurchasingPlan(plan.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Please sign in again.');
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ type: 'teacher_ai_plan', plan_id: plan.id }),
+      });
+      const data = await res.json();
+      if (!data.url) throw new Error(data.error || 'Could not start checkout.');
+      // Tokens are only added after Stripe confirms the payment.
+      window.location.href = data.url;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Purchase failed. Please try again.');
+      setPurchasingPlan(null);
+    }
   };
 
   const statusBadge = (s: string) => {

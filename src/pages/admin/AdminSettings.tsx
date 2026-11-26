@@ -11,6 +11,7 @@ interface SiteSettings {
   tagline: string;
   support_email: string;
   support_phone: string;
+  abn: string;
   logo_url: string;
   welcome_email_subject: string;
   welcome_email_body: string;
@@ -23,6 +24,7 @@ const DEFAULT_SETTINGS: SiteSettings = {
   tagline: 'Learn. Upskill. Achieve.',
   support_email: 'hello@maximus.edu.au',
   support_phone: '+61 2 9123 4567',
+  abn: '',
   logo_url: '',
   welcome_email_subject: 'Welcome to Maximus Academy!',
   welcome_email_body: 'Dear {student_name},\n\nWelcome to Maximus Academy! Your account has been created successfully.\n\nStart learning today by browsing our course catalogue.\n\nBest regards,\nThe Maximus Academy Team',
@@ -40,6 +42,7 @@ async function loadSettings(): Promise<SiteSettings> {
     tagline: map['tagline'] ?? DEFAULT_SETTINGS.tagline,
     support_email: map['support_email'] ?? DEFAULT_SETTINGS.support_email,
     support_phone: map['support_phone'] ?? DEFAULT_SETTINGS.support_phone,
+    abn: map['abn'] ?? '',
     logo_url: map['logo_url'] ?? '',
     welcome_email_subject: map['welcome_email_subject'] ?? DEFAULT_SETTINGS.welcome_email_subject,
     welcome_email_body: map['welcome_email_body'] ?? DEFAULT_SETTINGS.welcome_email_body,
@@ -109,6 +112,7 @@ export default function AdminSettings() {
         saveSetting('tagline', settings.tagline),
         saveSetting('support_email', settings.support_email),
         saveSetting('support_phone', settings.support_phone),
+        saveSetting('abn', settings.abn.trim()),
         saveSetting('welcome_email_subject', settings.welcome_email_subject),
         saveSetting('welcome_email_body', settings.welcome_email_body),
         saveSetting('cert_email_subject', settings.cert_email_subject),
@@ -157,6 +161,10 @@ export default function AdminSettings() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Support Phone</label>
               <input type="text" value={settings.support_phone} onChange={e => setSettings(s => ({ ...s, support_phone: e.target.value }))} className="input-field" />
+            </div>
+            <div>
+              <label htmlFor="settings-abn" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">ABN <span className="text-gray-400 font-normal">(printed on certificates; leave blank to omit)</span></label>
+              <input id="settings-abn" type="text" value={settings.abn} onChange={e => setSettings(s => ({ ...s, abn: e.target.value }))} className="input-field" placeholder="e.g. 12 345 678 901" />
             </div>
           </div>
         </div>

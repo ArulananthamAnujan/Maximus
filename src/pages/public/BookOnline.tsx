@@ -3,6 +3,7 @@ import { Calendar, Clock, Video, Users, CheckCircle, ArrowRight } from 'lucide-r
 import PublicHeader from '../../components/layout/PublicHeader';
 import PublicFooter from '../../components/layout/PublicFooter';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 
 const BOOKING_TYPES = [
   { id: 'consultation', title: 'Career Consultation', duration: '30 min', icon: Video, description: 'Discuss your learning goals with an education advisor', price: 'Free' },
@@ -20,6 +21,7 @@ export default function BookOnline() {
   const [form, setForm] = useState({ name: '', email: '', phone: '', notes: '' });
   const [booked, setBooked] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const { profile } = useAuth();
 
   const today = new Date().toISOString().split('T')[0];
@@ -27,9 +29,28 @@ export default function BookOnline() {
   const handleBook = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setBooked(true);
+    setError('');
+    const type = BOOKING_TYPES.find(t => t.id === selected);
+    // Saved as a contact message so it shows up in Admin > Contact Messages.
+    const { error: saveError } = await supabase.from('contact_messages').insert({
+      name: (form.name || profile?.full_name || '').trim().slice(0, 200),
+      email: (form.email || profile?.email || '').trim().slice(0, 200),
+      subject: `Booking request: ${type?.title ?? selected} — ${date} at ${time}`.slice(0, 200),
+      message: [
+        `Session: ${type?.title ?? selected} (${type?.duration ?? ''}, ${type?.price ?? ''})`,
+        `Preferred date: ${date}`,
+        `Preferred time: ${time}`,
+        `Phone: ${form.phone.trim() || 'not provided'}`,
+        `Notes: ${form.notes.trim() || 'none'}`,
+      ].join('\n').slice(0, 5000),
+      status: 'open',
+    });
     setLoading(false);
+    if (saveError) {
+      setError('We could not save your booking request. Please try again or contact us directly.');
+      return;
+    }
+    setBooked(true);
   };
 
   if (booked) {
@@ -41,10 +62,10 @@ export default function BookOnline() {
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <CheckCircle className="w-12 h-12 text-emerald-600" />
             </div>
-            <h1 className="font-playfair text-3xl font-bold text-slate-900 mb-3">Booking Confirmed!</h1>
+            <h1 className="font-playfair text-3xl font-bold text-slate-900 mb-3">Booking Request Received</h1>
             <p className="text-slate-500 mb-2">{BOOKING_TYPES.find(t => t.id === selected)?.title}</p>
             <p className="text-slate-500 mb-8">{date} at {time}</p>
-            <p className="text-sm text-slate-400 mb-8">A confirmation has been sent to {form.email}. We'll send you a calendar invite and meeting link shortly.</p>
+            <p className="text-sm text-slate-400 mb-8">Thanks! Our team will contact you at {form.email || profile?.email} to confirm your session time and send the meeting details.</p>
             <button onClick={() => { setBooked(false); setStep(1); setSelected(''); setDate(''); setTime(''); }} className="px-6 py-3 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl transition-colors">Book Another Session</button>
           </div>
         </div>
@@ -137,6 +158,7 @@ export default function BookOnline() {
               <div>
                 <h2 className="font-playfair text-2xl font-bold text-slate-900 mb-6">Your Details</h2>
                 <form onSubmit={handleBook} className="space-y-5">
+                  {error && <p role="alert" className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{error}</p>}
                   <div className="bg-slate-50 rounded-xl p-4 mb-6">
                     <p className="text-sm text-slate-500">Booking Summary</p>
                     <p className="font-semibold text-slate-900">{BOOKING_TYPES.find(t => t.id === selected)?.title}</p>

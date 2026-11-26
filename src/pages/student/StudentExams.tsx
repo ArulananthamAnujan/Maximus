@@ -91,16 +91,26 @@ export default function StudentExams() {
 
     const [examsRes, subsRes] = await Promise.all([
       supabase.from('exams')
-        .select('*, course:courses(id,title), questions:exam_questions(*)')
+        .select('*, course:courses(id,title)')
         .in('course_id', courseIds)
         .eq('is_published', true)
         .order('created_at', { ascending: false }),
       supabase.from('exam_submissions').select('*').eq('student_id', profile.id),
     ]);
 
-    const exams: Exam[] = (examsRes.data || []).map(e => ({
+    // Questions come from a server function that leaves out the teacher's model answers.
+    const examRows = examsRes.data || [];
+    const { data: questionRows } = examRows.length
+      ? await supabase.rpc('get_exam_questions', { p_exam_ids: examRows.map(e => e.id) })
+      : { data: [] };
+    const questionsByExam = new Map<string, ExamQuestion[]>();
+    ((questionRows || []) as Array<ExamQuestion & { exam_id: string }>).forEach(q => {
+      if (!questionsByExam.has(q.exam_id)) questionsByExam.set(q.exam_id, []);
+      questionsByExam.get(q.exam_id)!.push(q);
+    });
+    const exams: Exam[] = examRows.map(e => ({
       ...e,
-      questions: [...(e.questions || [])].sort((a, b) => a.order_index - b.order_index),
+      questions: [...(questionsByExam.get(e.id) || [])].sort((a, b) => a.order_index - b.order_index),
     }));
 
     // Group by course

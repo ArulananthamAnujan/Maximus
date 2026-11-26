@@ -576,6 +576,147 @@ function parseJSON(text: string): unknown | null {
   return null;
 }
 
+// ─── Student study tools ─────────────────────────────────────────────────────
+
+const STUDENT_TASK_COSTS: Record<string, number> = {
+  summarize_lesson: 3,
+  flashcards: 4,
+  activity_ideas: 4,
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+function htmlToText(html: string): string {
+  return html.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleStudentTask(req: Request, admin: any, userId: string, apiKey: string): Promise<Response> {
+  const body = await req.json().catch(() => ({})) as { task?: string; lesson_id?: string; course_id?: string };
+  const task = body.task ?? '';
+  const cost = STUDENT_TASK_COSTS[task];
+  if (!cost || !body.lesson_id) {
+    return jsonResponse({ error: 'This AI feature is not available to students.' }, 403);
+  }
+
+  const { data: lesson } = await admin
+    .from('lessons')
+    .select('id, course_id, title, content, description, ai_summary')
+    .eq('id', body.lesson_id)
+    .maybeSingle();
+  if (!lesson) return jsonResponse({ error: 'Lesson not found' }, 404);
+
+  const { data: hasAccess } = await admin.rpc('has_course_access', { p_course_id: lesson.course_id, p_user_id: userId });
+  if (!hasAccess) return jsonResponse({ error: 'You need to be enrolled in this course to use AI tools.' }, 403);
+
+  // Work that already exists is returned without charging again.
+  if (task === 'summarize_lesson' && lesson.ai_summary) {
+    return jsonResponse({ reused: true, tokens_charged: 0 });
+  }
+  if (task === 'flashcards') {
+    const { count } = await admin.from('flashcards').select('id', { count: 'exact', head: true })
+      .eq('lesson_id', lesson.id);
+    if ((count ?? 0) > 0) return jsonResponse({ reused: true, tokens_charged: 0 });
+  }
+  if (task === 'activity_ideas') {
+    const { count } = await admin.from('lesson_activities').select('id', { count: 'exact', head: true })
+      .eq('lesson_id', lesson.id);
+    if ((count ?? 0) > 0) return jsonResponse({ reused: true, tokens_charged: 0 });
+  }
+
+  const { data: credits } = await admin.from('student_ai_credits').select('token_balance').eq('user_id', userId).maybeSingle();
+  if ((credits?.token_balance ?? 0) < cost) {
+    return jsonResponse({ error: `Not enough tokens. This action costs ${cost} tokens.` }, 402);
+  }
+
+  // Simple per-student rate limit: 10 generations a minute.
+  const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
+  const { count: recent } = await admin.from('ai_usage_logs').select('id', { count: 'exact', head: true })
+    .eq('user_id', userId).gte('created_at', oneMinuteAgo);
+  if ((recent ?? 0) >= 10) return jsonResponse({ error: 'Please wait a moment before generating again.' }, 429);
+
+  const lessonText = htmlToText(String(lesson.content || lesson.description || '')).slice(0, 12000);
+  if (task !== 'activity_ideas' && lessonText.length < 80) {
+    return jsonResponse({ error: 'This lesson has no written content to work from yet.' }, 400);
+  }
+
+  const { data: course } = await admin.from('courses').select('title, level').eq('id', lesson.course_id).maybeSingle();
+  const input = sanitizeInput(
+    task === 'activity_ideas'
+      ? { lesson_title: lesson.title, course_context: course?.title ?? '', target_audience: course?.level ?? 'students', num_activities: 3 }
+      : { lesson_content: lessonText, num_cards: 10 }
+  );
+
+  const systemPrompt = getSystemPrompt(task);
+  const userPrompt = getUserPrompt(task, input);
+  let result = await callAnthropic(apiKey, systemPrompt, userPrompt, task);
+  let parsed = parseJSON(result.content) as Record<string, unknown> | null;
+  if (!parsed || !validators[task](parsed)) {
+    result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, true);
+    parsed = parseJSON(result.content) as Record<string, unknown> | null;
+  }
+  const ok = !!parsed && validators[task](parsed);
+  await admin.from('ai_usage_logs').insert({
+    user_id: userId,
+    ai_task: task,
+    input_tokens: result.inputTokens,
+    output_tokens: result.outputTokens,
+    cost_estimate_usd: (result.inputTokens / 1_000_000 * 3) + (result.outputTokens / 1_000_000 * 15),
+    success: ok,
+    error_message: ok ? null : 'Unusable model response (student task)',
+  });
+  if (!ok || !parsed) return jsonResponse({ error: 'AI returned an unusable response. You were not charged. Please try again.' }, 502);
+
+  // Save the result where the lesson player reads it from.
+  let saveError: { message: string } | null = null;
+  if (task === 'summarize_lesson') {
+    const takeaways = (parsed.key_takeaways as unknown[]).map((t) => `• ${String(t)}`).join('\n');
+    const summary = `${String(parsed.summary)}${takeaways ? `\n\nKey takeaways:\n${takeaways}` : ''}`;
+    ({ error: saveError } = await admin.from('lessons')
+      .update({ ai_summary: summary, ai_summary_generated_at: new Date().toISOString() }).eq('id', lesson.id));
+  } else if (task === 'flashcards') {
+    const rows = (parsed.cards as Array<{ front?: unknown; back?: unknown }>)
+      .filter((c) => c && c.front && c.back)
+      .slice(0, 20)
+      .map((c) => ({ user_id: userId, course_id: lesson.course_id, lesson_id: lesson.id, front: String(c.front), back: String(c.back) }));
+    if (rows.length === 0) return jsonResponse({ error: 'AI returned no flashcards. You were not charged.' }, 502);
+    ({ error: saveError } = await admin.from('flashcards').insert(rows));
+  } else {
+    const allowedTypes = ['practice', 'reflection', 'discussion', 'project', 'research'];
+    const rows = (parsed.activities as Array<Record<string, unknown>>)
+      .filter((a) => a && a.title && a.instructions)
+      .slice(0, 6)
+      .map((a, i) => ({
+        lesson_id: lesson.id,
+        course_id: lesson.course_id,
+        title: String(a.title),
+        type: allowedTypes.includes(String(a.type)) ? String(a.type) : 'practice',
+        instructions: String(a.instructions),
+        estimated_minutes: Math.min(Math.max(Math.round(Number(a.estimated_minutes)) || 15, 1), 600),
+        order_index: i,
+      }));
+    if (rows.length === 0) return jsonResponse({ error: 'AI returned no activities. You were not charged.' }, 502);
+    ({ error: saveError } = await admin.from('lesson_activities').insert(rows));
+  }
+  if (saveError) {
+    console.error('student AI save error:', saveError.message);
+    return jsonResponse({ error: 'Could not save the result. You were not charged.' }, 500);
+  }
+
+  // Charge only after the result is saved.
+  const { data: charged, error: chargeError } = await admin.rpc('deduct_student_tokens', {
+    p_user_id: userId, p_tokens: cost, p_ai_task: task, p_course_id: lesson.course_id, p_lesson_id: lesson.id,
+  });
+  if (chargeError) console.error('student token charge failed:', chargeError.message);
+
+  return jsonResponse({ reused: false, tokens_charged: charged ? cost : 0 });
+}
+
 // ─── Main handler ────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -628,10 +769,16 @@ Deno.serve(async (req: Request) => {
       .eq('id', userId)
       .maybeSingle();
 
-    if (!profile || profile.role === 'student') {
-      return new Response(JSON.stringify({ error: 'Forbidden: AI features require teacher or admin role' }), {
+    if (!profile) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
         status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // Students use a separate, narrower path: three study tools on a lesson they have
+    // access to, paid for from their own token balance and charged here on the server.
+    if (profile.role === 'student') {
+      return await handleStudentTask(req, supabaseAdmin, userId, apiKey);
     }
 
     // ── Org token + feature-flag check (for org_admin and teachers in an org) ─

@@ -22,6 +22,7 @@ export default function CoursePreview() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [promoCode, setPromoCode] = useState('');
   const [discount, setDiscount] = useState(0);
+  const [appliedPromo, setAppliedPromo] = useState('');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const { user, profile } = useAuth();
   const navigate = useNavigate();
@@ -52,11 +53,16 @@ export default function CoursePreview() {
 
   const applyPromo = async () => {
     if (!promoCode) return;
-    const { data } = await supabase.from('promo_codes').select('*').eq('code', promoCode.toUpperCase()).eq('is_active', true).maybeSingle();
-    if (data) {
-      setDiscount(data.discount_percent);
-      sonnerToast.success(`Promo applied! ${data.discount_percent}% off`);
+    if (!user) { sonnerToast.error('Please sign in to use a promo code'); return; }
+    // Checked on the server (expiry, usage limit, course); checkout re-checks it and charges the reduced price.
+    const { data: percent } = await supabase.rpc('validate_promo_code', { p_code: promoCode, p_course_id: id ?? null });
+    if (percent) {
+      setDiscount(percent);
+      setAppliedPromo(promoCode.trim().toUpperCase());
+      sonnerToast.success(`Promo applied! ${percent}% off`);
     } else {
+      setDiscount(0);
+      setAppliedPromo('');
       sonnerToast.error('Invalid or expired promo code');
     }
   };
@@ -83,7 +89,8 @@ export default function CoursePreview() {
     setCheckoutLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (!session) { navigate('/login'); return; }
+      const token = session.access_token;
       const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout`,
         {
@@ -92,11 +99,15 @@ export default function CoursePreview() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({ type: 'course', course_id: id }),
+          body: JSON.stringify({ type: 'course', course_id: id, ...(appliedPromo ? { promo_code: appliedPromo } : {}) }),
         }
       );
       const data = await res.json();
-      if (data.url) {
+      if (data.enrolled) {
+        // A promo code covered the full price, so no payment step is needed.
+        sonnerToast.success('Enrolled successfully! Start learning now.');
+        navigate(`/student/courses/${id}`);
+      } else if (data.url) {
         window.open(data.url, '_blank', 'noopener,noreferrer');
       } else if (data.error === 'Stripe not configured') {
         if (course.stripe_payment_link) {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useMediaUrl } from '../../hooks/useMediaUrl';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Trash2, GripVertical, ChevronDown, ChevronUp, Video, FileText,
@@ -76,7 +77,9 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function VideoPlayer({ url }: { url: string }) {
+function VideoPlayer({ url: storedUrl }: { url: string }) {
+  // Uploaded files are private; this swaps in a short-lived signed link.
+  const url = useMediaUrl(storedUrl);
   const isYouTube = /youtube\.com|youtu\.be/.test(url);
   const isVimeo = /vimeo\.com/.test(url);
 
@@ -120,11 +123,13 @@ function VideoPlayer({ url }: { url: string }) {
     );
   }
 
+  if (!url) return <div className="w-full rounded-xl h-40 border border-slate-200 bg-black/90 flex items-center justify-center text-xs text-slate-400">Loading video…</div>;
   return <video src={url} controls className="w-full rounded-xl max-h-72 border border-slate-200 bg-black" />;
 }
 
-function PDFViewer({ url }: { url: string }) {
-  const filename = url.split('/').pop()?.split('?')[0] || 'Document';
+function PDFViewer({ url: storedUrl }: { url: string }) {
+  const url = useMediaUrl(storedUrl) || undefined;
+  const filename = storedUrl.split('/').pop()?.split('?')[0] || 'Document';
   return (
     <div className="border border-slate-200 dark:border-navy-600 rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-navy-800 border-b border-slate-200 dark:border-navy-600">

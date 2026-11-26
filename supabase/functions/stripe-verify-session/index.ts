@@ -77,7 +77,7 @@ Deno.serve(async (req: Request) => {
 
     // All fulfilment happens in one database transaction that first claims the session id,
     // so replaying this request (or the webhook arriving as well) can never credit twice.
-    if (purchaseType === "ai_plan") {
+    if (purchaseType === "ai_plan" || purchaseType === "teacher_ai_plan") {
       const tokens = parseInt(metadata.token_amount || "0", 10);
       if (!Number.isFinite(tokens) || tokens <= 0) {
         return new Response(JSON.stringify({ error: "Missing token amount in session metadata" }), {
@@ -89,7 +89,7 @@ Deno.serve(async (req: Request) => {
       const { data: fulfilledNow, error: fulfilError } = await supabase.rpc("fulfill_stripe_session", {
         p_session_id: stripeSessionId,
         p_user_id: user.id,
-        p_kind: "ai_plan",
+        p_kind: purchaseType,
         p_tokens: tokens,
         p_amount_cents: amountCents,
         p_payment_intent: stripePaymentId || null,
@@ -98,7 +98,7 @@ Deno.serve(async (req: Request) => {
 
       console.log(`AI plan ${metadata.plan_id}: ${tokens} tokens for user ${user.id} (new: ${fulfilledNow})`);
       return new Response(
-        JSON.stringify({ enrolled: true, type: "ai_plan", tokens_added: fulfilledNow ? tokens : 0, already_processed: !fulfilledNow }),
+        JSON.stringify({ enrolled: true, type: purchaseType, tokens_added: fulfilledNow ? tokens : 0, already_processed: !fulfilledNow }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -120,6 +120,7 @@ Deno.serve(async (req: Request) => {
       p_teacher_id: teacher_id || null,
       p_amount_cents: amountCents,
       p_payment_intent: stripePaymentId || null,
+      p_promo_code: metadata.promo_code || null,
     });
     if (fulfilError) throw new Error(`Fulfilment failed: ${fulfilError.message}`);
 

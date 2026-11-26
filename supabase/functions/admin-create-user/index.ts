@@ -7,6 +7,36 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+/**
+ * Sends one email through Resend (https://resend.com). Needs two function secrets:
+ *   RESEND_API_KEY  – API key from the Resend dashboard
+ *   EMAIL_FROM      – verified sender, e.g. "Maximus Academy <no-reply@yourdomain.com>"
+ * Returns false (and logs why) when email is not configured or the send fails.
+ */
+async function sendEmail(to: string, subject: string, html: string, text?: string): Promise<boolean> {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  const from = Deno.env.get("EMAIL_FROM");
+  if (!apiKey || !from) {
+    console.warn("Email not sent: RESEND_API_KEY / EMAIL_FROM are not configured.");
+    return false;
+  }
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ from, to: [to], subject, html, ...(text ? { text } : {}) }),
+    });
+    if (!res.ok) {
+      console.error(`Email send failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Email send error:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 function escapeHtml(value: string): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -292,6 +322,7 @@ Deno.serve(async (req: Request) => {
         const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
           type: "recovery",
           email,
+          options: { redirectTo: `${siteUrl}/reset-password` },
         });
         resetLink = linkData?.properties?.action_link || "";
       } catch { /* non-fatal */ }
@@ -305,31 +336,7 @@ Deno.serve(async (req: Request) => {
         resetLink,
       });
 
-      // Send via Supabase's built-in SMTP using the admin email API
-      const smtpRes = await fetch(
-        `${Deno.env.get("SUPABASE_URL")}/auth/v1/admin/users/${userId}/send-email`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
-          },
-          body: JSON.stringify({ email_type: "email_change_new", data: { subject, html } }),
-        }
-      );
-
-      if (!smtpRes.ok) {
-        // Fallback: trigger a magic link welcome email via Supabase SMTP
-        await supabaseAdmin.auth.admin.generateLink({
-          type: "magiclink",
-          email,
-          options: { data: { full_name, role } },
-        });
-        console.log(`Welcome email fallback triggered for ${email}, courses: ${courseTitles.join(", ")}`);
-      }
-
-      welcomeEmailSent = true;
+      welcomeEmailSent = await sendEmail(email, subject, html);
     } catch (emailErr) {
       console.error("Welcome email error:", emailErr);
     }

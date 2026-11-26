@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
     // Fulfilment is one atomic, idempotent database call (shared with stripe-verify-session).
     // If it fails we return 500 so Stripe retries the webhook.
     // --- AI Plan Purchase ---
-    if (purchaseType === "ai_plan") {
+    if (purchaseType === "ai_plan" || purchaseType === "teacher_ai_plan") {
       const { student_id, plan_id, token_amount } = metadata;
       const tokens = parseInt(token_amount || "0", 10);
       if (!student_id || !Number.isFinite(tokens) || tokens <= 0) {
@@ -98,7 +98,7 @@ Deno.serve(async (req: Request) => {
       const { data: fulfilledNow, error } = await supabase.rpc("fulfill_stripe_session", {
         p_session_id: stripeSessionId,
         p_user_id: student_id,
-        p_kind: "ai_plan",
+        p_kind: purchaseType,
         p_tokens: tokens,
         p_amount_cents: amountCents,
         p_payment_intent: stripePaymentId || null,
@@ -107,7 +107,7 @@ Deno.serve(async (req: Request) => {
 
       console.log(`AI plan ${plan_id}: ${tokens} tokens for student ${student_id} (new: ${fulfilledNow})`);
       return new Response(
-        JSON.stringify({ received: true, type: "ai_plan", tokens_added: fulfilledNow ? tokens : 0 }),
+        JSON.stringify({ received: true, type: purchaseType, tokens_added: fulfilledNow ? tokens : 0 }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -130,6 +130,7 @@ Deno.serve(async (req: Request) => {
       p_teacher_id: teacher_id || null,
       p_amount_cents: amountCents,
       p_payment_intent: stripePaymentId || null,
+      p_promo_code: metadata.promo_code || null,
     });
     if (error) throw new Error(`Fulfilment failed: ${error.message}`);
 
