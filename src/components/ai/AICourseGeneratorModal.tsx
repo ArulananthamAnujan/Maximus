@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { X, Sparkles, ChevronUp, ChevronDown, Trash2, Plus, Loader2, BookOpen, Layers } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
-import { useGenerateCourseOutline } from '../../hooks/useAI';
 import AILoader from '../ui/AILoader';
-import type { CourseOutlineOutput, AIModuleItem, AILessonItem } from '../../lib/ai';
+import { generateCourseOutline } from '../../lib/ai';
+import type { CourseOutlineOutput, AIModuleItem, AILessonItem, OutlineProgress } from '../../lib/ai';
 
 interface Props {
   onClose: () => void;
@@ -22,7 +22,6 @@ const TARGET_AUDIENCES = [
 
 export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Props) {
   const navigate = useNavigate();
-  const generateMutation = useGenerateCourseOutline();
 
   const [step, setStep] = useState<Step>('form');
   const [form, setForm] = useState({
@@ -35,15 +34,20 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
 
   const [outline, setOutline] = useState<CourseOutlineOutput | null>(null);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState<OutlineProgress | null>(null);
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setProgress(null);
     setStep('generating');
     try {
-      const result = await generateMutation.mutateAsync(form);
+      const result = await generateCourseOutline(form, setProgress);
+      // Some modules may come back without lessons if one part failed twice; keep what worked.
+      const missing = result.modules.filter(m => m.lessons.length === 0).length;
       setOutline(result);
       setStep('preview');
+      if (missing > 0) setError(`${missing} module${missing === 1 ? '' : 's'} came back without lessons. You can add lessons to ${missing === 1 ? 'it' : 'them'} below, or close and generate again.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
       setStep('form');
@@ -191,14 +195,18 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
               </div>
               <div className="flex items-center gap-2 bg-sky-50 border border-sky-100 rounded-xl px-4 py-3 text-xs text-sky-700">
                 <Sparkles className="w-4 h-4 shrink-0" />
-                AI will generate approximately {form.num_modules * form.lessons_per_module} lessons across {form.num_modules} modules. Generation takes 5-20 seconds.
+                AI will generate approximately {form.num_modules * form.lessons_per_module} lessons across {form.num_modules} modules. {form.num_modules * form.lessons_per_module > 16 ? 'Larger courses are built in parts and usually take up to a minute.' : 'This usually takes under 30 seconds.'}
               </div>
             </form>
           )}
 
           {step === 'generating' && (
             <div className="p-12">
-              <AILoader />
+              <AILoader label={
+                !progress || progress.stage === 'structure'
+                  ? 'Designing the course structure…'
+                  : `Writing lessons… ${progress.done} of ${progress.total} parts done`
+              } />
             </div>
           )}
 

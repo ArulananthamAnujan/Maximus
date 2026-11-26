@@ -15,8 +15,9 @@ import {
 } from '../lib/ai';
 
 const MUTATION_DEFAULTS = {
-  retry: 1,
-  retryDelay: 2000,
+  // The server already retries transient failures within its time budget; retrying the
+  // whole request here as well only doubles the wait before the user sees a message.
+  retry: 0,
 };
 
 export function useGenerateCourseOutline() {

@@ -64,8 +64,20 @@ function validateGenerateExam(obj: unknown): boolean {
   return typeof o.title === 'string' && typeof o.passage === 'string' && Array.isArray(o.questions);
 }
 
+function validateCourseSkeleton(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.title === 'string' && typeof o.description === 'string' && Array.isArray(o.modules) && o.modules.length > 0;
+}
+function validateModuleLessons(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return Array.isArray(o.modules) && o.modules.length > 0
+    && (o.modules as Array<Record<string, unknown>>).every(m => Array.isArray(m.lessons));
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
   course_outline: validateCourseOutline,
+  course_skeleton: validateCourseSkeleton,
+  module_lessons: validateModuleLessons,
   lesson_content: validateLessonContent,
   quiz_from_content: validateQuizFromContent,
   flashcards: validateFlashcards,
@@ -128,6 +140,24 @@ Standards:
 - Each lesson title: specific and descriptive (e.g. "Histone Modification Patterns and Transcriptional Regulation")
 - Each lesson description: 1-2 sentences covering the specific concept, theory, or skill addressed
 - estimated_duration_minutes: 45-90 minutes per lesson (university lecture/seminar pacing)`,
+
+    course_skeleton: `You are a senior university curriculum architect. ${jsonRule}
+Output shape: {"title": string, "description": string, "modules": [{"title": string, "description": string}]}
+Standards:
+- title: a precise, academic course title
+- description: 3-4 sentences covering rationale, scope and outcomes, in formal academic register
+- modules: exactly the requested number, in a logical teaching order with no overlap between modules
+- Each module title is topic-focused (e.g. "Module 3: Epigenetic Mechanisms and Chromatin Remodelling"); each module description is 2 sentences
+- Do NOT include lessons`,
+
+    module_lessons: `You are a senior university curriculum architect writing the lesson plan for some modules of an existing course. ${jsonRule}
+Output shape: {"modules": [{"title": string, "lessons": [{"title": string, "description": string, "estimated_duration_minutes": number}]}]}
+Standards:
+- Return one entry per module you were asked to plan, in the same order, with "title" copied exactly as given
+- Exactly the requested number of lessons per module
+- Each lesson title is specific and descriptive; each lesson description is 1-2 sentences
+- Lessons must not duplicate topics that belong to the other modules of the course
+- estimated_duration_minutes: 45-90`,
 
     lesson_content: `You are a university lecturer and academic content author writing scholarly, comprehensive lesson material for tertiary-level students. ${jsonRule}
 Output shape: {"content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
@@ -324,6 +354,28 @@ Lessons per Module: ${input.lessons_per_module}
 
 Ensure the course meets tertiary education standards with clear academic progression, rigorous content, and measurable learning outcomes aligned with the discipline.`;
 
+    case 'course_skeleton':
+      return `Design the top-level structure of a university-level course:
+Topic / Subject Area: ${input.topic}
+Target Audience: ${input.target_audience}
+Academic Level / Difficulty: ${input.difficulty}
+Number of Modules: ${input.num_modules}
+
+Return the course title, description and the module list only (no lessons).`;
+
+    case 'module_lessons':
+      return `Course: ${input.course_title}
+Target Audience: ${input.target_audience}
+Academic Level / Difficulty: ${input.difficulty}
+
+Full module list of the course (for context, so lessons do not overlap):
+${Array.isArray(input.all_modules) ? (input.all_modules as string[]).map((m, i) => `${i + 1}. ${m}`).join('\n') : ''}
+
+Write the lesson plan for ONLY these modules:
+${Array.isArray(input.modules) ? (input.modules as Array<{ title?: string; description?: string }>).map(m => `- ${m.title}: ${m.description ?? ''}`).join('\n') : ''}
+
+Lessons per Module: ${input.lessons_per_module}`;
+
     case 'lesson_content':
       return `Write comprehensive university-level lesson content for:
 Lesson Title: ${input.lesson_title}
@@ -469,11 +521,30 @@ The examination must meet university assessment standards with questions that va
 }
 
 function getTemperature(task: string): number {
-  const creative = ['course_outline', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
+  const creative = ['course_outline', 'course_skeleton', 'module_lessons', 'lesson_content', 'flashcards', 'activity_ideas', 'full_curriculum', 'lesson_notes', 'presentation_slides', 'section_content', 'section_notes', 'section_slides', 'generate_exam'];
   return creative.includes(task) ? 0.7 : 0.3;
 }
 
-function getMaxTokens(task: string): number {
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback;
+}
+
+function getMaxTokens(task: string, input: Record<string, unknown> = {}): number {
+  // Outline-style tasks grow with the size requested, so a fixed cap either truncates
+  // big requests (broken JSON) or wastes time on small ones.
+  if (task === 'course_outline') {
+    const modules = clampInt(input.num_modules, 1, 12, 5);
+    const lessons = clampInt(input.lessons_per_module, 1, 12, 4);
+    return Math.min(16000, 800 + modules * 150 + modules * lessons * 160);
+  }
+  if (task === 'course_skeleton') {
+    return Math.min(4000, 600 + clampInt(input.num_modules, 1, 12, 5) * 160);
+  }
+  if (task === 'module_lessons') {
+    const modules = Array.isArray(input.modules) ? input.modules.length : 4;
+    return Math.min(8000, 400 + modules * 80 + modules * clampInt(input.lessons_per_module, 1, 12, 4) * 160);
+  }
   // full_curriculum is now called in batches of max 4 sections — 10k is sufficient
   if (task === 'full_curriculum') return 10000;
   if (task === 'section_content') return 12000;
@@ -492,13 +563,22 @@ function getMaxTokens(task: string): number {
 
 // ─── Anthropic call ──────────────────────────────────────────────────────────
 
+class AIUpstreamError extends Error {
+  status: number;
+  constructor(status: number, detail: string) {
+    super(`Anthropic API error ${status}: ${detail}`);
+    this.status = status;
+  }
+}
+
 async function callAnthropic(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
   task: string,
-  strict = false
-): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+  strict = false,
+  opts: { maxTokens?: number; timeoutMs?: number } = {}
+): Promise<{ content: string; inputTokens: number; outputTokens: number; stopReason: string }> {
   const strictAddition = strict ? '\n\nCRITICAL: Output ONLY the JSON object. No text before or after. No markdown fences.' : '';
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -510,28 +590,23 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: getMaxTokens(task),
+      max_tokens: opts.maxTokens ?? getMaxTokens(task),
       temperature: getTemperature(task),
       system: systemPrompt + strictAddition,
       messages: [{ role: 'user', content: userPrompt }],
     }),
-    signal: AbortSignal.timeout(
-      task === 'full_curriculum' ? 120000
-        : task === 'section_content' ? 120000
-        : ['section_notes', 'lesson_notes', 'lesson_content'].includes(task) ? 90000
-        : task === 'section_slides' ? 45000
-        : ['presentation_slides', 'generate_exam'].includes(task) ? 45000
-        : 60000
-    ),
+    // The caller passes whatever is left of the request's overall time budget.
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${body.slice(0, 300)}`);
+    throw new AIUpstreamError(response.status, body.slice(0, 300));
   }
 
   const data = await response.json() as {
     content: Array<{ type: string; text: string }>;
+    stop_reason?: string;
     usage: { input_tokens: number; output_tokens: number };
   };
 
@@ -540,6 +615,7 @@ async function callAnthropic(
     content: text,
     inputTokens: data.usage.input_tokens,
     outputTokens: data.usage.output_tokens,
+    stopReason: data.stop_reason ?? '',
   };
 }
 
@@ -575,6 +651,11 @@ function parseJSON(text: string): unknown | null {
 
   return null;
 }
+
+// Total time one request may spend talking to the model (platform limit is 150s).
+const REQUEST_BUDGET_MS = 135_000;
+// Below this, another attempt cannot realistically finish.
+const MIN_ATTEMPT_MS = 20_000;
 
 // ─── Student study tools ─────────────────────────────────────────────────────
 
@@ -654,10 +735,11 @@ async function handleStudentTask(req: Request, admin: any, userId: string, apiKe
 
   const systemPrompt = getSystemPrompt(task);
   const userPrompt = getUserPrompt(task, input);
-  let result = await callAnthropic(apiKey, systemPrompt, userPrompt, task);
+  // Two attempts at most, each capped so the pair fits inside the platform's request limit.
+  let result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, false, { timeoutMs: 70_000 });
   let parsed = parseJSON(result.content) as Record<string, unknown> | null;
-  if (!parsed || !validators[task](parsed)) {
-    result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, true);
+  if ((!parsed || !validators[task](parsed)) && result.stopReason !== 'max_tokens') {
+    result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, true, { timeoutMs: 55_000 });
     parsed = parseJSON(result.content) as Record<string, unknown> | null;
   }
   const ok = !!parsed && validators[task](parsed);
@@ -731,6 +813,7 @@ Deno.serve(async (req: Request) => {
   );
 
   let userId: string | null = null;
+  const startedAt = Date.now();
 
   try {
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -803,6 +886,8 @@ Deno.serve(async (req: Request) => {
         // Map AI task to feature flag key
         const TASK_FEATURE_MAP: Record<string, string> = {
           course_outline: 'ai_course_outline',
+          course_skeleton: 'ai_course_outline',
+          module_lessons: 'ai_course_outline',
           section_content: 'ai_course_outline',
           lesson_content: 'ai_lesson_content',
           lesson_notes: 'ai_lesson_content',
@@ -863,23 +948,77 @@ Deno.serve(async (req: Request) => {
     const systemPrompt = getSystemPrompt(task);
     const userPrompt = getUserPrompt(task, input);
 
-    let result: { content: string; inputTokens: number; outputTokens: number };
-    let parsed: unknown | null;
+    // One overall time budget for the whole request. The platform cuts a request off at
+    // 150s, and the browser waits slightly longer than this budget, so the user always
+    // gets a real answer (or a clear message) instead of a client-side timeout.
+    const maxTokens = getMaxTokens(task, input);
+    let result: { content: string; inputTokens: number; outputTokens: number; stopReason: string } =
+      { content: '', inputTokens: 0, outputTokens: 0, stopReason: '' };
+    let parsed: unknown | null = null;
+    let truncated = false;
+    let lastUpstreamError: unknown = null;
 
-    result = await callAnthropic(apiKey, systemPrompt, userPrompt, task);
-    parsed = parseJSON(result.content);
+    for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
+      const remaining = REQUEST_BUDGET_MS - (Date.now() - startedAt);
+      // Not enough time left for a useful attempt: stop rather than overrun.
+      if (attempt > 0 && remaining < MIN_ATTEMPT_MS) break;
 
-    if (!parsed) {
-      result = await callAnthropic(apiKey, systemPrompt, userPrompt, task, true);
+      const minimal = attempt === 2;
+      const sys = minimal
+        ? 'Return ONLY a valid JSON object. No markdown, no explanation, no text outside the JSON.'
+        : systemPrompt;
+      const usr = minimal ? `${userPrompt}\n\nCRITICAL: Output ONLY the raw JSON object. Nothing else.` : userPrompt;
+
+      try {
+        result = await callAnthropic(apiKey, sys, usr, task, attempt > 0, {
+          maxTokens,
+          timeoutMs: Math.max(remaining - 2000, 5000),
+        });
+        lastUpstreamError = null;
+      } catch (err) {
+        lastUpstreamError = err;
+        // Overloaded / rate limited / server error: brief pause, then retry if time allows.
+        if (err instanceof AIUpstreamError && [429, 500, 502, 503, 529].includes(err.status)) {
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
+        break; // timeout or a non-retryable error
+      }
+
+      // The answer hit the length limit, so the JSON is cut off. Asking again with the
+      // same limit would be cut off again: report it instead of burning time.
+      if (result.stopReason === 'max_tokens') { truncated = true; break; }
       parsed = parseJSON(result.content);
     }
 
-    // 3rd attempt: stripped-down prompt to guarantee clean JSON
-    if (!parsed) {
-      const minimalSystem = 'Return ONLY a valid JSON object. No markdown, no explanation, no text outside the JSON.';
-      const minimalUser = `${userPrompt}\n\nCRITICAL: Output ONLY the raw JSON object. Nothing else.`;
-      result = await callAnthropic(apiKey, minimalSystem, minimalUser, task, true);
-      parsed = parseJSON(result.content);
+    if (!parsed && (truncated || lastUpstreamError)) {
+      const timedOut = lastUpstreamError instanceof Error
+        && (lastUpstreamError.name === 'TimeoutError' || lastUpstreamError.name === 'AbortError');
+      const busy = lastUpstreamError instanceof AIUpstreamError && [429, 500, 502, 503, 529].includes(lastUpstreamError.status);
+      const detail = truncated
+        ? 'Response exceeded the length limit'
+        : (lastUpstreamError instanceof Error ? lastUpstreamError.message : 'unknown error');
+      console.error(`ai-generate ${task} failed:`, detail);
+      await supabaseAdmin.from('ai_usage_logs').insert({
+        user_id: userId,
+        ai_task: task,
+        input_tokens: result.inputTokens,
+        output_tokens: result.outputTokens,
+        cost_estimate_usd: (result.inputTokens / 1_000_000 * 3) + (result.outputTokens / 1_000_000 * 15),
+        success: false,
+        error_message: detail.slice(0, 500),
+      });
+      const userMessage = truncated
+        ? 'That request is too large to generate in one go. Please ask for less at a time (for example fewer lessons or questions) and try again. You were not charged.'
+        : timedOut
+          ? 'The AI took too long to respond. Nothing was charged. Please try again, or ask for a smaller amount at a time.'
+          : busy
+            ? 'The AI service is busy right now. Nothing was charged. Please try again in a minute.'
+            : 'AI generation failed. Nothing was charged. Please try again.';
+      return new Response(JSON.stringify({ error: userMessage }), {
+        status: truncated ? 422 : timedOut ? 504 : busy ? 503 : 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     if (!parsed) {
@@ -924,7 +1063,7 @@ Deno.serve(async (req: Request) => {
 
     // ── Deduct org tokens if user belongs to an org ───────────────────────────
     const TOKEN_COSTS: Record<string, number> = {
-      course_outline: 5, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
+      course_outline: 5, course_skeleton: 2, module_lessons: 1, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
       summarize_lesson: 3, rewrite_content: 5, translate_content: 7, activity_ideas: 4,
       full_curriculum: 20, lesson_notes: 5, presentation_slides: 10,
       section_content: 8, section_notes: 5, section_slides: 10, generate_exam: 10,
@@ -961,7 +1100,8 @@ Deno.serve(async (req: Request) => {
       }).catch(() => {});
     }
 
-    return new Response(JSON.stringify({ error: message }), {
+    // Technical details stay in the logs; users get a plain message.
+    return new Response(JSON.stringify({ error: 'AI generation failed. Nothing was charged. Please try again.' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -174,18 +174,10 @@ const FUNCTIONS_BASE = import.meta.env.DEV
   ? '/functions/v1'
   : `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1`;
 
-// Timeout per task in ms (client-side safety net — edge function has its own)
-const TASK_TIMEOUT: Record<string, number> = {
-  full_curriculum: 130000,
-  section_content: 130000,
-  section_notes: 100000,
-  section_slides: 60000,
-  lesson_notes: 60000,
-  presentation_slides: 60000,
-  lesson_content: 60000,
-  generate_exam: 60000,
-};
-const DEFAULT_TIMEOUT = 60000;
+// The server gives every AI request one overall time budget (135s) and always answers
+// within it, with either a result or a clear message. The browser waits slightly longer
+// than that, so it never gives up while the server is still working.
+const CLIENT_TIMEOUT_MS = 145000;
 
 export async function callAI<T>(task: string, input: object): Promise<T> {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -199,7 +191,7 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
   }
   const token = session?.access_token ?? supabaseAnonKey;
 
-  const timeoutMs = TASK_TIMEOUT[task] ?? DEFAULT_TIMEOUT;
+  const timeoutMs = CLIENT_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -218,7 +210,7 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`AI request timed out after ${Math.round(timeoutMs / 1000)}s. The server is taking too long — please try again.`);
+      throw new Error('The AI is taking longer than usual. Please try again, or ask for a smaller amount at a time.');
     }
     throw new Error('Could not reach the AI service. Please check your internet connection and try again.');
   } finally {
@@ -226,7 +218,9 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
   }
 
   if (!response.ok) {
-    let errMsg = `AI request failed (HTTP ${response.status})`;
+    let errMsg = response.status === 504 || response.status === 546
+      ? 'The AI took too long to respond. Please try again, or ask for a smaller amount at a time.'
+      : 'AI generation failed. Please try again.';
     try {
       const rawText = await response.text();
       console.error(`[callAI] ${task} HTTP ${response.status} body:`, rawText.slice(0, 500));
@@ -251,8 +245,108 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
 
 // ─── Typed helpers ───────────────────────────────────────────────────────────
 
-export const generateCourseOutline = (input: CourseOutlineInput) =>
-  callAI<CourseOutlineOutput>('course_outline', input);
+// A whole outline in one request is fine for small courses. Bigger ones are too long for
+// a single AI answer (it gets cut off or times out), so they are built in two quick steps:
+// the course structure first, then the lessons for a few modules at a time, in parallel.
+const SINGLE_CALL_MAX_LESSONS = 16;
+const MODULES_PER_BATCH = 3;
+const MAX_PARALLEL_REQUESTS = 4;
+
+export interface OutlineProgress {
+  stage: 'structure' | 'lessons';
+  done: number;
+  total: number;
+}
+
+async function withOneRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    return await fn();
+  }
+}
+
+export async function generateCourseOutline(
+  input: CourseOutlineInput,
+  onProgress?: (p: OutlineProgress) => void,
+): Promise<CourseOutlineOutput> {
+  const numModules = Math.min(Math.max(Math.round(input.num_modules) || 5, 1), 12);
+  const lessonsPerModule = Math.min(Math.max(Math.round(input.lessons_per_module) || 4, 1), 12);
+  const safeInput = { ...input, num_modules: numModules, lessons_per_module: lessonsPerModule };
+
+  if (numModules * lessonsPerModule <= SINGLE_CALL_MAX_LESSONS) {
+    onProgress?.({ stage: 'structure', done: 0, total: 1 });
+    return callAI<CourseOutlineOutput>('course_outline', safeInput);
+  }
+
+  onProgress?.({ stage: 'structure', done: 0, total: 1 });
+  const skeleton = await withOneRetry(() => callAI<{ title: string; description: string; modules: Array<{ title: string; description: string }> }>(
+    'course_skeleton',
+    { topic: input.topic, target_audience: input.target_audience, difficulty: input.difficulty, num_modules: numModules },
+  ));
+  const modules = (skeleton.modules || []).slice(0, numModules);
+  if (modules.length === 0) throw new Error('AI generation failed. Please try again.');
+
+  // Fewer modules per request when each module has many lessons
+  const perBatch = lessonsPerModule > 8 ? 1 : lessonsPerModule > 5 ? 2 : MODULES_PER_BATCH;
+  const batches: Array<Array<{ title: string; description: string }>> = [];
+  for (let i = 0; i < modules.length; i += perBatch) batches.push(modules.slice(i, i + perBatch));
+
+  let done = 0;
+  onProgress?.({ stage: 'lessons', done, total: batches.length });
+  const allTitles = modules.map(m => m.title);
+
+  type BatchResult = { modules: Array<{ title: string; lessons: AILessonItem[] }> };
+  const results: BatchResult[] = new Array(batches.length);
+  const runBatch = async (index: number) => {
+    try {
+      results[index] = await withOneRetry(() => callAI<BatchResult>('module_lessons', {
+        course_title: skeleton.title,
+        target_audience: input.target_audience,
+        difficulty: input.difficulty,
+        all_modules: allTitles,
+        modules: batches[index],
+        lessons_per_module: lessonsPerModule,
+      }));
+    } catch {
+      // One part failing twice must not throw away the parts that worked.
+      results[index] = { modules: [] };
+    }
+    done += 1;
+    onProgress?.({ stage: 'lessons', done, total: batches.length });
+  };
+
+  // At most four requests at a time, so a big course does not trip rate limits.
+  let next = 0;
+  const worker = async () => {
+    while (next < batches.length) {
+      const index = next++;
+      await runBatch(index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_REQUESTS, batches.length) }, worker));
+
+  // Stitch lessons back onto the structure, by title first and by position as a fallback
+  const outModules: AIModuleItem[] = [];
+  batches.forEach((batch, bi) => {
+    const returned = results[bi]?.modules || [];
+    batch.forEach((mod, mi) => {
+      const match = returned.find(r => r.title?.trim().toLowerCase() === mod.title.trim().toLowerCase()) ?? returned[mi];
+      const lessons = (match?.lessons || [])
+        .filter(l => l && l.title)
+        .slice(0, lessonsPerModule)
+        .map(l => ({
+          title: String(l.title),
+          description: String(l.description ?? ''),
+          estimated_duration_minutes: Number(l.estimated_duration_minutes) || 60,
+        }));
+      outModules.push({ title: mod.title, description: mod.description ?? '', lessons });
+    });
+  });
+
+  if (outModules.every(m => m.lessons.length === 0)) throw new Error('AI generation failed. Please try again.');
+  return { title: skeleton.title, description: skeleton.description, modules: outModules };
+}
 
 export const generateLessonContent = (input: LessonContentInput) =>
   callAI<LessonContentOutput>('lesson_content', input);
