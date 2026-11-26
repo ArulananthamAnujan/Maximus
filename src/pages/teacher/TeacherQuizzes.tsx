@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import {
   Plus, HelpCircle, Trash2, ChevronDown, ChevronUp, Pencil, X, Check,
   GripVertical, UserPlus, AlertCircle, BookOpen, ChevronRight, Zap,
@@ -277,11 +278,11 @@ export default function TeacherQuizzes() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Pass Mark (%)</label>
-              <input type="number" min="1" max="100" value={form.pass_mark} onChange={e => setForm(f => ({ ...f, pass_mark: parseInt(e.target.value) }))} className="input-field text-sm py-2" required />
+              <NumberInput min={1} max={100} value={form.pass_mark} onChange={n => setForm(f => ({ ...f, pass_mark: n }))} className="input-field text-sm py-2" required />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Max Attempts</label>
-              <input type="number" min="1" value={form.max_attempts} onChange={e => setForm(f => ({ ...f, max_attempts: parseInt(e.target.value) }))} className="input-field text-sm py-2" required />
+              <NumberInput min={1} value={form.max_attempts} onChange={n => setForm(f => ({ ...f, max_attempts: n }))} className="input-field text-sm py-2" required />
             </div>
           </div>
           <div className="flex gap-3 justify-end pt-2">

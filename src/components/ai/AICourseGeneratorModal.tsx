@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import NumberInput from '../ui/NumberInput';
 import { X, Sparkles, ChevronUp, ChevronDown, Trash2, Plus, Loader2, BookOpen, Layers } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
@@ -186,11 +187,11 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Number of Modules <span className="text-xs font-normal text-slate-400">(3-12)</span></label>
-                  <input type="number" min={3} max={12} value={form.num_modules} onChange={e => setForm(f => ({ ...f, num_modules: Number(e.target.value) }))} className="input-field" />
+                  <NumberInput min={3} max={12} value={form.num_modules} onChange={n => setForm(f => ({ ...f, num_modules: n }))} className="input-field" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Lessons per Module <span className="text-xs font-normal text-slate-400">(3-12)</span></label>
-                  <input type="number" min={3} max={12} value={form.lessons_per_module} onChange={e => setForm(f => ({ ...f, lessons_per_module: Number(e.target.value) }))} className="input-field" />
+                  <NumberInput min={3} max={12} value={form.lessons_per_module} onChange={n => setForm(f => ({ ...f, lessons_per_module: n }))} className="input-field" />
                 </div>
               </div>
               <div className="flex items-center gap-2 bg-sky-50 border border-sky-100 rounded-xl px-4 py-3 text-xs text-sky-700">

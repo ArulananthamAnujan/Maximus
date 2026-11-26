@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { safeUrl } from '../../lib/utils';
 import { Plus, Video, Trash2, ExternalLink, Calendar } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -127,7 +128,7 @@ export default function TeacherLiveSessions() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Duration (min)</label>
-                  <input type="number" min="15" value={form.duration_minutes} onChange={e => setForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) }))} className="input-field" required />
+                  <NumberInput min={15} value={form.duration_minutes} onChange={n => setForm(f => ({ ...f, duration_minutes: n }))} className="input-field" required />
                 </div>
               </div>
               <div className="flex gap-3 justify-end pt-2">

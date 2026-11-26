@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { Plus, FileText, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
@@ -168,7 +169,7 @@ export default function TeacherAssignments() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Max Marks</label>
-                  <input type="number" min="1" value={form.max_marks} onChange={e => setForm(f => ({ ...f, max_marks: parseInt(e.target.value) }))} className="input-field" required />
+                  <NumberInput min={1} value={form.max_marks} onChange={n => setForm(f => ({ ...f, max_marks: n }))} className="input-field" required />
                 </div>
               </div>
               <div className="flex gap-3 justify-end pt-2">

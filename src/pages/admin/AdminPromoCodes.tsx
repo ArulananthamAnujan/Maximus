@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { Plus, Trash2, Tag, ToggleLeft, ToggleRight } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { adminNavItems } from './adminNav';
@@ -141,7 +142,7 @@ export default function AdminPromoCodes() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Discount (%)</label>
-                <input type="number" min="1" max="100" value={form.discount_percent} onChange={e => setForm(f => ({ ...f, discount_percent: parseInt(e.target.value) }))} className="input-field" required />
+                <NumberInput min={1} max={100} value={form.discount_percent} onChange={n => setForm(f => ({ ...f, discount_percent: n }))} className="input-field" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Expiry Date (optional)</label>

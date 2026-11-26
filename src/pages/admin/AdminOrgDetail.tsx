@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Coins, Users, BookOpen, ArrowLeft, Plus, Trash2,
@@ -50,7 +51,7 @@ function GrantTokensPanel({ org, onDone }: { org: Organization; onDone: () => vo
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
           <label className="block text-xs font-semibold text-slate-500 mb-1">Token Amount</label>
-          <input type="number" min="1" required value={amount} onChange={e => setAmount(parseInt(e.target.value) || 0)} className="input-field" />
+          <NumberInput min={1} required value={amount} onChange={n => setAmount(n)} className="input-field" />
         </div>
         <div>
           <label className="block text-xs font-semibold text-slate-500 mb-1">Current Balance</label>

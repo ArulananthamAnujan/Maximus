@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, CreditCard as Edit2, ToggleLeft, ToggleRight, Star, X, Save, Check, Sparkles, Zap, Building2, Crown } from 'lucide-react';
 import { toast } from 'sonner';
@@ -85,11 +86,11 @@ function PackageModal({ pkg, onClose }: { pkg: Partial<TokenPackage> | null; onC
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">Token Amount</label>
-                <input type="number" min="1" required value={form.token_amount ?? ''} onChange={e => setForm(f => ({ ...f, token_amount: parseInt(e.target.value) || 0 }))} className="input-field" />
+                <NumberInput min={1} required value={form.token_amount ?? ''} onChange={n => setForm(f => ({ ...f, token_amount: n }))} className="input-field" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">Price (cents)</label>
-                <input type="number" min="1" required value={form.price_cents ?? ''} onChange={e => setForm(f => ({ ...f, price_cents: parseInt(e.target.value) || 0 }))} className="input-field" />
+                <NumberInput min={1} required value={form.price_cents ?? ''} onChange={n => setForm(f => ({ ...f, price_cents: n }))} className="input-field" />
               </div>
             </div>
             <div className="bg-slate-50 rounded-xl px-4 py-3 text-sm flex justify-between">

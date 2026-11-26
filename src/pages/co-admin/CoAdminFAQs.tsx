@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { Plus, Pencil, Trash2, Save, X, GripVertical, HelpCircle, Eye, EyeOff } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { coAdminNavItems } from './coAdminNav';
@@ -184,7 +185,7 @@ function FAQForm({ form, setForm, saving, onSave, onCancel }: {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">Display Order</label>
-          <input type="number" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: parseInt(e.target.value) || 0 }))} className="input-field" min={0} />
+          <NumberInput value={form.sort_order} onChange={n => setForm(f => ({ ...f, sort_order: n }))} className="input-field" min={0} />
         </div>
         <div className="flex items-end pb-0.5">
           <label className="flex items-center gap-3 cursor-pointer">

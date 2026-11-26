@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import NumberInput from '../ui/NumberInput';
 import { X, Sparkles, Trash2, Check, AlertCircle } from 'lucide-react';
 import { useGenerateQuiz } from '../../hooks/useAI';
 import AILoader from '../ui/AILoader';
@@ -162,7 +163,7 @@ export default function AIQuizGeneratorModal({ quizId, courseId, lessons, onClos
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Number of Questions <span className="text-xs font-normal text-slate-400">(3-20)</span></label>
-                  <input type="number" min={3} max={20} value={form.numQuestions} onChange={e => setForm(f => ({ ...f, numQuestions: Number(e.target.value) }))} className="input-field" />
+                  <NumberInput min={3} max={20} value={form.numQuestions} onChange={n => setForm(f => ({ ...f, numQuestions: n }))} className="input-field" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Difficulty</label>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import NumberInput from '../../components/ui/NumberInput';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Building2, Plus, Search, Coins, ToggleLeft, ToggleRight, X, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -200,7 +201,7 @@ function CreateOrgModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1.5">Initial Tokens</label>
-              <input type="number" min="0" value={form.initial_tokens} onChange={e => setForm(f => ({ ...f, initial_tokens: parseInt(e.target.value) || 0 }))} className="input-field" />
+              <NumberInput min={0} value={form.initial_tokens} onChange={n => setForm(f => ({ ...f, initial_tokens: n }))} className="input-field" />
             </div>
           </div>
           <div>
