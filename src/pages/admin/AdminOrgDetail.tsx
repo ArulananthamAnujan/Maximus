@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  Building2, Coins, Users, BookOpen, ArrowLeft, Plus, Trash2,
+import { Coins, Users, BookOpen, ArrowLeft, Plus, Trash2,
   TrendingDown, CheckCircle, Send, AlertTriangle, GraduationCap, Save, Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -23,7 +22,7 @@ const FEATURE_LABELS: { key: keyof OrgFeatureFlags; label: string; desc: string 
   { key: 'student_ai_access',   label: 'Student AI Access',    desc: 'Allow students to use AI tools' },
 ];
 
-interface MemberWithProfile extends OrgMember {
+interface MemberWithProfile extends Omit<OrgMember, 'profile'> {
   profile: { id: string; full_name: string; email: string };
 }
 

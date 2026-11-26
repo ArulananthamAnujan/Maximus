@@ -38,7 +38,7 @@ export default function AdminCertificates() {
     const student = c.student as { full_name?: string; email?: string } | undefined;
     const course = c.course as { title?: string } | undefined;
     const q = search.toLowerCase();
-    return !search || student?.full_name?.toLowerCase().includes(q) || student?.email?.toLowerCase().includes(q) || course?.title?.toLowerCase().includes(q) || c.certificate_id.toLowerCase().includes(q);
+    return !search || student?.full_name?.toLowerCase().includes(q) || student?.email?.toLowerCase().includes(q) || course?.title?.toLowerCase().includes(q) || c.certificate_id?.toLowerCase().includes(q);
   });
 
   return (

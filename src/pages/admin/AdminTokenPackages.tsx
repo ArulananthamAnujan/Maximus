@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Coins, Plus, CreditCard as Edit2, ToggleLeft, ToggleRight, Star, X, Save, Check, Sparkles, Zap, Building2, Crown } from 'lucide-react';
+import { Plus, CreditCard as Edit2, ToggleLeft, ToggleRight, Star, X, Save, Check, Sparkles, Zap, Building2, Crown } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { adminNavItems } from './adminNav';
 import { supabase } from '../../lib/supabase';
-import type { TokenPackage, OrgPlanTier, OrgFeatureFlags, PLAN_FEATURES } from '../../types';
+import type { TokenPackage, OrgPlanTier, OrgFeatureFlags } from '../../types';
 import { PLAN_FEATURES as PLAN_FEATURES_MAP } from '../../types';
 
 const TIER_META: Record<OrgPlanTier, { label: string; icon: typeof Sparkles; color: string; ring: string; badge: string }> = {

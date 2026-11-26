@@ -8,7 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import type { OrgMember } from '../../types';
 
-interface MemberWithProfile extends OrgMember {
+interface MemberWithProfile extends Omit<OrgMember, 'profile'> {
   profile: { id: string; full_name: string; email: string; avatar_url: string | null; is_active: boolean };
 }
 

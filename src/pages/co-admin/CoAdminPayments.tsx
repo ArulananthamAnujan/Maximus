@@ -34,7 +34,7 @@ export default function CoAdminPayments() {
         .from('payments')
         .select('id,status,created_at,stripe_payment_id,promo_code,discount_percent,student:profiles(full_name,email),course:courses(title)')
         .order('created_at', { ascending: false });
-      if (data) setPayments(data as PaymentRow[]);
+      if (data) setPayments(data as unknown as PaymentRow[]);
       setLoading(false);
     };
     fetch();

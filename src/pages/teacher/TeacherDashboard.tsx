@@ -95,14 +95,12 @@ export default function TeacherDashboard() {
             .in('assignments.course_id', courseIds),
         ]).then(([assignRes, subRes, pendRes]) => {
           if (assignRes.data) setAssignments(assignRes.data as Assignment[]);
-          if (subRes.data) setRecentSubmissions(subRes.data as RecentSubmission[]);
+          if (subRes.data) setRecentSubmissions(subRes.data as unknown as RecentSubmission[]);
           setPendingGrades(pendRes.count || 0);
           setLoadingActivity(false);
         });
       });
   }, [profile]);
-
-  const loading = loadingStats && loadingCourses;
 
   const stats = [
     { title: 'My Courses', value: loadingCourses ? null : courses.length, icon: BookOpen, color: 'bg-gold-500', href: '/teacher/courses' },

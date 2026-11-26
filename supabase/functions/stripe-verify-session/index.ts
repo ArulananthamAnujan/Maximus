@@ -8,14 +8,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-async function safeUpsert(supabase: ReturnType<typeof createClient>, table: string, data: Record<string, unknown>, opts: { onConflict: string }) {
-  try {
-    await supabase.from(table).upsert(data, opts);
-  } catch (e) {
-    console.error(`safeUpsert ${table} failed:`, e);
-  }
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -83,32 +75,32 @@ Deno.serve(async (req: Request) => {
 
     const purchaseType = metadata.type || "course";
 
+    // All fulfilment happens in one database transaction that first claims the session id,
+    // so replaying this request (or the webhook arriving as well) can never credit twice.
     if (purchaseType === "ai_plan") {
-      const { plan_id, token_amount } = metadata;
-      const tokens = parseInt(token_amount || "0", 10);
-
-      if (tokens > 0) {
-        try {
-          await supabase.rpc("add_student_tokens", { p_user_id: user.id, p_tokens: tokens });
-        } catch (e) {
-          console.error("Token add error:", e);
-        }
-
-        await safeUpsert(supabase, "payments", {
-          user_id: user.id,
-          amount: amountCents / 100,
-          currency: "AUD",
-          status: "completed",
-          stripe_session_id: stripeSessionId,
-          stripe_payment_id: stripePaymentId || null,
-        }, { onConflict: "stripe_session_id" });
+      const tokens = parseInt(metadata.token_amount || "0", 10);
+      if (!Number.isFinite(tokens) || tokens <= 0) {
+        return new Response(JSON.stringify({ error: "Missing token amount in session metadata" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
-      console.log(`AI plan ${plan_id}: ${tokens} tokens for user ${user.id}`);
-      return new Response(JSON.stringify({ enrolled: true, type: "ai_plan", tokens_added: tokens }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      const { data: fulfilledNow, error: fulfilError } = await supabase.rpc("fulfill_stripe_session", {
+        p_session_id: stripeSessionId,
+        p_user_id: user.id,
+        p_kind: "ai_plan",
+        p_tokens: tokens,
+        p_amount_cents: amountCents,
+        p_payment_intent: stripePaymentId || null,
       });
+      if (fulfilError) throw new Error(`Fulfilment failed: ${fulfilError.message}`);
+
+      console.log(`AI plan ${metadata.plan_id}: ${tokens} tokens for user ${user.id} (new: ${fulfilledNow})`);
+      return new Response(
+        JSON.stringify({ enrolled: true, type: "ai_plan", tokens_added: fulfilledNow ? tokens : 0, already_processed: !fulfilledNow }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // Course purchase
@@ -120,59 +112,19 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Enroll in course_enrollments (idempotent)
-    try {
-      const { error: enrollError } = await supabase.from("course_enrollments").upsert({
-        user_id: user.id,
-        course_id,
-        enrollment_type: "paid",
-        payment_status: "completed",
-        payment_id: stripePaymentId,
-        amount_paid: amountCents / 100,
-        currency: "AUD",
-        enrolled_at: new Date().toISOString(),
-      }, { onConflict: "user_id,course_id" });
-      if (enrollError) console.error("course_enrollments upsert error:", enrollError);
-    } catch (e) {
-      console.error("Enrollment exception:", e);
-    }
+    const { data: fulfilledNow, error: fulfilError } = await supabase.rpc("fulfill_stripe_session", {
+      p_session_id: stripeSessionId,
+      p_user_id: user.id,
+      p_kind: "course",
+      p_course_id: course_id,
+      p_teacher_id: teacher_id || null,
+      p_amount_cents: amountCents,
+      p_payment_intent: stripePaymentId || null,
+    });
+    if (fulfilError) throw new Error(`Fulfilment failed: ${fulfilError.message}`);
 
-    // Legacy enrollments table
-    await safeUpsert(supabase, "enrollments", {
-      student_id: user.id,
-      course_id,
-      progress_percent: 0,
-      enrolled_at: new Date().toISOString(),
-    }, { onConflict: "student_id,course_id" });
-
-    // Teacher earning
-    if (teacher_id && amountCents > 0) {
-      try {
-        await supabase.rpc("record_teacher_earning", {
-          p_teacher_id: teacher_id,
-          p_course_id: course_id,
-          p_student_id: user.id,
-          p_gross_cents: amountCents,
-          p_stripe_payment_intent: stripePaymentId,
-        });
-      } catch (e) {
-        console.error("Teacher earning error:", e);
-      }
-    }
-
-    // Payment record
-    await safeUpsert(supabase, "payments", {
-      user_id: user.id,
-      course_id,
-      amount: amountCents / 100,
-      currency: "AUD",
-      status: "completed",
-      stripe_session_id: stripeSessionId,
-      stripe_payment_id: stripePaymentId || null,
-    }, { onConflict: "stripe_session_id" });
-
-    console.log(`Enrolled user ${user.id} in course ${course_id} via session ${stripeSessionId}`);
-    return new Response(JSON.stringify({ enrolled: true, type: "course", course_id }), {
+    console.log(`Enrolled user ${user.id} in course ${course_id} via session ${stripeSessionId} (new: ${fulfilledNow})`);
+    return new Response(JSON.stringify({ enrolled: true, type: "course", course_id, already_processed: !fulfilledNow }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

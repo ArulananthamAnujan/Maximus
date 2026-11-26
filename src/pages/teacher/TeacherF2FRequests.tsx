@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { safeUrl } from '../../lib/utils';
 import { Video, Clock, CheckCircle2, XCircle, CalendarDays, Link as LinkIcon, MessageSquare, Bell } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
@@ -192,7 +193,7 @@ export default function TeacherF2FRequests() {
                   {req.status === 'approved' && req.meeting_link && (
                     <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 mb-3">
                       <LinkIcon className="w-3.5 h-3.5" />
-                      <a href={req.meeting_link} target="_blank" rel="noopener noreferrer" className="underline truncate">{req.meeting_link}</a>
+                      <a href={safeUrl(req.meeting_link)} target="_blank" rel="noopener noreferrer" className="underline truncate">{req.meeting_link}</a>
                       {req.scheduled_at && <span>· {new Date(req.scheduled_at).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' })}</span>}
                     </div>
                   )}

@@ -90,7 +90,7 @@ export default function FlashcardsManager({ lessonId, courseId, lessonContent, i
       }
 
       const { error } = await supabase.from('flashcards').insert(
-        toUpsert.map((c, idx) => ({
+        toUpsert.map((c) => ({
           lesson_id: lessonId,
           course_id: courseId,
           user_id: profile.id,

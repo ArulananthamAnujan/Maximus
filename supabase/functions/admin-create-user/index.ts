@@ -7,6 +7,19 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+function escapeHtml(value: string): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Roles this function may assign, and the subset a co-admin is allowed to manage.
+const ASSIGNABLE_ROLES = ["student", "teacher", "org_admin", "co_admin", "admin"];
+const CO_ADMIN_MANAGEABLE_ROLES = ["student", "teacher"];
+
 function buildWelcomeEmail(opts: {
   full_name: string;
   email: string;
@@ -175,6 +188,16 @@ Deno.serve(async (req: Request) => {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      // Co-admins may only remove students and teachers, never admins or other co-admins.
+      if (callerProfile.role !== "admin") {
+        const { data: target } = await supabaseAdmin
+          .from("profiles").select("role").eq("id", user_id).maybeSingle();
+        if (!target || !CO_ADMIN_MANAGEABLE_ROLES.includes(target.role)) {
+          return new Response(JSON.stringify({ error: "Forbidden: you cannot delete this account." }), {
+            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
       await supabaseAdmin.from("profiles").delete().eq("id", user_id);
       const { error: authDeleteError } = await supabaseAdmin.auth.admin.deleteUser(user_id);
       if (authDeleteError) {
@@ -189,11 +212,23 @@ Deno.serve(async (req: Request) => {
 
     // ── POST: create user + optional enrolment + welcome email ───────────────
     const body = await req.json();
-    const { email, password, full_name, role, course_ids, temp_password } = body;
+    const { email, password, full_name, role, course_ids } = body;
 
     if (!email || !password || !full_name || !role) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!ASSIGNABLE_ROLES.includes(role)) {
+      return new Response(JSON.stringify({ error: "Invalid role" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    // Co-admins must not be able to mint admins (or other privileged accounts).
+    if (callerProfile.role !== "admin" && !CO_ADMIN_MANAGEABLE_ROLES.includes(role)) {
+      return new Response(JSON.stringify({ error: "Forbidden: you can only create student or teacher accounts." }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -259,13 +294,13 @@ Deno.serve(async (req: Request) => {
           email,
         });
         resetLink = linkData?.properties?.action_link || "";
-      } catch (_) { /* non-fatal */ }
+      } catch { /* non-fatal */ }
 
       const { subject, html } = buildWelcomeEmail({
-        full_name,
-        email,
+        full_name: escapeHtml(full_name),
+        email: escapeHtml(email),
         role,
-        courses: courseTitles,
+        courses: courseTitles.map(escapeHtml),
         loginUrl: siteUrl,
         resetLink,
       });

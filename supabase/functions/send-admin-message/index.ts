@@ -7,6 +7,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+function escapeHtml(value: string): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function buildNotificationEmail(opts: {
   to_name: string;
   from_name: string;
@@ -14,8 +23,11 @@ function buildNotificationEmail(opts: {
   body: string;
   login_url: string;
 }): string {
-  const { to_name, from_name, subject, body, login_url } = opts;
-  const bodyHtml = body.replace(/\n/g, "<br>");
+  const to_name = escapeHtml(opts.to_name);
+  const from_name = escapeHtml(opts.from_name);
+  const subject = escapeHtml(opts.subject);
+  const login_url = escapeHtml(opts.login_url);
+  const bodyHtml = escapeHtml(opts.body).replace(/\n/g, "<br>");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -134,28 +146,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Send email notification via Supabase SMTP (recovery link triggers real email delivery)
+    // Best-effort email notification; the message itself is already saved in-app.
     const siteUrl = Deno.env.get("SITE_URL") || "https://maximusacademy.com.au";
 
     let emailSent = false;
     try {
-      // Generate a password reset link — this triggers Supabase's SMTP to send a real email
-      const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
-        type: "recovery",
-        email: recipient.email,
-        options: {
-          data: {
-            notification_subject: subject.trim(),
-            notification_body: body.trim(),
-            from_name: callerProfile.full_name || "Admin",
-          },
-        },
-      });
-
-      // The recovery link sends Supabase's default email template.
-      // Additionally, we attempt to send our custom HTML email via the Supabase email API
-      const _resetLink = linkData?.properties?.action_link || siteUrl;
-
       const htmlBody = buildNotificationEmail({
         to_name: recipient.full_name || recipient.email,
         from_name: callerProfile.full_name || "Admin",

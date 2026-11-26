@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { safeUrl } from '../../lib/utils';
 import { Link } from 'react-router-dom';
 import {
   BookOpen, Award, TrendingUp, ChevronRight,
@@ -176,7 +177,7 @@ export default function StudentDashboard() {
                 </div>
                 {session.meeting_link && (
                   <a
-                    href={session.meeting_link}
+                    href={safeUrl(session.meeting_link)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm shrink-0"

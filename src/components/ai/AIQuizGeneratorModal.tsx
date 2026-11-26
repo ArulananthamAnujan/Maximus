@@ -96,14 +96,13 @@ export default function AIQuizGeneratorModal({ quizId, courseId, lessons, onClos
 
       const rows = questions.map((q, i) => {
         const opts = q.options && q.options.length > 0 ? q.options : null;
-        const correctIdx = opts ? opts.findIndex(o => o === q.correct_answer) : 0;
         return {
           quiz_id: quizId,
           question: q.question,
           type: q.type,
           options: opts,
-          correct_answer: correctIdx >= 0 ? correctIdx : 0,
-          correct_answer_text: q.correct_answer,
+          // The column stores the answer text itself (not an option index)
+          correct_answer: q.correct_answer ?? '',
           explanation: q.explanation || '',
           points: q.points,
           order_index: startIdx + i,

@@ -59,9 +59,10 @@ export interface Lesson {
   id: string;
   section_id: string;
   title: string;
-  type: 'video' | 'pdf' | 'article' | 'link';
+  type: 'video' | 'pdf' | 'article' | 'link' | 'text';
   content: string;
   url: string;
+  video_url?: string;
   duration_minutes: number;
   order_index: number;
   is_required: boolean;
@@ -142,6 +143,7 @@ export interface Quiz {
   pass_mark: number;
   max_attempts: number;
   is_required: boolean;
+  is_published?: boolean;
   created_at: string;
   questions?: QuizQuestion[];
 }
@@ -250,6 +252,7 @@ export interface ActivityLog {
   action: string;
   entity_type?: string;
   entity_id?: string;
+  resource_type?: string;
   details: string | Record<string, unknown>;
   created_at: string;
   user?: Profile;
@@ -265,6 +268,7 @@ export interface Discussion {
   is_pinned: boolean;
   created_at: string;
   author?: Profile;
+  course?: Pick<Course, 'title'>;
 }
 
 export interface LiveSession {

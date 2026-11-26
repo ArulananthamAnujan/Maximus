@@ -41,7 +41,8 @@ interface CourseGroup {
 
 type ViewState = 'list' | 'taking' | 'results';
 
-const MAX_BASE_ATTEMPTS = 3;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const NO_ENROLLMENTS: never[] = [];
 
 export default function StudentQuizzes() {
   const { profile } = useAuth();
@@ -59,7 +60,12 @@ export default function StudentQuizzes() {
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<string>('');
 
-  const { data: enrollments = [] } = useMyEnrollments();
+  const { data: enrollmentData } = useMyEnrollments();
+  const enrollments = enrollmentData ?? NO_ENROLLMENTS;
+  // Latest answers / in-flight flag, readable from the timer without stale closures
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const submittingRef = useRef(false);
 
   useEffect(() => { if (profile) fetchQuizzes(); }, [profile, enrollments]);
 
@@ -115,7 +121,7 @@ export default function StudentQuizzes() {
     setLoading(false);
   };
 
-  const totalAllowed = (quiz: QuizWithCourse) => MAX_BASE_ATTEMPTS + quiz.extraAttemptsGranted;
+  const totalAllowed = (quiz: QuizWithCourse) => (quiz.max_attempts ?? DEFAULT_MAX_ATTEMPTS) + quiz.extraAttemptsGranted;
   const attemptsLeft = (quiz: QuizWithCourse) => totalAllowed(quiz) - quiz.attempts.length;
 
   const getPassMark = (quiz: QuizWithCourse) =>
@@ -134,8 +140,13 @@ export default function StudentQuizzes() {
       sonnerToast.error('No attempts remaining. Ask your teacher for extra attempts.');
       return;
     }
-    const { data } = await supabase.from('quiz_questions').select('*').eq('quiz_id', quiz.id).order('order_index');
-    setQuestions((data || []) as QuizQuestion[]);
+    // Questions come from a server function that never sends the answer key to the browser.
+    const { data, error: questionsError } = await supabase.rpc('get_quiz_questions', { p_quiz_id: quiz.id });
+    if (questionsError || !data || data.length === 0) {
+      sonnerToast.error('Could not load this quiz. Please try again.');
+      return;
+    }
+    setQuestions(data as QuizQuestion[]);
     setActiveQuiz(quiz);
     setAnswers({});
     startedAtRef.current = new Date().toISOString();
@@ -151,54 +162,56 @@ export default function StudentQuizzes() {
       ?? (activeQuiz as Quiz & { time_limit?: number }).time_limit ?? 0;
     if (!timeLimitMins) return;
     timerRef.current = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) { submitQuiz(); return 0; }
-        return prev - 1;
-      });
+      setTimeLeft(prev => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [view, activeQuiz]);
 
+  // Auto-submit when the clock reaches zero. Separate from the interval so the answers
+  // given so far are submitted (not the empty set captured when the quiz started).
+  useEffect(() => {
+    if (view !== 'taking' || !activeQuiz || timeLeft !== 0) return;
+    const timeLimitMins = (activeQuiz as Quiz & { time_limit?: number; time_limit_minutes?: number }).time_limit_minutes
+      ?? (activeQuiz as Quiz & { time_limit?: number }).time_limit ?? 0;
+    if (timeLimitMins) submitQuiz();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft, view, activeQuiz]);
+
   const submitQuiz = async () => {
-    if (!activeQuiz || !profile || submitting) return;
+    if (!activeQuiz || !profile || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    let score = 0, totalPts = 0;
-    questions.forEach(q => {
-      totalPts += q.points;
-      const correctText = q.correct_answer ?? '';
-      if (q.type !== 'short_answer' && answers[q.id]?.toLowerCase() === correctText.toLowerCase()) {
-        score += q.points;
-      }
-    });
-    const pct = totalPts > 0 ? Math.round((score / totalPts) * 100) : 0;
-    const passMark = getPassMark(activeQuiz);
-    const passed = pct >= passMark;
-    const attemptNumber = activeQuiz.attempts.length + 1;
-
+    // The database grades the attempt, numbers it and enforces the attempt limit;
+    // only the answers are sent.
     const { data, error } = await supabase.from('quiz_attempts').insert({
       student_id: profile.id,
       quiz_id: activeQuiz.id,
       course_id: activeQuiz.course_id,
-      score,
-      total_points: totalPts,
-      percentage: pct,
-      passed,
-      answers,
-      attempt_number: attemptNumber,
-      submitted_at: new Date().toISOString(),
+      answers: answersRef.current,
     }).select().maybeSingle();
 
-    if (error) {
-      sonnerToast.error('Failed to submit quiz. Please try again.');
+    if (error || !data) {
+      sonnerToast.error(
+        error?.message?.includes('No attempts remaining')
+          ? 'No attempts remaining. Ask your teacher for extra attempts.'
+          : 'Failed to submit quiz. Please try again.'
+      );
+      submittingRef.current = false;
       setSubmitting(false);
+      if (error?.message?.includes('No attempts remaining')) { setView('list'); fetchQuizzes(); }
       return;
     }
 
+    const attempt = data as QuizAttemptRow;
+    const passed = !!attempt.passed;
     if (passed) await checkAndIssueCertificate(activeQuiz.course_id);
-    if (data) setLastAttempt(data as QuizAttemptRow);
-    sonnerToast[passed ? 'success' : 'error'](passed ? `You passed with ${pct}%!` : `You scored ${pct}%. Keep trying!`);
+    setLastAttempt(attempt);
+    // Keep the attempt count current so "Try again" respects the limit
+    setActiveQuiz(q => (q ? { ...q, attempts: [...q.attempts, attempt] } : q));
+    sonnerToast[passed ? 'success' : 'error'](passed ? `You passed with ${attempt.percentage}%!` : `You scored ${attempt.percentage}%. Keep trying!`);
+    submittingRef.current = false;
     setSubmitting(false);
     setView('results');
     fetchQuizzes();
@@ -223,8 +236,9 @@ export default function StudentQuizzes() {
     }
     const { data: existing } = await supabase.from('certificates').select('id').eq('student_id', profile.id).eq('course_id', courseId).maybeSingle();
     if (existing) return;
-    await supabase.from('certificates').insert({ student_id: profile.id, course_id: courseId });
-    sonnerToast.success('Certificate earned! Check your certificates page.');
+    // The database re-checks lessons, quizzes and exams before accepting this row.
+    const { error: certError } = await supabase.from('certificates').insert({ student_id: profile.id, course_id: courseId });
+    if (!certError) sonnerToast.success('Certificate earned! Check your certificates page.');
   };
 
   const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -313,8 +327,9 @@ export default function StudentQuizzes() {
 
   // ── Results view ─────────────────────────────────────────────────────────────
   if (view === 'results' && lastAttempt && activeQuiz) {
-    const used = activeQuiz.attempts.length + 1;
-    const left = attemptsLeft(activeQuiz) - 1;
+    // activeQuiz.attempts already includes the attempt just submitted
+    const used = activeQuiz.attempts.length;
+    const left = attemptsLeft(activeQuiz);
     const exhausted = left <= 0;
     return (
       <DashboardLayout navItems={studentNavItems} title="Quiz Results" subtitle={activeQuiz.course?.title}>

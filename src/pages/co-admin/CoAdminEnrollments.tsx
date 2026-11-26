@@ -39,7 +39,7 @@ export default function CoAdminEnrollments() {
       supabase.from('profiles').select('id, full_name, email').eq('role', 'student').order('full_name'),
       supabase.from('courses').select('id, title').eq('is_published', true).order('title'),
     ]);
-    if (enrollRes.data) setEnrollments(enrollRes.data as EnrollmentRow[]);
+    if (enrollRes.data) setEnrollments(enrollRes.data as unknown as EnrollmentRow[]);
     if (studRes.data) setStudents(studRes.data as Profile[]);
     if (coursRes.data) setCourses(coursRes.data as Course[]);
     setLoading(false);

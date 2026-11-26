@@ -18,6 +18,7 @@
     "@types/tus-js-client": "^1.8.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "dompurify": "^3.5.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.344.0",

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, BookOpen, Award, Calendar, Info, ChevronRight, GraduationCap } from 'lucide-react';
+import { Bell, BookOpen, Calendar, Info, ChevronRight, GraduationCap } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PublicHeader from '../../components/layout/PublicHeader';
 import PublicFooter from '../../components/layout/PublicFooter';

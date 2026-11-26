@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { sanitizeHtml, safeUrl } from '../../lib/utils';
 import { useParams, Link } from 'react-router-dom';
 import {
   ChevronLeft, CheckCircle2, Circle, Play, FileText,
@@ -49,6 +50,8 @@ const TYPE_COLORS: Record<string, string> = {
 
 type TabId = 'lesson' | 'materials' | 'activities' | 'ai-tools';
 
+const EMPTY_PROGRESS: never[] = [];
+
 export default function StudentCoursePlayer() {
   const { courseId } = useParams<{ courseId: string }>();
   const { profile } = useAuth();
@@ -73,7 +76,8 @@ export default function StudentCoursePlayer() {
   const [activeTab, setActiveTab] = useState<TabId>('lesson');
 
   const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
-  const { data: courseProgressRows = [] } = useCourseProgress(courseId);
+  const { data: courseProgressData } = useCourseProgress(courseId);
+  const courseProgressRows = courseProgressData ?? EMPTY_PROGRESS;
   const updateProgressMutation = useUpdateLessonProgress();
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -337,8 +341,9 @@ export default function StudentCoursePlayer() {
       if (!examIds.every(id => gradedIds.has(id))) return;
     }
 
-    await supabase.from('certificates').insert({ student_id: profile.id, course_id: cId });
-    sonnerToast.success('Certificate issued! Check your certificates page.', { duration: 5000 });
+    // The database re-checks lessons, quizzes and exams before accepting this row.
+    const { error: certError } = await supabase.from('certificates').insert({ student_id: profile.id, course_id: cId });
+    if (!certError) sonnerToast.success('Certificate issued! Check your certificates page.', { duration: 5000 });
   };
 
   const handleMarkComplete = async () => {
@@ -352,13 +357,15 @@ export default function StudentCoursePlayer() {
     });
     const newCompleted = new Set(completedLessons).add(activeLesson.id);
     setCompletedLessons(newCompleted);
-    const newProgress = allRequired.length > 0 ? Math.round((newCompleted.size / allRequired.length) * 100) : 0;
+    // Only required lessons count toward completion (optional ones must not inflate it past 100%).
+    const requiredDone = allRequired.filter(l => newCompleted.has(l.id)).length;
+    const newProgress = allRequired.length > 0 ? Math.round((requiredDone / allRequired.length) * 100) : 0;
     await Promise.all([
       supabase.from('enrollments').update({ progress_percent: newProgress }).eq('student_id', profile.id).eq('course_id', courseId),
       supabase.from('course_enrollments').update({ progress_percent: newProgress, last_accessed_at: new Date().toISOString() }).eq('user_id', profile.id).eq('course_id', courseId),
     ]);
 
-    if (newProgress === 100) await maybeIssueCertificate(courseId);
+    if (allRequired.length > 0 && requiredDone === allRequired.length) await maybeIssueCertificate(courseId);
 
     toast.success('Lesson marked as complete!');
     setMarking(false);
@@ -372,7 +379,7 @@ export default function StudentCoursePlayer() {
     if (!bypassGate && hasAccess) {
       const targetSectionIndex = sections.findIndex(s => s.lessons.some(l => l.id === lesson.id));
       if (targetSectionIndex > 0 && isSectionLocked(targetSectionIndex)) {
-        const blockingSection = sections.slice(0, targetSectionIndex).findLast(s => !isSectionQuizPassed(s.id));
+        const blockingSection = sections.slice(0, targetSectionIndex).reverse().find(s => !isSectionQuizPassed(s.id));
         if (blockingSection) {
           sonnerToast.error(`Complete the "${blockingSection.title}" quiz first to unlock this section`);
         }
@@ -738,7 +745,7 @@ export default function StudentCoursePlayer() {
                       if (ytMatch) {
                         const thumbnail = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
                         return (
-                          <a href={url} target="_blank" rel="noopener noreferrer"
+                          <a href={safeUrl(url)} target="_blank" rel="noopener noreferrer"
                             className="block rounded-2xl overflow-hidden bg-black relative aspect-video group cursor-pointer shadow-lg">
                             <img src={thumbnail} alt="Video thumbnail" className="w-full h-full object-cover opacity-75 group-hover:opacity-60 transition-opacity duration-300" />
                             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
@@ -752,7 +759,7 @@ export default function StudentCoursePlayer() {
                       }
                       return (
                         <div className="rounded-2xl overflow-hidden bg-black shadow-lg">
-                          <video ref={videoRef} src={url} controls className="w-full aspect-video"
+                          <video ref={videoRef} src={safeUrl(url)} controls className="w-full aspect-video"
                             onTimeUpdate={() => {
                               const video = videoRef.current;
                               if (!video || !hasAccess) return;
@@ -766,8 +773,7 @@ export default function StudentCoursePlayer() {
                                 });
                                 setCompletedLessons(prev => {
                                   const next = new Set([...prev, activeLesson.id]);
-                                  const newProg = allRequired.length > 0 ? Math.round((next.size / allRequired.length) * 100) : 0;
-                                  if (newProg === 100) maybeIssueCertificate(courseId);
+                                  if (allRequired.length > 0 && allRequired.every(l => next.has(l.id))) maybeIssueCertificate(courseId);
                                   return next;
                                 });
                                 sonnerToast.success('Lesson completed!');
@@ -807,7 +813,7 @@ export default function StudentCoursePlayer() {
                             </div>
                             {/* Content */}
                             <div className="lesson-text-content px-8 py-8"
-                              dangerouslySetInnerHTML={{ __html: activeLesson.content }} />
+                              dangerouslySetInnerHTML={{ __html: sanitizeHtml(activeLesson.content) }} />
                           </>
                         ) : (
                           <div className="flex flex-col items-center py-16 px-8 text-center">
@@ -830,7 +836,7 @@ export default function StudentCoursePlayer() {
                             <p className="text-xs text-gray-400 truncate max-w-xs">{activeLesson.url}</p>
                           </div>
                         </div>
-                        <a href={activeLesson.url} target="_blank" rel="noopener noreferrer"
+                        <a href={safeUrl(activeLesson.url)} target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-xl transition-colors w-fit">
                           <ExternalLink className="w-4 h-4" /> Open Resource
                         </a>
@@ -847,12 +853,12 @@ export default function StudentCoursePlayer() {
                               {activeLesson.url.split('/').pop()?.split('?')[0] || 'Document'}
                             </span>
                           </div>
-                          <a href={activeLesson.url} target="_blank" rel="noopener noreferrer"
+                          <a href={safeUrl(activeLesson.url)} target="_blank" rel="noopener noreferrer"
                             className="text-xs font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 flex items-center gap-1">
                             <ExternalLink className="w-3.5 h-3.5" /> Open
                           </a>
                         </div>
-                        <a href={activeLesson.url} target="_blank" rel="noopener noreferrer"
+                        <a href={safeUrl(activeLesson.url)} target="_blank" rel="noopener noreferrer"
                           className="flex flex-col items-center justify-center gap-4 py-14 px-6 hover:bg-orange-50/50 dark:hover:bg-orange-900/10 transition-colors group">
                           <div className="w-20 h-24 bg-orange-50 dark:bg-orange-900/20 border-2 border-orange-200 dark:border-orange-800 rounded-xl flex flex-col items-center justify-center gap-1.5 group-hover:border-orange-400 transition-colors shadow-sm">
                             <FileText className="w-8 h-8 text-orange-500" />

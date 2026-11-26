@@ -9,7 +9,6 @@ import PublicHeader from '../../components/layout/PublicHeader';
 import PublicFooter from '../../components/layout/PublicFooter';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../contexts/ToastContext';
 import { useHasCourseAccess } from '../../hooks/useAccess';
 import { useEnrollInFreeCourse } from '../../hooks/useProgress';
 import { toast as sonnerToast } from 'sonner';
@@ -25,7 +24,6 @@ export default function CoursePreview() {
   const [discount, setDiscount] = useState(0);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const { user, profile } = useAuth();
-  const { toast } = useToast();
   const navigate = useNavigate();
 
   const { hasAccess, reason, isLoading: accessLoading } = useHasCourseAccess(id);

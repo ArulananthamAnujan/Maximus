@@ -75,41 +75,16 @@ Deno.serve(async (req: Request) => {
     const appName = platform_name || "Maximus Academy";
     const appUrl = platform_url || "https://maximusacademy.com.au";
 
-    // Generate a password reset link so the student can set their own password
-    const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
-      type: "recovery",
-      email: student.email,
-    });
-    const resetLink = linkData?.properties?.action_link || "";
-
-    const emailBody = [
-      `Hi ${student.full_name},`,
-      ``,
-      `You have been enrolled in a new course on ${appName}!`,
-      ``,
-      `Course: ${course.title}`,
-      ``,
-      `You can access your course by logging in at:`,
-      `${appUrl}`,
-      ``,
-      `Email: ${student.email}`,
-      ``,
-      resetLink
-        ? `If you need to set or reset your password, use this link:\n${resetLink}\n`
-        : "",
-      `If you have any questions, please contact your administrator.`,
-      ``,
-      `— The ${appName} Team`,
-    ].filter(l => l !== undefined).join("\n");
-
-    // Log the email (Supabase sends actual email via the recovery link)
-    console.log(`Enrollment notification for ${student.email} (${course.title}):\n${emailBody}`);
+    // NOTE: this function does not deliver an email itself. It previously generated a
+    // password-recovery link and wrote it to the function logs, which let anyone with
+    // log access take over the student's account. No recovery link is generated now.
+    console.log(`Enrollment recorded for user ${student_id} in "${course.title}" (${appName}, ${appUrl})`);
 
     return new Response(JSON.stringify({
       success: true,
       student_email: student.email,
       course_title: course.title,
-      reset_link_generated: !!resetLink,
+      reset_link_generated: false,
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -13,10 +13,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { submission_id } = await req.json();
-    if (!submission_id) {
-      return new Response(JSON.stringify({ error: "submission_id required" }), {
-        status: 400,
+    // Require a signed-in caller. This function uses the service role and spends
+    // AI credits, so it must never be callable anonymously.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -25,6 +27,24 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    const { data: { user: caller }, error: authError } = await supabase.auth.getUser(
+      authHeader.replace("Bearer ", "")
+    );
+    if (authError || !caller) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { submission_id } = await req.json();
+    if (!submission_id) {
+      return new Response(JSON.stringify({ error: "submission_id required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Fetch submission
     const { data: submission, error: subErr } = await supabase
@@ -38,6 +58,30 @@ Deno.serve(async (req: Request) => {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Only the student who submitted, the course's teacher, or an admin may trigger grading.
+    if (submission.student_id !== caller.id) {
+      const [{ data: callerProfile }, { data: course }] = await Promise.all([
+        supabase.from("profiles").select("role").eq("id", caller.id).maybeSingle(),
+        supabase.from("courses").select("teacher_id").eq("id", submission.course_id).maybeSingle(),
+      ]);
+      const isAdmin = callerProfile?.role === "admin";
+      const isCourseTeacher = !!course && course.teacher_id === caller.id;
+      if (!isAdmin && !isCourseTeacher) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // Grade once. Re-running would burn AI credits and wipe a teacher's review.
+    if (submission.status !== "submitted") {
+      return new Response(
+        JSON.stringify({ success: true, already_graded: true, ai_scores: submission.ai_scores ?? {} }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const exam = submission.exam;
@@ -139,10 +183,16 @@ ${questions.map((q, i) => `Question ${i + 1}: ${q.id} (max ${q.marks} marks)`).j
       string,
       { score: number; max_score: number; reasoning: string; suggestion: string }
     > = {};
+    // Never trust the model's arithmetic: clamp each score to the question's real marks
+    // and ignore ids that are not part of this exam.
+    const marksById = new Map(questions.map((q) => [q.id, Number(q.marks) || 0]));
     for (const g of gradeResult.grades || []) {
+      if (!marksById.has(g.question_id)) continue;
+      const maxMarks = marksById.get(g.question_id)!;
+      const rawScore = Number(g.score);
       aiScores[g.question_id] = {
-        score: g.score,
-        max_score: g.max_score,
+        score: Number.isFinite(rawScore) ? Math.min(Math.max(rawScore, 0), maxMarks) : 0,
+        max_score: maxMarks,
         reasoning: g.reasoning,
         suggestion: g.suggestion,
       };
@@ -158,7 +208,8 @@ ${questions.map((q, i) => `Question ${i + 1}: ${q.id} (max ${q.marks} marks)`).j
         // Store overall feedback in teacher_scores as a special key
         teacher_scores: { _overall_feedback: gradeResult.overall_feedback || "" },
       })
-      .eq("id", submission_id);
+      .eq("id", submission_id)
+      .eq("status", "submitted");
 
     if (updateErr) throw updateErr;
 

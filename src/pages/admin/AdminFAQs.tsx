@@ -199,11 +199,11 @@ export default function AdminFAQs() {
       </div>
 
       <ConfirmDialog
-        open={!!deleteId}
+        isOpen={!!deleteId}
         title="Delete FAQ"
         message="Are you sure you want to permanently delete this FAQ? This cannot be undone."
-        confirmLabel="Delete"
-        confirmClassName="bg-red-600 hover:bg-red-700 text-white"
+        confirmText="Delete"
+        variant="danger"
         onConfirm={handleDelete}
         onCancel={() => setDeleteId(null)}
       />

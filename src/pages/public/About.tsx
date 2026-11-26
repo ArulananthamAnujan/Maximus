@@ -1,4 +1,4 @@
-import { Users, Award, Globe, TrendingUp, CheckCircle2, Lightbulb, Laptop, Briefcase, BadgeCheck, Headphones as HeadphonesIcon } from 'lucide-react';
+import { Users, Award, TrendingUp, CheckCircle2, Lightbulb, Laptop, Briefcase, BadgeCheck, Headphones as HeadphonesIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PublicHeader from '../../components/layout/PublicHeader';
 import PublicFooter from '../../components/layout/PublicFooter';

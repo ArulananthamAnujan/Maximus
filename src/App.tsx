@@ -68,6 +68,7 @@ const Notifications = lazy(() => import('./pages/public/Notifications'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const Register = lazy(() => import('./pages/auth/Register'));
 const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/auth/ResetPassword'));
 
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
@@ -148,6 +149,22 @@ function roleHome(role: string) {
   return '/student';
 }
 
+function ProfileUnavailable() {
+  const { refreshProfile, signOut } = useAuth();
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 max-w-md w-full text-center">
+        <h2 className="text-xl font-bold text-slate-800 mb-2">We couldn't load your account</h2>
+        <p className="text-sm text-slate-500 mb-6">Please check your connection and try again. If this keeps happening, contact your administrator.</p>
+        <div className="flex items-center justify-center gap-3">
+          <button onClick={() => refreshProfile()} className="px-5 py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-xl hover:bg-teal-700 transition-colors">Try again</button>
+          <button onClick={() => signOut()} className="px-5 py-2.5 border border-slate-300 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50 transition-colors">Sign out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DashboardRedirect() {
   const { profile, loading, user } = useAuth();
   const navigate = useNavigate();
@@ -156,9 +173,9 @@ function DashboardRedirect() {
     if (loading) return;
     if (!user) { navigate('/login', { replace: true }); return; }
     if (profile) navigate(roleHome(profile.role), { replace: true });
-    else navigate('/student', { replace: true });
   }, [profile, loading, user, navigate]);
 
+  if (!loading && user && !profile) return <ProfileUnavailable />;
   return <LoadingScreen />;
 }
 
@@ -173,8 +190,10 @@ function ProtectedRoute({ children, role }: { children: React.ReactNode; role?: 
   const { user, profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
+  // Never render a protected page without knowing who the user is (fail closed).
+  if (!profile) return <ProfileUnavailable />;
   const roles = role ? (Array.isArray(role) ? role : [role]) : null;
-  if (roles && profile && !roles.includes(profile.role)) {
+  if (roles && !roles.includes(profile.role)) {
     return <Navigate to={roleHome(profile.role)} replace />;
   }
   return <>{children}</>;
@@ -207,6 +226,7 @@ export default function App() {
                 <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
                 <Route path="/register" element={<AuthRoute><Register /></AuthRoute>} />
                 <Route path="/forgot-password" element={<ForgotPassword />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
 
                 <Route path="/admin" element={<ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute>} />
                 <Route path="/admin/users" element={<ProtectedRoute role="admin"><AdminUsers /></ProtectedRoute>} />

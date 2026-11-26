@@ -57,7 +57,7 @@ export default function AdminDashboard() {
         publishedCourses,
       });
 
-      if (logsRes.data) setLogs(logsRes.data as ActivityLog[]);
+      if (logsRes.data) setLogs(logsRes.data as unknown as ActivityLog[]);
 
       const dailyRevenue: Record<string, number> = {};
       for (let i = 29; i >= 0; i--) {
@@ -235,7 +235,7 @@ export default function AdminDashboard() {
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${actionColors[action] || 'bg-gray-100 text-gray-600 dark:bg-navy-700 dark:text-gray-400'}`}>
                         {log.action}
                       </span>
-                      <span className="text-xs text-gray-400 hidden sm:block">{(log as Record<string, unknown>).entity_type as string}</span>
+                      <span className="text-xs text-gray-400 hidden sm:block">{log.entity_type}</span>
                     </div>
                   </div>
                 );

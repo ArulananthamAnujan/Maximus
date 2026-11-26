@@ -16,6 +16,7 @@ interface CourseWithEnrollment extends Course {
   enrolled?: boolean;
   progress?: number;
   paymentStatus?: string;
+  org_id?: string | null;
 }
 
 export default function StudentCourses() {
@@ -118,7 +119,7 @@ export default function StudentCourses() {
           paymentStatus: ne?.paymentStatus,
         };
       });
-      setCourses(enriched as CourseWithEnrollment[]);
+      setCourses(enriched as unknown as CourseWithEnrollment[]);
       setLoading(false);
     };
     fetchData();

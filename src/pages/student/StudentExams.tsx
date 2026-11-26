@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   BookOpen, Clock, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Send, Star, Eye, GraduationCap, ChevronRight, FileText,
@@ -68,6 +68,9 @@ export default function StudentExams() {
   const [activeSubmission, setActiveSubmission] = useState<Submission | null>(null);
   const [answers, setAnswers]             = useState<Record<string, string>>({});
   const [submitting, setSubmitting]       = useState(false);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const submittingRef = useRef(false);
   const [timeLeft, setTimeLeft]           = useState<number | null>(null);
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
@@ -76,7 +79,7 @@ export default function StudentExams() {
     if (!profile) return;
     setLoading(true);
 
-    const { data: enrollments } = await supabase.from('course_enrollments').select('course_id').eq('user_id', profile.id);
+    const { data: enrollments } = await supabase.from('course_enrollments').select('course_id').eq('user_id', profile.id).in('payment_status', ['not_required', 'completed']);
     const { data: legacyEnrollments } = await supabase.from('enrollments').select('course_id').eq('student_id', profile.id);
 
     const courseIds = [...new Set([
@@ -129,13 +132,18 @@ export default function StudentExams() {
     if (view !== 'taking' || !activeExam?.time_limit_minutes) return;
     setTimeLeft(activeExam.time_limit_minutes * 60);
     const interval = setInterval(() => {
-      setTimeLeft(t => {
-        if (t === null || t <= 1) { clearInterval(interval); handleSubmit(); return 0; }
-        return t - 1;
-      });
+      setTimeLeft(t => (t === null || t <= 1 ? 0 : t - 1));
     }, 1000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, activeExam?.id]);
+
+  // Auto-submit when time runs out. Kept separate from the interval so it always
+  // submits the answers typed so far, not the empty set captured when the exam began.
+  useEffect(() => {
+    if (view === 'taking' && timeLeft === 0 && activeExam?.time_limit_minutes) handleSubmit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft, view]);
 
   const startExam = (exam: Exam) => {
     setActiveExam(exam);
@@ -151,14 +159,15 @@ export default function StudentExams() {
   };
 
   const handleSubmit = async () => {
-    if (!activeExam || !profile || submitting) return;
+    if (!activeExam || !profile || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const { data: sub, error } = await supabase.from('exam_submissions').insert({
         exam_id: activeExam.id,
         student_id: profile.id,
         course_id: activeExam.course_id,
-        answers,
+        answers: answersRef.current,
         status: 'submitted',
       }).select().single();
 
@@ -177,6 +186,7 @@ export default function StudentExams() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to submit');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

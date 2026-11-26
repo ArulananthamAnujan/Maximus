@@ -8,14 +8,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, stripe-signature",
 };
 
-async function safeUpsert(supabase: ReturnType<typeof createClient>, table: string, data: Record<string, unknown>, opts: { onConflict: string }) {
-  try {
-    await supabase.from(table).upsert(data, opts);
-  } catch (e) {
-    console.error(`safeUpsert ${table} failed:`, e);
-  }
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -70,6 +62,13 @@ Deno.serve(async (req: Request) => {
     }
 
     const session = event.data.object as Stripe.Checkout.Session;
+    // "completed" can fire before funds are captured for delayed payment methods.
+    if (session.payment_status !== "paid") {
+      return new Response(JSON.stringify({ received: true, pending: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const metadata = session.metadata || {};
     const amountCents = session.amount_total || 0;
     const stripeSessionId = session.id;
@@ -82,10 +81,13 @@ Deno.serve(async (req: Request) => {
 
     const purchaseType = metadata.type || "course";
 
+    // Fulfilment is one atomic, idempotent database call (shared with stripe-verify-session).
+    // If it fails we return 500 so Stripe retries the webhook.
     // --- AI Plan Purchase ---
     if (purchaseType === "ai_plan") {
       const { student_id, plan_id, token_amount } = metadata;
-      if (!student_id || !token_amount) {
+      const tokens = parseInt(token_amount || "0", 10);
+      if (!student_id || !Number.isFinite(tokens) || tokens <= 0) {
         console.error("Missing metadata for AI plan purchase");
         return new Response(JSON.stringify({ received: true, warning: "Missing metadata" }), {
           status: 200,
@@ -93,25 +95,19 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      const tokens = parseInt(token_amount, 10);
-      try {
-        await supabase.rpc("add_student_tokens", { p_user_id: student_id, p_tokens: tokens });
-      } catch (e) {
-        console.error("Token add error:", e);
-      }
+      const { data: fulfilledNow, error } = await supabase.rpc("fulfill_stripe_session", {
+        p_session_id: stripeSessionId,
+        p_user_id: student_id,
+        p_kind: "ai_plan",
+        p_tokens: tokens,
+        p_amount_cents: amountCents,
+        p_payment_intent: stripePaymentId || null,
+      });
+      if (error) throw new Error(`Fulfilment failed: ${error.message}`);
 
-      await safeUpsert(supabase, "payments", {
-        user_id: student_id,
-        amount: amountCents / 100,
-        currency: "AUD",
-        status: "completed",
-        stripe_session_id: stripeSessionId,
-        stripe_payment_id: stripePaymentId || null,
-      }, { onConflict: "stripe_session_id" });
-
-      console.log(`Added ${tokens} AI tokens to student ${student_id} (plan ${plan_id})`);
+      console.log(`AI plan ${plan_id}: ${tokens} tokens for student ${student_id} (new: ${fulfilledNow})`);
       return new Response(
-        JSON.stringify({ received: true, type: "ai_plan", tokens_added: tokens }),
+        JSON.stringify({ received: true, type: "ai_plan", tokens_added: fulfilledNow ? tokens : 0 }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -126,58 +122,18 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // 1. Enroll in course_enrollments
-    try {
-      const { error } = await supabase.from("course_enrollments").upsert({
-        user_id: student_id,
-        course_id,
-        enrollment_type: "paid",
-        payment_status: "completed",
-        payment_id: stripePaymentId,
-        amount_paid: amountCents / 100,
-        currency: "AUD",
-        enrolled_at: new Date().toISOString(),
-      }, { onConflict: "user_id,course_id" });
-      if (error) console.error("Enrollment error:", error);
-    } catch (e) {
-      console.error("Enrollment exception:", e);
-    }
+    const { data: fulfilledNow, error } = await supabase.rpc("fulfill_stripe_session", {
+      p_session_id: stripeSessionId,
+      p_user_id: student_id,
+      p_kind: "course",
+      p_course_id: course_id,
+      p_teacher_id: teacher_id || null,
+      p_amount_cents: amountCents,
+      p_payment_intent: stripePaymentId || null,
+    });
+    if (error) throw new Error(`Fulfilment failed: ${error.message}`);
 
-    // 2. Legacy enrollments table
-    await safeUpsert(supabase, "enrollments", {
-      student_id,
-      course_id,
-      progress_percent: 0,
-      enrolled_at: new Date().toISOString(),
-    }, { onConflict: "student_id,course_id" });
-
-    // 3. Teacher earning
-    if (teacher_id && amountCents > 0) {
-      try {
-        await supabase.rpc("record_teacher_earning", {
-          p_teacher_id: teacher_id,
-          p_course_id: course_id,
-          p_student_id: student_id,
-          p_gross_cents: amountCents,
-          p_stripe_payment_intent: stripePaymentId,
-        });
-      } catch (e) {
-        console.error("Teacher earning error:", e);
-      }
-    }
-
-    // 4. Payment record
-    await safeUpsert(supabase, "payments", {
-      user_id: student_id,
-      course_id,
-      amount: amountCents / 100,
-      currency: "AUD",
-      status: "completed",
-      stripe_session_id: stripeSessionId,
-      stripe_payment_id: stripePaymentId || null,
-    }, { onConflict: "stripe_session_id" });
-
-    console.log(`Enrolled student ${student_id} in course ${course_id}`);
+    console.log(`Enrolled student ${student_id} in course ${course_id} (new: ${fulfilledNow})`);
     return new Response(
       JSON.stringify({ received: true, type: "course", enrolled: true }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -8,7 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import type { Course } from '../../types';
 
-interface CourseWithTeacher extends Course {
+interface CourseWithTeacher extends Omit<Course, 'teacher'> {
   teacher: { full_name: string; email: string } | null;
 }
 

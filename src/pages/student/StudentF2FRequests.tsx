@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { safeUrl } from '../../lib/utils';
 import { Video, Clock, CheckCircle2, XCircle, CalendarDays, MessageSquare, Plus, X, ExternalLink } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
@@ -159,7 +160,7 @@ export default function StudentF2FRequests() {
                 </div>
                 {req.meeting_link && (
                   <a
-                    href={req.meeting_link}
+                    href={safeUrl(req.meeting_link)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm shrink-0"
@@ -307,7 +308,7 @@ export default function StudentF2FRequests() {
                       )}
                       {req.meeting_link && (
                         <a
-                          href={req.meeting_link}
+                          href={safeUrl(req.meeting_link)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"

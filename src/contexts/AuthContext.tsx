@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Profile, OrgMember } from '../types';
@@ -10,7 +10,7 @@ interface AuthContextType {
   orgMembership: OrgMember | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string, role?: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null; needsEmailConfirmation?: boolean }>;
   signOut: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInWithMicrosoft: () => Promise<void>;
@@ -20,7 +20,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null, profile: null, session: null, orgMembership: null, loading: true,
   signIn: async () => ({ error: null }),
-  signUp: async (_e, _p, _f, _r) => ({ error: null }),
+  signUp: async () => ({ error: null }),
   signOut: async () => {},
   signInWithGoogle: async () => {},
   signInWithMicrosoft: async () => {},
@@ -33,6 +33,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [orgMembership, setOrgMembership] = useState<OrgMember | null>(null);
   const [loading, setLoading] = useState(true);
+  // Id of the user whose profile is currently loaded (avoids refetching on token refresh / tab focus)
+  const loadedUserIdRef = useRef<string | null>(null);
 
   const fetchProfile = async (userId: string) => {
     try {
@@ -42,6 +44,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq('id', userId)
         .maybeSingle();
       if (data && !error) {
+        // Deactivated accounts are signed straight back out.
+        if (data.is_active === false) {
+          loadedUserIdRef.current = null;
+          setProfile(null);
+          setOrgMembership(null);
+          await supabase.auth.signOut();
+          return;
+        }
+        loadedUserIdRef.current = userId;
         setProfile(data as Profile);
         // fetch org membership for org_admin / teacher roles
         if (data.role === 'org_admin' || data.role === 'teacher') {
@@ -68,16 +79,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        (async () => {
-          await fetchProfile(session.user.id);
+        // supabase-js re-emits SIGNED_IN on every tab focus and token refresh. Only load the
+        // profile when the signed-in user actually changed, otherwise pages reset themselves.
+        if (loadedUserIdRef.current === session.user.id) return;
+        const userId = session.user.id;
+        setLoading(true);
+        // Defer: calling supabase from inside this callback can deadlock the auth client.
+        setTimeout(async () => {
+          await fetchProfile(userId);
           setLoading(false);
-        })();
+        }, 0);
       } else {
+        loadedUserIdRef.current = null;
         setProfile(null);
+        setOrgMembership(null);
         setLoading(false);
       }
     });
@@ -90,16 +109,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error as Error | null };
   };
 
-  const signUp = async (email: string, password: string, fullName: string, role = 'student') => {
-    const { error } = await supabase.auth.signUp({
+  const signUp = async (email: string, password: string, fullName: string) => {
+    // Self-registration always creates a student. Staff accounts are created by an admin.
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName, role } },
+      options: { data: { full_name: fullName } },
     });
-    return { error: error as Error | null };
+    // With email confirmation switched on, Supabase returns a user but no session.
+    return { error: error as Error | null, needsEmailConfirmation: !error && !data.session };
   };
 
   const signOut = async () => {
+    loadedUserIdRef.current = null;
     setProfile(null);
     setUser(null);
     setSession(null);

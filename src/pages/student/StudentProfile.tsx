@@ -17,7 +17,6 @@ export default function StudentProfile() {
   const [notifDeadlines, setNotifDeadlines] = useState(profile?.notification_deadlines ?? true);
   const [notifGrades, setNotifGrades] = useState(profile?.notification_grades ?? true);
 
-  const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -57,7 +56,7 @@ export default function StudentProfile() {
       toast.error('Failed to update password. Please try again.');
     } else {
       toast.success('Password updated successfully!');
-      setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      setNewPw(''); setConfirmPw('');
     }
     setSavingPassword(false);
   };

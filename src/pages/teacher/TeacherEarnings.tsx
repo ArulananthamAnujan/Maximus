@@ -74,7 +74,7 @@ export default function TeacherEarnings() {
   });
   const [payoutAmount, setPayoutAmount] = useState('');
   const [submittingPayout, setSubmittingPayout] = useState(false);
-  const [purchasingPlan, setPurchasingPlan] = useState<string | null>(null);
+  const [purchasingPlan] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -95,7 +95,7 @@ export default function TeacherEarnings() {
       ]);
 
       if (summaryRes.data) setSummary(summaryRes.data as EarningsSummary);
-      if (earningsRes.data) setEarnings(earningsRes.data as EarningsRow[]);
+      if (earningsRes.data) setEarnings(earningsRes.data as unknown as EarningsRow[]);
       if (payoutsRes.data) setPayouts(payoutsRes.data as PayoutRow[]);
       if (plansRes.data) setAiPlans(plansRes.data.map(p => ({ ...p, features: Array.isArray(p.features) ? p.features : JSON.parse(p.features as unknown as string) })));
       if (creditsRes.data) setAiCredits(creditsRes.data);
@@ -139,18 +139,11 @@ export default function TeacherEarnings() {
     setSubmittingPayout(false);
   };
 
-  const handlePurchaseAI = async (plan: TeacherAIPlan) => {
-    if (!profile) return;
-    setPurchasingPlan(plan.id);
-    const { error } = await supabase.rpc('add_teacher_tokens', { p_user_id: profile.id, p_tokens: plan.token_amount });
-    if (error) {
-      toast.error('Purchase failed. Please try again.');
-    } else {
-      toast.success(`${plan.token_amount} AI tokens added to your account!`);
-      const { data } = await supabase.from('teacher_ai_credits').select('*').eq('user_id', profile.id).maybeSingle();
-      if (data) setAiCredits(data);
-    }
-    setPurchasingPlan(null);
+  const handlePurchaseAI = async (_plan: TeacherAIPlan) => {
+    // This button used to add tokens for free with no payment. Token balances can now
+    // only be changed by the server after a verified payment, and teacher plans are not
+    // yet wired to Stripe checkout.
+    toast.error('Online purchase of teacher AI plans is not available yet. Please contact the administrator.');
   };
 
   const statusBadge = (s: string) => {

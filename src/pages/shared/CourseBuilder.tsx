@@ -707,14 +707,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           if (!quizErr && quizData) {
             const questionRows = sec.quiz.questions.map((q, qi) => {
               const opts: string[] = q.options?.length ? q.options : ['True', 'False'];
-              const correctIdx = opts.findIndex(o => o === q.correct_answer);
               return {
                 quiz_id: quizData.id,
                 question: q.question,
                 type: q.type,
                 options: opts,
-                correct_answer: correctIdx >= 0 ? correctIdx : 0,
-                correct_answer_text: q.correct_answer,
+                correct_answer: q.correct_answer ?? '',
                 explanation: q.explanation || '',
                 points: q.points || 1,
                 order_index: qi,
@@ -803,9 +801,10 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
           if (notesResult.status === 'fulfilled' && notesResult.value?.lessons?.length) {
             for (const lessonNote of notesResult.value.lessons) {
-              const matchedLesson = sectionLessons.find(l =>
+              // Match against the inserted rows (which carry database ids), not the AI outline
+              const matchedLesson = lessons.find(l =>
                 l.title.toLowerCase().trim() === lessonNote.lesson_title?.toLowerCase().trim()
-              ) || sectionLessons[notesResult.value.lessons.indexOf(lessonNote)];
+              ) || lessons[notesResult.value.lessons.indexOf(lessonNote)];
               if (matchedLesson && lessonNote.notes_html) {
                 lessonUpdates.push({ id: matchedLesson.id, content: lessonNote.notes_html });
                 docRows.push({ lesson_id: matchedLesson.id, course_id: courseId, type: 'notes', title: `${matchedLesson.title} — Notes`, content_html: lessonNote.notes_html, order_index: 0 });
@@ -913,7 +912,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             content_html: html,
             order_index: 0,
           });
-          supabase.from('lessons').update({ content: html }).eq('id', lesson.id).then(() => {}).catch(() => {});
+          supabase.from('lessons').update({ content: html }).eq('id', lesson.id).then(() => {}, () => {});
           notesGenerated++;
         }
       }
@@ -1099,7 +1098,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       title: lesson.title,
       type: uiType,
       content: lesson.content || '',
-      url: (lesson as Lesson & { url?: string }).url || lesson.video_url || '',
+      url: lesson.url || lesson.video_url || '',
       duration_minutes: lesson.duration_minutes || 10,
       is_preview: lesson.is_preview || false,
       is_required: (lesson as Lesson & { is_required?: boolean }).is_required !== false,
@@ -1167,14 +1166,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     if (!addingQuestionTo) return;
     const quiz = quizzes.find(q => q.id === addingQuestionTo);
     const filteredOptions = questionForm.type === 'short_answer' ? [] : questionForm.options.filter(o => o.trim());
-    const correctIdx = filteredOptions.findIndex(o => o === questionForm.correct_answer);
     const { error } = await supabase.from('quiz_questions').insert({
       quiz_id: addingQuestionTo,
       question: questionForm.question,
       type: questionForm.type,
       options: filteredOptions.length > 0 ? filteredOptions : null,
-      correct_answer: correctIdx >= 0 ? correctIdx : 0,
-      correct_answer_text: questionForm.correct_answer,
+      correct_answer: questionForm.correct_answer,
       points: questionForm.points,
       order_index: quiz?.questions?.length || 0,
     });
@@ -1910,7 +1907,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     section={section}
                     sIdx={sIdx}
                     expanded={expandedSections.has(section.id)}
-                    onToggle={() => setExpandedSections(prev => { const n = new Set(prev); n.has(section.id) ? n.delete(section.id) : n.add(section.id); return n; })}
+                    onToggle={() => setExpandedSections(prev => { const n = new Set(prev); if (n.has(section.id)) n.delete(section.id); else n.add(section.id); return n; })}
                     onRename={() => { setEditingSectionId(section.id); setEditingSectionTitle(section.title); }}
                     onDelete={() => setDeleteTarget({ type: 'section', id: section.id, name: section.title })}
                     onAddLesson={() => { setAddingLessonTo(section.id); setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true }); }}

@@ -16,6 +16,7 @@ export default function VerifyCertificate() {
   const verifyCert = async (certId: string) => {
     setLoading(true);
     setNotFound(false);
+    setCertificate(null);
     const { data } = await supabase
       .from('certificates')
       .select('*, student:profiles(full_name), course:courses(title)')

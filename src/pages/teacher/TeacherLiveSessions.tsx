@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { safeUrl } from '../../lib/utils';
 import { Plus, Video, Trash2, ExternalLink, Calendar } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
@@ -167,7 +168,7 @@ function SessionCard({ session, onDelete }: { session: LiveSession; onDelete: (s
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {session.meeting_link && (
-          <a href={session.meeting_link} target="_blank" rel="noreferrer" className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+          <a href={safeUrl(session.meeting_link)} target="_blank" rel="noreferrer" className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
             <ExternalLink className="w-4 h-4" />
           </a>
         )}

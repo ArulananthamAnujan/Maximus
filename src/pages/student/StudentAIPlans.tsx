@@ -112,7 +112,7 @@ export default function StudentAIPlans() {
         );
         const data = await res.json();
         if (data.enrolled) {
-          toast.success(`Payment successful! ${data.tokens_added ?? ''} tokens added to your account.`);
+          toast.success(data.tokens_added ? `Payment successful! ${data.tokens_added} tokens added to your account.` : 'Payment successful! Your tokens are in your account.');
           const { data: updated } = await supabase.from('student_ai_credits').select('*').eq('user_id', profile?.id ?? '').maybeSingle();
           if (updated) setCredits(updated);
         } else {

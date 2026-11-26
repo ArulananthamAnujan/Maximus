@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronUp, BookOpen, Clock, Star, CheckCircle2, AlertCircle, CreditCard as Edit2, Eye, Check, X, Users, Sparkles, FileText, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, CheckCircle2, AlertCircle, CreditCard as Edit2, Eye, Check, X, Users, Sparkles, FileText, ChevronRight } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { teacherNavItems } from './teacherNav';
 import { supabase } from '../../lib/supabase';
@@ -242,7 +242,7 @@ export default function TeacherExams() {
   // ─── Review panel ──────────────────────────────────────────────────────────
   if (panel === 'review' && activeExam && reviewSub) {
     return (
-      <DashboardLayout navItems={teacherNavItems} role="teacher">
+      <DashboardLayout navItems={teacherNavItems} title="Exams">
         <div className="max-w-3xl mx-auto px-4 py-6">
           <button onClick={() => setPanel('list')} className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-4 transition-colors">
             ← Back to Exams
@@ -383,7 +383,7 @@ export default function TeacherExams() {
   // ─── Create panel ──────────────────────────────────────────────────────────
   if (panel === 'create') {
     return (
-      <DashboardLayout navItems={teacherNavItems} role="teacher">
+      <DashboardLayout navItems={teacherNavItems} title="Exams">
         <div className="max-w-3xl mx-auto px-4 py-6">
           <div className="flex items-center gap-3 mb-6">
             <button onClick={() => setPanel('list')} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors">

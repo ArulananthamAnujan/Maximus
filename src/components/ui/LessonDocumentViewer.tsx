@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { sanitizeHtml } from '../../lib/utils';
 import {
   FileText, ChevronLeft, ChevronRight, Download, BookOpen, X,
   Maximize2, Minimize2, Loader2, Grid3x3 as Grid3X3, LayoutList,
@@ -44,7 +45,7 @@ interface TextBlock {
 function parseHtmlToBlocks(html: string): TextBlock[] {
   const blocks: TextBlock[] = [];
   const div = document.createElement('div');
-  div.innerHTML = html;
+  div.innerHTML = sanitizeHtml(html);
   function processNode(node: Element) {
     const tag = node.tagName?.toLowerCase();
     const text = node.textContent?.trim() || '';
@@ -213,9 +214,9 @@ async function generatePptx(title: string, slides: ParsedSlide[]) {
 function parseSlidesFromHtml(html: string): ParsedSlide[] {
   if (!html?.trim()) return [{ heading: 'No slides available', bodyHtml: '<p>Try regenerating notes &amp; slides.</p>', speakerNotes: '', slideType: 'content' }];
   const div = document.createElement('div');
-  div.innerHTML = html;
+  div.innerHTML = sanitizeHtml(html);
   const slideEls = div.querySelectorAll('.slide');
-  if (slideEls.length === 0) return [{ heading: '', bodyHtml: html, speakerNotes: '', slideType: 'content' }];
+  if (slideEls.length === 0) return [{ heading: '', bodyHtml: div.innerHTML, speakerNotes: '', slideType: 'content' }];
   return Array.from(slideEls).map((el, idx) => {
     const notesEl = el.querySelector('.speaker-notes');
     const notes = notesEl?.textContent?.trim().replace(/^Speaker notes:?/i, '').trim() || '';
@@ -499,7 +500,7 @@ function NotesViewer({ doc }: { doc: LessonDocument }) {
         <div className={`${showNotepad ? 'lg:col-span-3' : ''}`}>
           {hasContent ? (
             <div className="notes-rich-content p-6 lg:p-8">
-              <div dangerouslySetInnerHTML={{ __html: doc.content_html }} />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(doc.content_html) }} />
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-20 px-8 text-center">

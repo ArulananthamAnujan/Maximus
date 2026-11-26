@@ -30,8 +30,8 @@ export function useHasCourseAccess(courseId: string | undefined): AccessResult {
   const { user, profile } = useAuth();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['course-access', courseId, user?.id],
-    enabled: !!courseId && !!user,
+    queryKey: ['course-access', courseId, user?.id, profile?.role],
+    enabled: !!courseId && !!user && !!profile,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       if (!courseId || !user) return null;

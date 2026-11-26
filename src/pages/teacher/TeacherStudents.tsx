@@ -45,7 +45,6 @@ export default function TeacherStudents() {
 
   const filtered = enrollments.filter(e => {
     const student = e.student as { full_name?: string; email?: string } | undefined;
-    const course = e.course as { title?: string } | undefined;
     const q = search.toLowerCase();
     const matchSearch = !search || student?.full_name?.toLowerCase().includes(q) || student?.email?.toLowerCase().includes(q);
     const matchCourse = courseFilter === 'all' || e.course_id === courseFilter;

@@ -11,7 +11,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import type { OrgStudent } from '../../types';
 
-interface StudentWithProfile extends OrgStudent {
+interface StudentWithProfile extends Omit<OrgStudent, 'profile'> {
   profile: {
     id: string;
     full_name: string;

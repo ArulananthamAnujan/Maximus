@@ -38,10 +38,13 @@ export default function Register() {
       setError('Password must be at least 8 characters.'); return;
     }
     setLoading(true);
-    const { error } = await signUp(formData.email, formData.password, formData.fullName, 'student');
+    const { error, needsEmailConfirmation } = await signUp(formData.email, formData.password, formData.fullName);
     if (error) {
       setError(error.message || 'Registration failed. Please try again.');
       setLoading(false);
+    } else if (needsEmailConfirmation) {
+      toast.success('Account created! Check your email to confirm your address, then sign in.');
+      navigate('/login');
     } else {
       toast.success('Account created! Welcome to Maximus Academy.');
       navigate('/student');
