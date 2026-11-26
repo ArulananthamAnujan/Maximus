@@ -27,7 +27,7 @@ Set these in Supabase Dashboard → Edge Functions → Secrets.
 | --- | --- |
 | `SITE_URL` | Links in emails and Stripe return pages, e.g. `https://yourdomain.com` |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Course, student-token and teacher-token payments |
-| `ANTHROPIC_API_KEY` | AI course tools, student study tools, exam marking |
+| `ANTHROPIC_API_KEY` | AI course tools, the course planner, student study tools, exam marking. The course planner also searches the web for current job-market information; this needs web search switched on for your organisation in the Anthropic Console (Settings → Privacy), and is billed per search. If it is off, the planner still works from general knowledge and says so. |
 | `HEYGEN_API_KEY` | AI presenter lecture videos ("AI lecture" button on each module). Create a pay-as-you-go API key at [heygen.com](https://www.heygen.com/api); videos are billed by HeyGen per minute. Optional `LECTURE_VIDEO_TOKENS_PER_PART` sets how many organisation tokens each video part costs (default 60). |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Welcome, enrolment and admin-message emails ([resend.com](https://resend.com)); `EMAIL_FROM` must be a sender on a domain verified in Resend. Without these, no email is sent. |
 

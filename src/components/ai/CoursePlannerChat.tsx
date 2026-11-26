@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Loader2, Target, Users, Clock, Hammer } from 'lucide-react';
+import { Send, Sparkles, Loader2, Target, Users, Clock, Hammer, Globe } from 'lucide-react';
 import { plannerChat } from '../../lib/ai';
-import type { CourseBrief, PlannerMessage } from '../../lib/ai';
+import type { CourseBrief, PlannerMessage, WebSource } from '../../lib/ai';
+import { safeUrl } from '../../lib/utils';
 
 interface Props {
   messages: PlannerMessage[];
@@ -28,6 +29,9 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>(messages.length <= 1 ? OPENING_SUGGESTIONS : []);
+  // What the planner has learned from the web so far; sent back each turn so it is not repeated
+  const [research, setResearch] = useState<{ notes: string; sources: WebSource[] }>({ notes: '', sources: [] });
+  const [elapsed, setElapsed] = useState(0);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -45,7 +49,11 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
     setError('');
     setSending(true);
     try {
-      const result = await plannerChat(next);
+      const result = await plannerChat(next, research);
+      setResearch(prev => ({
+        notes: result.research_notes?.trim() ? result.research_notes : prev.notes,
+        sources: result.sources ?? prev.sources,
+      }));
       onMessagesChange([...next, { role: 'planner', content: result.reply }]);
       setSuggestions(result.ready ? [] : (result.suggestions ?? []).filter(Boolean).slice(0, 4));
       if (result.ready && result.brief) onBriefChange(result.brief);
@@ -57,6 +65,14 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
       inputRef.current?.focus();
     }
   };
+
+  // A reply that involves a web search takes noticeably longer; say so instead of a bare spinner
+  useEffect(() => {
+    if (!sending) { setElapsed(0); return; }
+    const started = Date.now();
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [sending]);
 
   const lastIsTeacher = messages[messages.length - 1]?.role === 'teacher';
 
@@ -76,7 +92,8 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
         {sending && (
           <div className="flex justify-start">
             <div className="bg-slate-100 text-slate-500 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Thinking…
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {elapsed < 8 ? 'Thinking…' : 'Checking current job ads and skills online. This can take up to a minute…'}
             </div>
           </div>
         )}
@@ -110,6 +127,29 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
             )}
             {brief.target_roles?.length > 0 && (
               <p className="text-sm text-slate-700"><span className="font-semibold">Prepares for:</span> {brief.target_roles.join(', ')}</p>
+            )}
+            {(brief.market_findings?.length ?? 0) > 0 && (
+              <div className="bg-white/70 border border-sky-100 rounded-xl p-3">
+                <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mb-1.5"><Globe className="w-3.5 h-3.5 text-sky-600" /> What employers are asking for</p>
+                <ul className="text-sm text-slate-700 space-y-1 list-disc pl-5">
+                  {brief.market_findings!.slice(0, 8).map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+                {research.sources.length > 0 && (
+                  <p className="text-xs text-slate-500 mt-2">
+                    Sources:{' '}
+                    {research.sources.slice(0, 6).map((src, i) => (
+                      <span key={src.url}>
+                        {i > 0 && ' · '}
+                        <a href={safeUrl(src.url) || undefined} target="_blank" rel="noopener noreferrer" className="text-sky-700 hover:underline">{src.title.length > 48 ? `${src.title.slice(0, 48)}…` : src.title}</a>
+                      </span>
+                    ))}
+                  </p>
+                )}
+                <p className="text-[11px] text-slate-400 mt-1.5">Found by an online search at the time of planning. Check the sources before relying on them.</p>
+              </div>
+            )}
+            {(brief.market_findings?.length ?? 0) === 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">This plan is based on the AI's general knowledge; no current job-market sources were found. Consider checking a few real job ads.</p>
             )}
             <div className="flex items-center gap-3 pt-1">
               <button onClick={() => onCreate(brief)} className="btn-primary text-sm py-2.5 px-5 flex items-center gap-2">

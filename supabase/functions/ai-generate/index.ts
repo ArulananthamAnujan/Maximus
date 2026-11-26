@@ -149,7 +149,16 @@ Standards:
 - estimated_duration_minutes: 45-90 minutes per lesson (university lecture/seminar pacing)`,
 
     course_planner_chat: `You are an experienced curriculum consultant. A teacher is planning a new course with you in a conversation. Your job is to understand who the course is for and what result the learners need, recommend the best way to teach it, and then hand over a clear course brief. ${jsonRule}
-Output shape: {"reply": string, "suggestions": string[], "ready": boolean, "brief": null | {"title_idea": string, "topic": string, "audience": string, "starting_level": string, "outcome": string, "target_roles": string[], "market": string, "duration_weeks": number, "hours_per_week": number, "approach": string, "must_include": string[], "projects": string[], "assessment": string, "tone": string, "difficulty": "beginner"|"intermediate"|"advanced", "num_modules": number, "lessons_per_module": number, "lesson_minutes": number}}
+Output shape: {"reply": string, "suggestions": string[], "ready": boolean, "research_notes": string, "brief": null | {"market_findings": string[], "title_idea": string, "topic": string, "audience": string, "starting_level": string, "outcome": string, "target_roles": string[], "market": string, "duration_weeks": number, "hours_per_week": number, "approach": string, "must_include": string[], "projects": string[], "assessment": string, "tone": string, "difficulty": "beginner"|"intermediate"|"advanced", "num_modules": number, "lessons_per_module": number, "lesson_minutes": number}}
+
+You can search the web. Use it to ground the plan in evidence, not for small talk:
+- As soon as you know the skill or target job AND where the learners will look for work, search for what employers there currently ask for: recent job ads for that role, the tools and skills they list, entry-level requirements, and typical pay or demand. Two or three focused searches are enough.
+- Do this once. If "Research already done" is given below, rely on it and do not search again unless the teacher changes the target job or the location.
+- Do not search before you know the target and the location; ask for them first.
+- Write what you learned into "research_notes": six to ten short factual lines (skills and tools employers ask for most, common entry requirements, anything that should shape the course). Only include what the search results support. If the results were thin or you could not search, say so plainly in research_notes and in your reply, and mark any advice that is your general knowledge as such.
+- Tell the teacher briefly what you found and how it changes your recommendation.
+
+Pinning down specifics is your job, not the teacher's. Before you finish you must know, or have openly assumed: the exact skill or job role the course leads to, the country or city where learners will look for work, their starting level, and the time they have. If the teacher answers vaguely ("students", "get a job"), offer two to four concrete options to pick from rather than accepting the vague answer.
 
 How to run the conversation:
 - Work out, over the conversation: (1) who the learners are: background, current level, situation; (2) the result they need: a specific job role, freelance work, an exam, a promotion; (3) time available: total weeks and hours per week; (4) the market: country or industry, and what employers there actually ask for; (5) how learners will prove the skill: projects, a portfolio, a capstone, a certificate; (6) limits: tools, budget, language, prerequisites.
@@ -158,6 +167,8 @@ How to run the conversation:
 - "suggestions": two to four short answers the teacher could tap in reply to your question (a few words each). Use an empty array when ready is true.
 - Set "ready" to true once you know enough to design a good course (usually after three to five teacher messages), or as soon as the teacher asks you to go ahead. Do not keep asking for the sake of it.
 - When ready is true: "reply" is a short plain summary of the plan: who it is for, what they will be able to do at the end, how long it runs, the teaching approach and why, and the projects. End by saying they can create the curriculum now or ask for changes. Fill in every field of "brief"; make reasonable choices for anything not discussed.
+- "brief.market_findings": the four to eight research findings that most shaped the course (skills, tools, requirements employers ask for). Empty array if no research was possible.
+- "research_notes": always return it. Repeat the earlier notes unchanged when you did not search this turn; empty string if no research has been done yet.
 - When ready is false, "brief" is null.
 - If the teacher asks for changes after a brief was given, apply them and return the updated brief with ready true.
 - Brief sizing: num_modules 3 to 12 and lessons_per_module 3 to 12, sized to the time available (a short job-skills course is usually 4 to 6 modules of 3 to 5 lessons); lesson_minutes 15 to 90.
@@ -375,6 +386,7 @@ function briefBlock(brief: unknown): string {
     ['Time available', b.duration_weeks ? `${b.duration_weeks} weeks, about ${b.hours_per_week ?? '?'} hours a week` : ''],
     ['Teaching approach', b.approach], ['Must include', list(b.must_include)],
     ['Projects / portfolio pieces', list(b.projects)], ['Assessment', b.assessment], ['Tone', b.tone],
+    ['What employers ask for (from current job-market research)', list(b.market_findings)],
     ['Typical lesson length (minutes)', b.lesson_minutes],
   ].filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
   if (lines.length === 0) return '';
@@ -404,7 +416,11 @@ ${brief ? brief : 'Ensure the course meets tertiary education standards with cle
         .slice(-30)
         .map(m => `${m.role === 'planner' ? 'You (consultant)' : 'Teacher'}: ${String(m.content ?? '').slice(0, 3000)}`)
         .join('\n\n');
-      return `Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
+      const notes = String(input.research_notes ?? '').trim().slice(0, 4000);
+      const research = notes
+        ? `Research already done (from your earlier web searches):\n${notes}\n\n`
+        : 'No web research has been done yet.\n\n';
+      return `${research}Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
     }
 
     case 'course_skeleton':
@@ -591,7 +607,7 @@ function getMaxTokens(task: string, input: Record<string, unknown> = {}): number
     const lessons = clampInt(input.lessons_per_module, 1, 12, 4);
     return Math.min(16000, 800 + modules * 150 + modules * lessons * 160);
   }
-  if (task === 'course_planner_chat') return 1800;
+  if (task === 'course_planner_chat') return 3500;
   if (task === 'course_skeleton') {
     return Math.min(4000, 600 + clampInt(input.num_modules, 1, 12, 5) * 160);
   }
@@ -625,52 +641,135 @@ class AIUpstreamError extends Error {
   }
 }
 
+interface WebSource { title: string; url: string }
+
+type AnthropicBlock = {
+  type: string;
+  text?: string;
+  citations?: Array<{ url?: string; title?: string }>;
+  content?: unknown;
+};
+
+/** Pulls the pages the model actually opened or cited out of a response. */
+function collectSources(blocks: AnthropicBlock[]): WebSource[] {
+  const found = new Map<string, string>();
+  const add = (url: unknown, title: unknown) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || found.has(url)) return;
+    found.set(url, typeof title === 'string' && title.trim() ? title.trim() : url);
+  };
+  for (const block of blocks) {
+    // Citations attached to the answer are the strongest signal: list them first.
+    if (block.type === 'text') for (const c of block.citations ?? []) add(c.url, c.title);
+  }
+  for (const block of blocks) {
+    if (block.type === 'web_search_tool_result' && Array.isArray(block.content)) {
+      for (const r of block.content as Array<{ type?: string; url?: string; title?: string }>) {
+        if (r?.type === 'web_search_result') add(r.url, r.title);
+      }
+    }
+  }
+  return Array.from(found, ([url, title]) => ({ url, title })).slice(0, 8);
+}
+
 async function callAnthropic(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
   task: string,
   strict = false,
-  opts: { maxTokens?: number; timeoutMs?: number } = {}
-): Promise<{ content: string; inputTokens: number; outputTokens: number; stopReason: string }> {
+  opts: { maxTokens?: number; timeoutMs?: number; webSearchUses?: number } = {}
+): Promise<{ content: string; inputTokens: number; outputTokens: number; stopReason: string; sources: WebSource[]; searches: number }> {
   const strictAddition = strict ? '\n\nCRITICAL: Output ONLY the JSON object. No text before or after. No markdown fences.' : '';
+  const deadline = Date.now() + (opts.timeoutMs ?? 120000);
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: opts.maxTokens ?? getMaxTokens(task),
-      temperature: getTemperature(task),
-      system: systemPrompt + strictAddition,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
-    // The caller passes whatever is left of the request's overall time budget.
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 120000),
-  });
+  // Web search is a tool that Anthropic runs on its side. Newest version first; if the
+  // account or model does not accept it, fall back to the basic version, then to none.
+  const toolVariants: Array<Array<Record<string, unknown>> | null> = opts.webSearchUses
+    ? [
+        [{ type: 'web_search_20260209', name: 'web_search', max_uses: opts.webSearchUses }],
+        [{ type: 'web_search_20250305', name: 'web_search', max_uses: opts.webSearchUses }],
+        null,
+      ]
+    : [null];
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new AIUpstreamError(response.status, body.slice(0, 300));
+  let lastError: unknown = null;
+  for (const tools of toolVariants) {
+    const messages: Array<{ role: string; content: unknown }> = [{ role: 'user', content: userPrompt }];
+    const allBlocks: AnthropicBlock[] = [];
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let searches = 0;
+    let stopReason = '';
+
+    try {
+      // A long search can come back as "pause_turn": send the partial answer straight
+      // back (no extra message) and the server carries on. Bounded so it cannot loop.
+      for (let round = 0; round < 3; round++) {
+        const remaining = deadline - Date.now();
+        if (remaining < 3000) {
+          const timeout = new Error('time budget used up');
+          timeout.name = 'TimeoutError';
+          throw timeout;
+        }
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-6',
+            max_tokens: opts.maxTokens ?? getMaxTokens(task),
+            temperature: getTemperature(task),
+            system: systemPrompt + strictAddition,
+            messages,
+            ...(tools ? { tools } : {}),
+          }),
+          // The caller passes whatever is left of the request's overall time budget.
+          signal: AbortSignal.timeout(remaining),
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          throw new AIUpstreamError(response.status, body.slice(0, 300));
+        }
+
+        const data = await response.json() as {
+          content: AnthropicBlock[];
+          stop_reason?: string;
+          usage: { input_tokens: number; output_tokens: number; server_tool_use?: { web_search_requests?: number } };
+        };
+        allBlocks.push(...data.content);
+        inputTokens += data.usage.input_tokens;
+        outputTokens += data.usage.output_tokens;
+        searches += data.usage.server_tool_use?.web_search_requests ?? 0;
+        stopReason = data.stop_reason ?? '';
+        if (stopReason !== 'pause_turn') break;
+        messages.push({ role: 'assistant', content: data.content });
+      }
+    } catch (err) {
+      lastError = err;
+      // Only a rejected request (400) is worth retrying with a simpler tool setup.
+      if (tools && err instanceof AIUpstreamError && err.status === 400) {
+        console.warn('web search tool rejected, falling back:', err.message.slice(0, 200));
+        continue;
+      }
+      throw err;
+    }
+
+    // The answer is the text after the last tool activity; anything before that is the
+    // model talking to itself while it searches.
+    let lastNonText = -1;
+    allBlocks.forEach((blk, i) => { if (blk.type !== 'text') lastNonText = i; });
+    const answer = allBlocks.slice(lastNonText + 1).filter(blk => blk.type === 'text').map(blk => blk.text ?? '').join('');
+    const text = answer.trim()
+      ? answer
+      : allBlocks.filter(blk => blk.type === 'text').map(blk => blk.text ?? '').join('');
+
+    return { content: text, inputTokens, outputTokens, stopReason, sources: collectSources(allBlocks), searches };
   }
-
-  const data = await response.json() as {
-    content: Array<{ type: string; text: string }>;
-    stop_reason?: string;
-    usage: { input_tokens: number; output_tokens: number };
-  };
-
-  const text = data.content.find(c => c.type === 'text')?.text || '';
-  return {
-    content: text,
-    inputTokens: data.usage.input_tokens,
-    outputTokens: data.usage.output_tokens,
-    stopReason: data.stop_reason ?? '',
-  };
+  throw lastError ?? new Error('AI request failed');
 }
 
 function parseJSON(text: string): unknown | null {
@@ -705,6 +804,9 @@ function parseJSON(text: string): unknown | null {
 
   return null;
 }
+
+// How many web searches the course planner may run in one reply.
+const PLANNER_MAX_SEARCHES = 3;
 
 // Total time one request may spend talking to the model (platform limit is 150s).
 const REQUEST_BUDGET_MS = 135_000;
@@ -1007,8 +1109,13 @@ Deno.serve(async (req: Request) => {
     // 150s, and the browser waits slightly longer than this budget, so the user always
     // gets a real answer (or a clear message) instead of a client-side timeout.
     const maxTokens = getMaxTokens(task, input);
-    let result: { content: string; inputTokens: number; outputTokens: number; stopReason: string } =
-      { content: '', inputTokens: 0, outputTokens: 0, stopReason: '' };
+    let result: Awaited<ReturnType<typeof callAnthropic>> =
+      { content: '', inputTokens: 0, outputTokens: 0, stopReason: '', sources: [], searches: 0 };
+    // The course planner may look things up online (job ads, skills in demand). Only on
+    // the first attempt: a retry is about getting clean JSON back, not about searching again.
+    const wantsSearch = task === 'course_planner_chat';
+    let sources: WebSource[] = [];
+    let searches = 0;
     let parsed: unknown | null = null;
     let truncated = false;
     let lastUpstreamError: unknown = null;
@@ -1028,8 +1135,11 @@ Deno.serve(async (req: Request) => {
         result = await callAnthropic(apiKey, sys, usr, task, attempt > 0, {
           maxTokens,
           timeoutMs: Math.max(remaining - 2000, 5000),
+          webSearchUses: wantsSearch && attempt === 0 ? PLANNER_MAX_SEARCHES : undefined,
         });
         lastUpstreamError = null;
+        if (result.sources.length) sources = result.sources;
+        searches += result.searches;
       } catch (err) {
         lastUpstreamError = err;
         // Overloaded / rate limited / server error: brief pause, then retry if time allows.
@@ -1106,7 +1216,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const costUsd = (result.inputTokens / 1_000_000 * 3) + (result.outputTokens / 1_000_000 * 15);
+    // Web searches are billed per search on top of tokens (estimate: about one US cent each).
+    const costUsd = (result.inputTokens / 1_000_000 * 3) + (result.outputTokens / 1_000_000 * 15) + searches * 0.01;
     const { data: logRow } = await supabaseAdmin.from('ai_usage_logs').insert({
       user_id: userId,
       ai_task: task,
@@ -1124,7 +1235,8 @@ Deno.serve(async (req: Request) => {
       section_content: 8, section_notes: 5, section_slides: 10, generate_exam: 10,
     };
     if (orgId) {
-      const tokensToDeduct = TOKEN_COSTS[task] ?? 5;
+      // A planner reply that searched the web costs a little more than a plain one.
+      const tokensToDeduct = (TOKEN_COSTS[task] ?? 5) + (searches > 0 ? 2 : 0);
       await supabaseAdmin.rpc('deduct_org_tokens', {
         p_org_id: orgId,
         p_user_id: userId,
@@ -1132,6 +1244,21 @@ Deno.serve(async (req: Request) => {
         p_tokens: tokensToDeduct,
         p_ai_log_id: logRow?.id ?? null,
       });
+    }
+
+    if (wantsSearch && parsed && typeof parsed === 'object') {
+      // Sources come from what the model really opened, never from text it wrote, so a
+      // link shown to the teacher is always a page that was actually found. Earlier
+      // turns' sources are carried along by the browser.
+      const earlier = Array.isArray(input.sources) ? (input.sources as WebSource[]) : [];
+      const merged = new Map<string, WebSource>();
+      for (const src of [...earlier, ...sources]) {
+        if (src && typeof src.url === 'string' && /^https?:\/\//i.test(src.url) && !merged.has(src.url)) {
+          merged.set(src.url, { url: src.url, title: String(src.title || src.url).slice(0, 200) });
+        }
+      }
+      (parsed as Record<string, unknown>).sources = Array.from(merged.values()).slice(0, 10);
+      (parsed as Record<string, unknown>).searched = searches > 0;
     }
 
     return new Response(JSON.stringify(parsed), {

@@ -12,7 +12,14 @@ export interface CourseOutlineInput {
   brief?: CourseBrief;
 }
 
+export interface WebSource {
+  title: string;
+  url: string;
+}
+
 export interface CourseBrief {
+  /** What employers currently ask for, from the planner's web research. */
+  market_findings?: string[];
   title_idea: string;
   topic: string;
   audience: string;
@@ -43,6 +50,12 @@ export interface PlannerReply {
   suggestions?: string[];
   ready: boolean;
   brief: CourseBrief | null;
+  /** The planner's running summary of its web research; send it back on the next turn. */
+  research_notes?: string;
+  /** Pages the planner actually found, accumulated over the conversation. */
+  sources?: WebSource[];
+  /** True when this reply involved a web search. */
+  searched?: boolean;
 }
 
 export interface LessonContentInput {
@@ -302,8 +315,8 @@ async function withOneRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** One turn of the course-planning conversation. Send the whole conversation each time. */
-export const plannerChat = (messages: PlannerMessage[]) =>
-  callAI<PlannerReply>('course_planner_chat', { messages });
+export const plannerChat = (messages: PlannerMessage[], research: { notes: string; sources: WebSource[] }) =>
+  callAI<PlannerReply>('course_planner_chat', { messages, research_notes: research.notes, sources: research.sources });
 
 export async function generateCourseOutline(
   input: CourseOutlineInput,
