@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Video, Loader2, CheckCircle2, AlertTriangle, RefreshCw, Play, UserRound } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import { X, Video, Loader2, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
+import { callLectureApi, MAX_LECTURE_PART_CHARS as MAX_PART_CHARS, lectureMinutes as minutesFor } from '../../lib/lectureApi';
+import type { LecturePart as Part } from '../../lib/lectureApi';
+import LecturePresenterPicker from './LecturePresenterPicker';
 
 interface Props {
   sectionId: string;
@@ -10,42 +12,7 @@ interface Props {
   onLessonAdded: () => void;
 }
 
-interface Part {
-  id: string;
-  part_index: number;
-  part_count: number;
-  title: string;
-  script: string;
-  status: 'draft' | 'rendering' | 'saving' | 'ready' | 'failed';
-  error_message: string | null;
-  duration_seconds: number | null;
-}
-
-interface AvatarOption { id: string; name: string; gender: string | null; preview_image_url: string | null; default_voice_id: string | null }
-interface VoiceOption { id: string; name: string; gender: string | null; language: string | null; locale: string | null; preview_audio_url: string | null }
-
-const MAX_PART_CHARS = 4800;
 const POLL_MS = 15000;
-// Spoken English runs at roughly 900 characters a minute.
-const minutesFor = (chars: number) => Math.max(1, Math.round(chars / 900));
-
-async function callLectureApi<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('Please sign in again.');
-  let res: Response;
-  try {
-    res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/lecture-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ action, ...payload }),
-    });
-  } catch {
-    throw new Error('Could not reach the server. Please check your connection and try again.');
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Something went wrong. Please try again.');
-  return data as T;
-}
 
 export default function LectureVideoModal({ sectionId, sectionTitle, onClose, onLessonAdded }: Props) {
   const [parts, setParts] = useState<Part[]>([]);
@@ -53,13 +20,9 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   const [busy, setBusy] = useState<'' | 'draft' | 'save' | 'render' | 'discard'>('');
   const [error, setError] = useState('');
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const [avatars, setAvatars] = useState<AvatarOption[]>([]);
-  const [voices, setVoices] = useState<VoiceOption[]>([]);
-  const [optionsError, setOptionsError] = useState('');
   const [avatarId, setAvatarId] = useState('');
   const [voiceId, setVoiceId] = useState('');
   const readyCountRef = useRef(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Kept in a ref so the status timer below is not restarted every time the parent re-renders
   const onLessonAddedRef = useRef(onLessonAdded);
@@ -95,24 +58,6 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
     return () => clearInterval(id);
   }, [inProgress, sectionId, applyParts]);
 
-  // Presenters and voices are only needed once there is a script to approve
-  useEffect(() => {
-    if (!hasDrafts || avatars.length > 0 || optionsError) return;
-    let active = true;
-    callLectureApi<{ avatars: AvatarOption[]; voices: VoiceOption[] }>('options')
-      .then(r => {
-        if (!active) return;
-        setAvatars(r.avatars);
-        setVoices(r.voices);
-        if (r.avatars[0]) {
-          setAvatarId(r.avatars[0].id);
-          setVoiceId(r.avatars[0].default_voice_id || r.voices[0]?.id || '');
-        }
-      })
-      .catch(e => { if (active) setOptionsError(e instanceof Error ? e.message : 'Could not load presenters.'); });
-    return () => { active = false; };
-  }, [hasDrafts, avatars.length, optionsError]);
-
   const run = async (kind: typeof busy, fn: () => Promise<{ parts: Part[] }>) => {
     setBusy(kind);
     setError('');
@@ -139,21 +84,7 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
     return callLectureApi<{ parts: Part[] }>('render', { section_id: sectionId, avatar_id: avatarId, voice_id: voiceId });
   });
 
-  const selectAvatar = (a: AvatarOption) => {
-    setAvatarId(a.id);
-    if (a.default_voice_id) setVoiceId(a.default_voice_id);
-  };
-
-  const playVoice = (url: string | null) => {
-    if (!url) return;
-    audioRef.current?.pause();
-    audioRef.current = new Audio(url);
-    audioRef.current.play().catch(() => {});
-  };
-  useEffect(() => () => { audioRef.current?.pause(); }, []);
-
   const totalMinutes = drafts.reduce((sum, p) => sum + minutesFor(scriptOf(p).length), 0);
-  const selectedVoice = voices.find(v => v.id === voiceId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -261,60 +192,12 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
                     );
                   })}
 
-                  {/* Presenter */}
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700 mb-2">Presenter</p>
-                    {optionsError ? (
-                      <div className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
-                        <span>{optionsError}</span>
-                        <button onClick={() => setOptionsError('')} className="flex items-center gap-1 text-xs font-semibold shrink-0 hover:underline"><RefreshCw className="w-3 h-3" /> Retry</button>
-                      </div>
-                    ) : avatars.length === 0 ? (
-                      <p className="text-sm text-slate-400 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading presenters…</p>
-                    ) : (
-                      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-56 overflow-y-auto pr-1">
-                        {avatars.map(a => (
-                          <button
-                            key={a.id}
-                            type="button"
-                            onClick={() => selectAvatar(a)}
-                            aria-pressed={avatarId === a.id}
-                            className={`rounded-xl border-2 overflow-hidden text-left transition-colors ${avatarId === a.id ? 'border-sky-500 ring-2 ring-sky-200' : 'border-slate-200 hover:border-slate-300'}`}
-                          >
-                            <div className="aspect-square bg-slate-100">
-                              {a.preview_image_url
-                                ? <img src={a.preview_image_url} alt="" loading="lazy" className="w-full h-full object-cover" />
-                                : <div className="w-full h-full flex items-center justify-center"><UserRound className="w-6 h-6 text-slate-300" /></div>}
-                            </div>
-                            <p className="text-[11px] font-medium text-slate-700 px-1.5 py-1 truncate">{a.name}</p>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Voice */}
-                  {voices.length > 0 && (
-                    <div>
-                      <label htmlFor="lecture-voice" className="block text-sm font-semibold text-slate-700 mb-1.5">Voice</label>
-                      <div className="flex items-center gap-2">
-                        <select id="lecture-voice" value={voiceId} onChange={e => setVoiceId(e.target.value)} className="input-field text-sm flex-1">
-                          {!voices.some(v => v.id === voiceId) && voiceId && <option value={voiceId}>Presenter's own voice</option>}
-                          {voices.map(v => (
-                            <option key={v.id} value={v.id}>{v.name}{v.gender ? ` · ${v.gender}` : ''}{v.locale ? ` · ${v.locale}` : ''}</option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => playVoice(selectedVoice?.preview_audio_url ?? null)}
-                          disabled={!selectedVoice?.preview_audio_url}
-                          className="flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40 shrink-0"
-                        >
-                          <Play className="w-3.5 h-3.5" /> Listen
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {/* Presenter and voice */}
+                  <LecturePresenterPicker
+                    avatarId={avatarId}
+                    voiceId={voiceId}
+                    onChange={v => { setAvatarId(v.avatarId); setVoiceId(v.voiceId); }}
+                  />
                 </>
               )}
             </>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send, Sparkles, Loader2, Target, Users, Clock, Hammer, Globe } from 'lucide-react';
 import { plannerChat } from '../../lib/ai';
-import type { CourseBrief, PlannerMessage, WebSource } from '../../lib/ai';
+import type { CourseBrief, PlannerMessage, PlannerCourseContext, WebSource } from '../../lib/ai';
 import { safeUrl } from '../../lib/utils';
 
 interface Props {
@@ -11,6 +11,15 @@ interface Props {
   onBriefChange: (brief: CourseBrief | null) => void;
   /** Build the curriculum from the agreed brief. */
   onCreate: (brief: CourseBrief) => void;
+  /** When planning more weeks for an existing course: its outline and saved plan. */
+  context?: PlannerCourseContext | null;
+  /** Research from an earlier planning conversation, so it is not repeated. */
+  initialResearch?: { notes: string; sources: WebSource[] };
+  onResearchChange?: (research: { notes: string; sources: WebSource[] }) => void;
+  /** Label for the create button on the plan card. */
+  createLabel?: string;
+  /** Tap-to-send answers shown before the first reply. */
+  openingSuggestions?: string[];
 }
 
 export const PLANNER_GREETING: PlannerMessage = {
@@ -24,13 +33,20 @@ const OPENING_SUGGESTIONS = [
   'Upskilling for people already working',
 ];
 
-export default function CoursePlannerChat({ messages, onMessagesChange, brief, onBriefChange, onCreate }: Props) {
+export default function CoursePlannerChat({
+  messages, onMessagesChange, brief, onBriefChange, onCreate,
+  context, initialResearch, onResearchChange, createLabel, openingSuggestions,
+}: Props) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [suggestions, setSuggestions] = useState<string[]>(messages.length <= 1 ? OPENING_SUGGESTIONS : []);
+  const [suggestions, setSuggestions] = useState<string[]>(
+    messages[messages.length - 1]?.role === 'planner' && !brief ? (openingSuggestions ?? (messages.length <= 1 ? OPENING_SUGGESTIONS : [])) : [],
+  );
   // What the planner has learned from the web so far; sent back each turn so it is not repeated
-  const [research, setResearch] = useState<{ notes: string; sources: WebSource[] }>({ notes: '', sources: [] });
+  const [research, setResearch] = useState<{ notes: string; sources: WebSource[] }>(initialResearch ?? { notes: '', sources: [] });
+  const onResearchChangeRef = useRef(onResearchChange);
+  onResearchChangeRef.current = onResearchChange;
   const [elapsed, setElapsed] = useState(0);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -49,11 +65,13 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
     setError('');
     setSending(true);
     try {
-      const result = await plannerChat(next, research);
-      setResearch(prev => ({
-        notes: result.research_notes?.trim() ? result.research_notes : prev.notes,
-        sources: result.sources ?? prev.sources,
-      }));
+      const result = await plannerChat(next, research, context);
+      const nextResearch = {
+        notes: result.research_notes?.trim() ? result.research_notes : research.notes,
+        sources: result.sources ?? research.sources,
+      };
+      setResearch(nextResearch);
+      onResearchChangeRef.current?.(nextResearch);
       onMessagesChange([...next, { role: 'planner', content: result.reply }]);
       setSuggestions(result.ready ? [] : (result.suggestions ?? []).filter(Boolean).slice(0, 4));
       if (result.ready && result.brief) onBriefChange(result.brief);
@@ -119,7 +137,9 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
             <dl className="grid sm:grid-cols-2 gap-x-5 gap-y-2.5 text-sm">
               <BriefRow icon={Users} label="For" value={[brief.audience, brief.starting_level].filter(Boolean).join(' · ')} />
               <BriefRow icon={Target} label="Result" value={brief.outcome} />
-              <BriefRow icon={Clock} label="Time" value={`${brief.duration_weeks} weeks, about ${brief.hours_per_week} hours a week · ${brief.num_modules} modules × ${brief.lessons_per_module} lessons`} />
+              <BriefRow icon={Clock} label={context ? 'Adding' : 'Time'} value={context
+                ? `${brief.num_modules} new week${brief.num_modules === 1 ? '' : 's'} × ${brief.lessons_per_module} lessons`
+                : `${brief.duration_weeks} weeks, about ${brief.hours_per_week} hours a week · ${brief.num_modules} modules × ${brief.lessons_per_module} lessons`} />
               <BriefRow icon={Hammer} label="Approach" value={brief.approach} />
             </dl>
             {brief.projects?.length > 0 && (
@@ -153,7 +173,7 @@ export default function CoursePlannerChat({ messages, onMessagesChange, brief, o
             )}
             <div className="flex items-center gap-3 pt-1">
               <button onClick={() => onCreate(brief)} className="btn-primary text-sm py-2.5 px-5 flex items-center gap-2">
-                <Sparkles className="w-4 h-4" /> Create this curriculum
+                <Sparkles className="w-4 h-4" /> {createLabel ?? 'Create this curriculum'}
               </button>
               <span className="text-xs text-slate-500">or keep chatting to change the plan</span>
             </div>

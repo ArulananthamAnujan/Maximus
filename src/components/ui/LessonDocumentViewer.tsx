@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { parseSlidesFromHtml, downloadPptx } from '../../lib/slides';
+import type { ParsedSlide } from '../../lib/slides';
 import { sanitizeHtml } from '../../lib/utils';
 import {
   FileText, ChevronLeft, ChevronRight, Download, BookOpen, X,
@@ -155,82 +157,6 @@ async function generatePdf(title: string, contentHtml: string) {
   doc.save(`${title.replace(/[^a-z0-9]/gi, '_')}.pdf`);
 }
 
-// ─── PPT Generation ──────────────────────────────────────────────────────────
-
-interface ParsedSlide {
-  heading: string;
-  bodyHtml: string;
-  speakerNotes: string;
-  slideType: 'title' | 'content' | 'summary';
-}
-
-async function generatePptx(title: string, slides: ParsedSlide[]) {
-  const pptxgen = (await import('pptxgenjs')).default;
-  const prs = new pptxgen();
-  prs.layout = 'LAYOUT_WIDE';
-
-  const NAVY = '111827';
-  const BLUE = '3B82F6';
-  const LIGHT_BLUE = 'DBEAFE';
-  const WHITE = 'FFFFFF';
-  const SLATE = '334155';
-  const LIGHT_GRAY = 'F8FAFC';
-
-  slides.forEach((slide, idx) => {
-    const s = prs.addSlide();
-    if (slide.slideType === 'title' || idx === 0) {
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: { color: NAVY } });
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 3.8, w: '100%', h: 0.06, fill: { color: BLUE } });
-      s.addText(slide.heading || title, { x: 0.6, y: 1.2, w: 8.8, h: 1.8, fontSize: 36, bold: true, color: WHITE, fontFace: 'Calibri', align: 'left', wrap: true });
-      const bodyText = stripHtml(slide.bodyHtml || '');
-      if (bodyText) s.addText(bodyText, { x: 0.6, y: 3.1, w: 8.8, h: 0.6, fontSize: 14, color: '94A3B8', fontFace: 'Calibri', align: 'left', wrap: true });
-      s.addText(`Slide ${idx + 1} of ${slides.length}`, { x: 8.5, y: 4.9, w: 1, h: 0.2, fontSize: 8, color: '475569', align: 'right' });
-    } else if (slide.slideType === 'summary') {
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: { color: '0F2744' } });
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.06, fill: { color: BLUE } });
-      s.addText(slide.heading, { x: 0.5, y: 0.25, w: 9, h: 0.65, fontSize: 22, bold: true, color: WHITE, fontFace: 'Calibri' });
-      const bodyText = stripHtml(slide.bodyHtml || '');
-      if (bodyText) s.addText(bodyText, { x: 0.5, y: 1.1, w: 9, h: 3.5, fontSize: 13, color: 'CBD5E1', fontFace: 'Calibri', wrap: true });
-    } else {
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: '100%', h: '100%', fill: { color: WHITE } });
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: 0.07, h: '100%', fill: { color: BLUE } });
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.85, fill: { color: LIGHT_GRAY } });
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0.85, w: '100%', h: 0.04, fill: { color: LIGHT_BLUE } });
-      s.addText(slide.heading, { x: 0.25, y: 0.1, w: 9.1, h: 0.65, fontSize: 20, bold: true, color: NAVY, fontFace: 'Calibri' });
-      s.addText(`${idx + 1}`, { x: 9.0, y: 0.12, w: 0.4, h: 0.4, fontSize: 9, color: '94A3B8', align: 'right' });
-      const bodyText = stripHtml(slide.bodyHtml || '');
-      if (bodyText) s.addText(bodyText, { x: 0.25, y: 1.05, w: 9.1, h: 3.55, fontSize: 13, color: SLATE, fontFace: 'Calibri', wrap: true, valign: 'top' });
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 4.9, w: '100%', h: 0.2, fill: { color: LIGHT_GRAY } });
-      s.addText(title, { x: 0.25, y: 4.92, w: 8, h: 0.16, fontSize: 7, color: '94A3B8' });
-    }
-    if (slide.speakerNotes) s.addNotes(slide.speakerNotes);
-  });
-
-  prs.writeFile({ fileName: `${title.replace(/[^a-z0-9]/gi, '_')}.pptx` });
-}
-
-// ─── Parse slides ────────────────────────────────────────────────────────────
-
-function parseSlidesFromHtml(html: string): ParsedSlide[] {
-  if (!html?.trim()) return [{ heading: 'No slides available', bodyHtml: '<p>Try regenerating notes &amp; slides.</p>', speakerNotes: '', slideType: 'content' }];
-  const div = document.createElement('div');
-  div.innerHTML = sanitizeHtml(html);
-  const slideEls = div.querySelectorAll('.slide');
-  if (slideEls.length === 0) return [{ heading: '', bodyHtml: div.innerHTML, speakerNotes: '', slideType: 'content' }];
-  return Array.from(slideEls).map((el, idx) => {
-    const notesEl = el.querySelector('.speaker-notes');
-    const notes = notesEl?.textContent?.trim().replace(/^Speaker notes:?/i, '').trim() || '';
-    notesEl?.remove();
-    const h2 = el.querySelector('h2');
-    const heading = h2?.textContent?.trim() || `Slide ${idx + 1}`;
-    h2?.remove();
-    const bodyHtml = el.innerHTML.trim();
-    const isTitle = idx === 0;
-    const isSummary = heading.toLowerCase().includes('summary') || heading.toLowerCase().includes('next steps');
-    return { heading, bodyHtml, speakerNotes: notes, slideType: isTitle ? 'title' : isSummary ? 'summary' : 'content' };
-  });
-}
-
 // ─── Slide Display ───────────────────────────────────────────────────────────
 
 function SlideDisplay({ slide, index, total, fullscreen }: { slide: ParsedSlide; index: number; total: number; fullscreen: boolean }) {
@@ -363,7 +289,7 @@ function SlidesViewer({ doc }: { doc: LessonDocument }) {
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 shadow-sm">
             {dlPdf ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />} PDF
           </button>
-          <button onClick={async () => { setDlPpt(true); try { await generatePptx(doc.title, slides); } finally { setDlPpt(false); } }} disabled={dlPpt}
+          <button onClick={async () => { setDlPpt(true); try { await downloadPptx(doc.title, [{ title: doc.title, slides }]); } finally { setDlPpt(false); } }} disabled={dlPpt}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 shadow-sm">
             {dlPpt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />} PPT
           </button>

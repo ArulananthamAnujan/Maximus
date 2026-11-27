@@ -105,6 +105,11 @@ export interface FullCurriculumInput {
   num_sections: number;
   lessons_per_section: number;
   existing_sections_summary?: string;
+  /** Week number the new sections start from, so numbering continues the course. */
+  start_number?: number;
+  /** What the teacher asked for in these weeks (from the planner conversation). */
+  focus?: string;
+  brief?: CourseBrief;
 }
 
 // ─── Output types ───────────────────────────────────────────────────────────
@@ -315,8 +320,25 @@ async function withOneRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** One turn of the course-planning conversation. Send the whole conversation each time. */
-export const plannerChat = (messages: PlannerMessage[], research: { notes: string; sources: WebSource[] }) =>
-  callAI<PlannerReply>('course_planner_chat', { messages, research_notes: research.notes, sources: research.sources });
+/** Context for planning more weeks of a course that already exists. */
+export interface PlannerCourseContext {
+  course_title: string;
+  /** One line per existing week with its lessons. */
+  existing_outline: string;
+  saved_brief?: CourseBrief | null;
+}
+
+export const plannerChat = (
+  messages: PlannerMessage[],
+  research: { notes: string; sources: WebSource[] },
+  context?: PlannerCourseContext | null,
+) =>
+  callAI<PlannerReply>('course_planner_chat', {
+    messages,
+    research_notes: research.notes,
+    sources: research.sources,
+    ...(context ? { course_title: context.course_title, existing_outline: context.existing_outline, saved_brief: context.saved_brief ?? null } : {}),
+  });
 
 export async function generateCourseOutline(
   input: CourseOutlineInput,
@@ -460,6 +482,27 @@ export interface LessonNotesInput {
   course_title: string;
   target_audience: string;
   difficulty: string;
+  /** What this lesson should cover (from the curriculum). */
+  lesson_description?: string;
+  /** Titles of the other lessons in the same week, so their content is not repeated. */
+  other_lessons?: string[];
+  /** Earlier weeks, so the notes build on them instead of re-teaching. */
+  previous_weeks?: string[];
+  brief?: CourseBrief;
+}
+
+export interface LessonSlidesInput {
+  lesson_title: string;
+  section_title: string;
+  course_title: string;
+  /** The lesson's study notes as plain text; the slides are built from these. */
+  notes_text: string;
+  brief?: CourseBrief;
+}
+
+export interface LessonSlidesOutput {
+  slides_title: string;
+  slides: PresentationSlide[];
 }
 
 export interface LessonNotesOutput {
@@ -491,6 +534,10 @@ export interface PresentationSlidesOutput {
 
 export const generateLessonNotes = (input: LessonNotesInput) =>
   callAI<LessonNotesOutput>('lesson_notes', input);
+
+/** A slide deck for one lesson, built from that lesson's notes so it covers the same depth. */
+export const generateLessonSlides = (input: LessonSlidesInput) =>
+  callAI<LessonSlidesOutput>('lesson_slides', input);
 
 export const generatePresentationSlides = (input: PresentationSlidesInput) =>
   callAI<PresentationSlidesOutput>('presentation_slides', input);

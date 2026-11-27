@@ -129,7 +129,7 @@ async function loadSectionForStaff(admin: Admin, userId: string, sectionId: stri
   if (!section) throw new UserError("Module not found", 404);
 
   const [{ data: course }, { data: profile }] = await Promise.all([
-    admin.from("courses").select("id, title, level, teacher_id, org_id").eq("id", section.course_id).maybeSingle(),
+    admin.from("courses").select("id, title, level, teacher_id, org_id, ai_plan").eq("id", section.course_id).maybeSingle(),
     admin.from("profiles").select("role").eq("id", userId).maybeSingle(),
   ]);
   if (!course || !profile) throw new UserError("Course not found", 404);
@@ -156,6 +156,15 @@ async function ensureOrgBalance(admin: Admin, orgId: string | null, tokens: numb
   }
 }
 
+async function loadCourseForStaff(admin: Admin, userId: string, courseId: string) {
+  if (!courseId) throw new UserError("course_id is required");
+  const { data: firstSection } = await admin.from("sections").select("id").eq("course_id", courseId).limit(1).maybeSingle();
+  if (!firstSection) return { sectionIds: [] as string[] };
+  await loadSectionForStaff(admin, userId, firstSection.id);
+  const { data: all } = await admin.from("sections").select("id").eq("course_id", courseId).order("order_index");
+  return { sectionIds: (all ?? []).map((r: { id: string }) => r.id) };
+}
+
 async function chargeOrgTokens(admin: Admin, orgId: string | null, userId: string, task: string, tokens: number) {
   if (!orgId || tokens <= 0) return;
   const { data: ok, error } = await admin.rpc("deduct_org_tokens", {
@@ -170,7 +179,13 @@ async function chargeOrgTokens(admin: Admin, orgId: string | null, userId: strin
 
 // ─── Script writing ─────────────────────────────────────────────────────────
 
-async function writeScript(courseTitle: string, level: string, sectionTitle: string, lessons: Array<{ title: string; text: string }>) {
+async function writeScript(
+  courseTitle: string,
+  level: string,
+  sectionTitle: string,
+  lessons: Array<{ title: string; text: string }>,
+  plan: Record<string, unknown> | null = null,
+) {
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new UserError("AI is not set up yet. An administrator needs to add the ANTHROPIC_API_KEY secret.", 503);
 
@@ -189,7 +204,16 @@ Rules:
   const material = lessons
     .map((l, i) => `Lesson ${i + 1}: ${l.title}\n${l.text || "(no written content; cover it briefly from the title)"}`)
     .join("\n\n");
-  const user = `Course: ${courseTitle}\nLevel: ${level || "general"}\nModule: ${sectionTitle}\n\nLesson material:\n${material}`;
+  const brief = (plan?.brief ?? null) as Record<string, unknown> | null;
+  const planLines = brief
+    ? [
+        ["Learners", [brief.audience, brief.starting_level].filter(Boolean).join(", ")],
+        ["What they are working towards", brief.outcome],
+        ["Tone", brief.tone],
+        ["Approach", brief.approach],
+      ].filter(([, v]) => v && String(v).trim()).map(([k, v]) => `${k}: ${String(v).slice(0, 300)}`).join("\n")
+    : "";
+  const user = `Course: ${courseTitle}\nLevel: ${level || "general"}\nModule: ${sectionTitle}${planLines ? `\n\nWho this course is for (speak to them directly):\n${planLines}` : ""}\n\nLesson material:\n${material}`;
 
   let res: Response;
   try {
@@ -282,7 +306,7 @@ async function actionDraft(admin: Admin, userId: string, sectionId: string) {
   }));
 
   await ensureOrgBalance(admin, orgId, SCRIPT_TOKEN_COST);
-  const parts = await writeScript(course.title, course.level ?? "", section.title, material);
+  const parts = await writeScript(course.title, course.level ?? "", section.title, material, course.ai_plan ?? null);
   await chargeOrgTokens(admin, orgId, userId, "lecture_script", SCRIPT_TOKEN_COST);
 
   // Replace earlier drafts / failed attempts; keep the lessons of finished videos until re-rendered.
@@ -428,12 +452,14 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
   }).eq("id", row.id);
 }
 
-async function actionSync(admin: Admin, userId: string, sectionId: string) {
-  await loadSectionForStaff(admin, userId, sectionId);
+async function actionSync(admin: Admin, userId: string, sectionId: string, deadline = Date.now() + 120_000, checked = false) {
+  if (!checked) await loadSectionForStaff(admin, userId, sectionId);
   const { data: rows } = await admin
     .from("lecture_videos").select("*").eq("section_id", sectionId).in("status", ["rendering", "saving"]);
 
   for (const row of rows ?? []) {
+    // Copying a finished video can take a while; leave the rest for the next check.
+    if (Date.now() > deadline) break;
     if (row.status === "saving" && Date.now() - new Date(row.updated_at).getTime() < STALE_SAVING_MS) continue;
     if (!row.provider_video_id) continue;
 
@@ -468,6 +494,21 @@ async function actionSync(admin: Admin, userId: string, sectionId: string) {
     }
   }
   return { parts: await listRows(admin, sectionId) };
+}
+
+/** Lecture status for every module of a course; finishes any videos that are ready. */
+async function actionCourseStatus(admin: Admin, userId: string, courseId: string) {
+  const { sectionIds } = await loadCourseForStaff(admin, userId, courseId);
+  if (sectionIds.length === 0) return { parts: [] };
+  const { data: active } = await admin
+    .from("lecture_videos").select("section_id").eq("course_id", courseId).in("status", ["rendering", "saving"]);
+  const deadline = Date.now() + 100_000;
+  for (const sectionId of new Set((active ?? []).map((r: { section_id: string }) => r.section_id))) {
+    if (Date.now() > deadline) break;
+    await actionSync(admin, userId, sectionId as string, deadline, true);
+  }
+  const { data } = await admin.from("lecture_videos").select(ROW_FIELDS).eq("course_id", courseId).order("part_index");
+  return { parts: data ?? [] };
 }
 
 async function actionDiscard(admin: Admin, userId: string, sectionId: string) {
@@ -510,6 +551,7 @@ Deno.serve(async (req: Request) => {
       case "render": return json(await actionRender(admin, user.id, body.section_id, body.avatar_id, body.voice_id));
       case "sync": return json(await actionSync(admin, user.id, body.section_id));
       case "discard": return json(await actionDiscard(admin, user.id, body.section_id));
+      case "course_status": return json(await actionCourseStatus(admin, user.id, body.course_id));
       default: return json({ error: "Unknown action" }, 400);
     }
   } catch (err) {

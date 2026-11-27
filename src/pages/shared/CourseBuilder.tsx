@@ -25,6 +25,12 @@ const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocume
 import { LessonDocumentBadges } from '../../components/ui/LessonDocumentViewer';
 const AIQuizGeneratorModal = lazy(() => import('../../components/ai/AIQuizGeneratorModal'));
 const LectureVideoModal = lazy(() => import('../../components/ai/LectureVideoModal'));
+const CourseContentStudio = lazy(() => import('../../components/ai/CourseContentStudio'));
+const CourseLecturesModal = lazy(() => import('../../components/ai/CourseLecturesModal'));
+import CoursePlannerChat from '../../components/ai/CoursePlannerChat';
+import { loadCoursePlan, saveCoursePlan } from '../../lib/coursePlan';
+import type { CoursePlan } from '../../lib/coursePlan';
+import type { CourseBrief, PlannerMessage, WebSource } from '../../lib/ai';
 const FlashcardsManager = lazy(() => import('../../components/ai/FlashcardsManager'));
 
 // Maps both UI type names and DB type names
@@ -455,7 +461,7 @@ function SectionCard({ section, sIdx, expanded, onToggle, onRename, onDelete, on
 }
 
 export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<string>(searchParams.get('courseId') || '');
   const [courseData, setCourseData] = useState<Partial<Course & { start_date?: string; end_date?: string; duration_weeks?: number }>>({});
@@ -499,7 +505,18 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [aiCurriculumInsertStatus, setAICurriculumInsertStatus] = useState('');
   const [aiCurriculumExpanded, setAICurriculumExpanded] = useState<number | null>(0);
   // Background AI content generation (phase 2 — runs after panel closes)
-  const [bgGenStatus, setBgGenStatus] = useState<{ total: number; done: number; current: string; errors: number } | null>(null);
+  // Course materials (notes + slides) screen, optionally limited to some weeks
+  const [studio, setStudio] = useState<{ sectionIds?: string[]; autoStart?: boolean } | null>(null);
+  const [showCourseLectures, setShowCourseLectures] = useState(false);
+  // Bumped when notes/slides are saved, so the lesson badges and previews reload
+  const [materialsVersion, setMaterialsVersion] = useState(0);
+  // Planning more weeks by conversation (default) or with the quick form
+  const [aiCurriculumMode, setAICurriculumMode] = useState<'chat' | 'form'>('chat');
+  const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([]);
+  const [plannerBrief, setPlannerBrief] = useState<CourseBrief | null>(null);
+  const [plannerResearch, setPlannerResearch] = useState<{ notes: string; sources: WebSource[] }>({ notes: '', sources: [] });
+  const [savedPlan, setSavedPlan] = useState<CoursePlan | null>(null);
+  const [plannerReady, setPlannerReady] = useState(false);
   // Batch curriculum generation progress
   const [curriculumGenProgress, setCurriculumGenProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -523,8 +540,18 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   // Lesson document panel (notes/slides visible without edit mode)
   const [expandedDocsLessonId, setExpandedDocsLessonId] = useState<string | null>(null);
   // Per-section PDF & PPT generation
-  const [generatingSectionDocsId, setGeneratingSectionDocsId] = useState<string | null>(null);
   // Guard against state updates after unmount
+  // Arriving from "Create this course": start writing notes and slides for every lesson
+  const materialsRequested = searchParams.get('materials') === 'generate';
+  useEffect(() => {
+    if (!materialsRequested || !selectedCourse || sections.length === 0) return;
+    if (!sections.some(sec => sec.course_id === selectedCourse)) return;
+    setStudio({ autoStart: true });
+    const next = new URLSearchParams(searchParams);
+    next.delete('materials');
+    setSearchParams(next, { replace: true });
+  }, [materialsRequested, selectedCourse, sections, searchParams, setSearchParams]);
+
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
@@ -584,8 +611,18 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     setFlashcardsList((data || []) as Array<{ id: string; front: string; back: string; order_index: number }>);
   };
 
-  const handleAIGenerateCurriculum = async (e: React.FormEvent) => {
-    e.preventDefault();
+  interface CurriculumRequest {
+    topic: string;
+    target_audience: string;
+    difficulty: string;
+    num_sections: number;
+    lessons_per_section: number;
+    use_existing_context: boolean;
+    brief?: CourseBrief;
+    focus?: string;
+  }
+
+  const runCurriculumGeneration = async (req: CurriculumRequest) => {
     if (!selectedCourse) return;
     setAICurriculumStep('loading');
     setCurriculumGenProgress(null);
@@ -593,17 +630,18 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     try {
       const { generateFullCurriculum } = await import('../../lib/ai');
 
-      const totalSections = aiCurriculumForm.num_sections;
+      const totalSections = req.num_sections;
       // Max 4 sections per AI call to keep response size reliable and avoid timeouts
       const BATCH_SIZE = 4;
       const allSections: import('../../lib/ai').AICurriculumSection[] = [];
 
-      const baseExistingSummary = aiCurriculumForm.use_existing_context && sections.length > 0
+      const baseExistingSummary = req.use_existing_context && sections.length > 0
         ? sections.map((s, i) => {
             const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
             return `Week/Section ${i + 1}: "${s.title}"${lessonTitles ? ` — Lessons: ${lessonTitles}` : ''}`;
           }).join('\n')
         : '';
+      const existingCount = req.use_existing_context ? sections.length : 0;
 
       const totalBatches = Math.ceil(totalSections / BATCH_SIZE);
       setCurriculumGenProgress({ done: 0, total: totalBatches });
@@ -615,7 +653,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         const alreadyGeneratedSummary = allSections.length > 0
           ? allSections.map((s, i) => {
               const lessonTitles = (s.lessons || []).map(l => l.title).join(', ');
-              return `Week/Section ${i + 1}: "${s.title}" — Lessons: ${lessonTitles}`;
+              return `Week/Section ${existingCount + i + 1}: "${s.title}" — Lessons: ${lessonTitles}`;
             }).join('\n')
           : '';
 
@@ -623,12 +661,15 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         const existingSummary = existingSummaryParts.length > 0 ? existingSummaryParts.join('\n') : undefined;
 
         const result = await generateFullCurriculum({
-          topic: aiCurriculumForm.topic,
-          target_audience: aiCurriculumForm.target_audience,
-          difficulty: aiCurriculumForm.difficulty,
+          topic: req.topic,
+          target_audience: req.target_audience,
+          difficulty: req.difficulty,
           num_sections: sectionsInThisBatch,
-          lessons_per_section: aiCurriculumForm.lessons_per_section,
+          lessons_per_section: req.lessons_per_section,
           existing_sections_summary: existingSummary,
+          start_number: existingCount + allSections.length + 1,
+          focus: req.focus,
+          brief: req.brief,
         });
 
         const batchSections = Array.isArray(result?.sections) ? result.sections : [];
@@ -658,6 +699,54 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     }
   };
 
+  const handleAIGenerateCurriculum = (e: React.FormEvent) => {
+    e.preventDefault();
+    runCurriculumGeneration({ ...aiCurriculumForm, brief: savedPlan?.brief ?? undefined });
+  };
+
+  /** Generate the weeks agreed in the planner conversation. */
+  const handleCreateWeeksFromBrief = (brief: CourseBrief) => {
+    const courseTitle = courses.find(c => c.id === selectedCourse)?.title || brief.title_idea || brief.topic;
+    const clamp = (n: number, lo: number, hi: number, fb: number) => Math.min(Math.max(Math.round(Number(n)) || fb, lo), hi);
+    const merged: CourseBrief = savedPlan?.brief
+      // Keep who the course is for from the original plan; take what is new from this conversation
+      ? { ...savedPlan.brief, ...brief, market_findings: brief.market_findings?.length ? brief.market_findings : savedPlan.brief.market_findings }
+      : brief;
+    setPlannerBrief(merged);
+    runCurriculumGeneration({
+      topic: courseTitle,
+      target_audience: [merged.audience, merged.starting_level].filter(Boolean).join(', ') || 'general learners',
+      difficulty: merged.difficulty || 'beginner',
+      num_sections: clamp(brief.num_modules, 1, 12, 3),
+      lessons_per_section: clamp(brief.lessons_per_module, 2, 8, 4),
+      use_existing_context: true,
+      brief: merged,
+      focus: brief.approach,
+    });
+  };
+
+  /** Opens the AI curriculum panel; in conversation mode, loads the course's saved plan first. */
+  const openAICurriculumPanel = async () => {
+    setShowAICurriculumPanel(true);
+    setAICurriculumStep('form');
+    setPlannerReady(false);
+    setPlannerBrief(null);
+    const plan = selectedCourse ? await loadCoursePlan(selectedCourse) : null;
+    setSavedPlan(plan);
+    setPlannerResearch({ notes: plan?.research_notes ?? '', sources: plan?.sources ?? [] });
+    const weeks = sections.length;
+    const opener: PlannerMessage = {
+      role: 'planner',
+      content: weeks === 0
+        ? "Let's plan this course's weeks together. Who is it for, and what should they be able to do when they finish?"
+        : plan?.brief
+          ? `Welcome back. This course has ${weeks} week${weeks === 1 ? '' : 's'}, planned for ${plan.brief.audience || 'your learners'}. What would you like to add or change next? For example more weeks, deeper coverage of a topic, more projects, or job-search preparation.`
+          : `This course has ${weeks} week${weeks === 1 ? '' : 's'} so far. Tell me who it is for and what you would like to add next, and I will suggest the best way to extend it.`,
+    };
+    setPlannerMessages([...(plan?.messages ?? []).slice(-20), opener]);
+    setPlannerReady(true);
+  };
+
   const handleAICurriculumInsert = async () => {
     if (!selectedCourse || !profile) return;
     setAICurriculumInserting(true);
@@ -673,6 +762,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     };
 
     const sectionBuilds: SectionBuild[] = [];
+    const newSectionIds: string[] = [];
 
     try {
       const courseName = courses.find(c => c.id === selectedCourse)?.title || aiCurriculumForm.topic;
@@ -692,14 +782,17 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           console.error('Section insert error:', sectionErr);
           continue;
         }
+        newSectionIds.push(sectionData.id);
 
         // Insert lessons
         const lessonRows = (sec.lessons || []).map((l, li) => ({
           section_id: sectionData.id,
           course_id: selectedCourse,
           title: l.title,
-          type: l.type === 'document' ? 'file' : 'text',
-          lesson_type: l.type === 'document' ? 'file' : 'text',
+          // Text lessons: their notes are written into the lesson content
+          type: 'text',
+          lesson_type: 'text',
+          description: l.description || '',
           content: '',
           duration_minutes: l.estimated_duration_minutes || 60,
           order_index: li,
@@ -758,7 +851,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       }
 
       // Phase 1 complete — close panel and show curriculum immediately
-      toast.success(`${totalSections} sections created! Generating notes & slides in background...`);
+      toast.success(`${totalSections} week${totalSections === 1 ? '' : 's'} created. Now writing the notes and slides…`);
+      // Remember what was agreed, so notes, slides, lectures and later additions follow it
+      if (plannerBrief && selectedCourse) {
+        const plan = { brief: plannerBrief, research_notes: plannerResearch.notes, sources: plannerResearch.sources, messages: plannerMessages };
+        saveCoursePlan(selectedCourse, plan).catch(() => {});
+        setSavedPlan({ ...plan, updated_at: new Date().toISOString() });
+      }
       setShowAICurriculumPanel(false);
       setAICurriculumStep('form');
       setAICurriculumPreview([]);
@@ -779,229 +878,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       return;
     }
 
-    // ── PHASE 2: Generate AI notes + slides in background (non-blocking) ──
-    // Panel is already closed. Failures here show a banner but NEVER cause a white screen.
-    if (sectionBuilds.length === 0) return;
-
-    setBgGenStatus({ total: sectionBuilds.length, done: 0, current: sectionBuilds[0].sec.title, errors: 0 });
-
-    (async () => {
-      const { generateSectionNotes, generateSectionSlides } = await import('../../lib/ai');
-      let errors = 0;
-
-      for (let i = 0; i < sectionBuilds.length; i++) {
-        if (!mountedRef.current) return;
-        const { sec, lessons, courseId, courseName } = sectionBuilds[i];
-
-        if (mountedRef.current) setBgGenStatus(prev => prev ? { ...prev, done: i, current: sec.title } : null);
-        if (i > 0) await new Promise(r => setTimeout(r, 300));
-
-        try {
-          const sectionLessons = sec.lessons || [];
-          const sectionInput = {
-            section_title: sec.title,
-            course_title: courseName,
-            lessons: sectionLessons.map(l => ({ title: l.title, description: '' })),
-            target_audience: aiCurriculumForm.target_audience,
-            difficulty: aiCurriculumForm.difficulty,
-          };
-
-          // One call for all notes + one call for slides — 2 calls per section total
-          const [notesResult, slidesResult] = await Promise.allSettled([
-            generateSectionNotes(sectionInput),
-            generateSectionSlides(sectionInput),
-          ]);
-
-          if (!mountedRef.current) return;
-
-          const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-          const lessonUpdates: Array<{ id: string; content: string }> = [];
-
-          if (notesResult.status === 'fulfilled' && notesResult.value?.lessons?.length) {
-            for (const lessonNote of notesResult.value.lessons) {
-              // Match against the inserted rows (which carry database ids), not the AI outline
-              const matchedLesson = lessons.find(l =>
-                l.title.toLowerCase().trim() === lessonNote.lesson_title?.toLowerCase().trim()
-              ) || lessons[notesResult.value.lessons.indexOf(lessonNote)];
-              if (matchedLesson && lessonNote.notes_html) {
-                lessonUpdates.push({ id: matchedLesson.id, content: lessonNote.notes_html });
-                docRows.push({ lesson_id: matchedLesson.id, course_id: courseId, type: 'notes', title: `${matchedLesson.title} — Notes`, content_html: lessonNote.notes_html, order_index: 0 });
-              }
-            }
-          }
-
-          if (slidesResult.status === 'fulfilled' && slidesResult.value?.slides?.length && lessons.length > 0) {
-            const slidesHtml = slidesResult.value.slides.map(s =>
-              `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
-            ).join('\n');
-            docRows.push({ lesson_id: lessons[0].id, course_id: courseId, type: 'slides', title: slidesResult.value.slides_title || `${sec.title} — Slides`, content_html: `<div class="slides-deck">${slidesHtml}</div>`, order_index: 1 });
-          }
-
-          if (!mountedRef.current) return;
-
-          if (docRows.length > 0) {
-            Promise.allSettled(lessonUpdates.map(u => supabase.from('lessons').update({ content: u.content }).eq('id', u.id))).catch(() => {});
-            await supabase.from('lesson_documents').insert(docRows);
-          } else {
-            errors++;
-          }
-        } catch (secErr) {
-          console.warn(`Section "${sec.title}" failed:`, secErr);
-          errors++;
-        }
-
-        if (mountedRef.current) setBgGenStatus(prev => prev ? { ...prev, done: i + 1, errors } : null);
-      }
-
-      if (!mountedRef.current) return;
-
-      if (errors === 0) {
-        toast.success('All notes and slides have been generated successfully.');
-      } else {
-        toast.error(`${sectionBuilds.length - errors} of ${sectionBuilds.length} sections generated. Click "Notes & Slides" to retry failed sections.`);
-      }
-      setBgGenStatus(null);
-
-      try { await fetchSections(); } catch { /* non-fatal */ }
-    })().catch(err => {
-      console.error('Background generation crashed:', err);
-      if (mountedRef.current) {
-        setBgGenStatus(null);
-        toast.error('Generation stopped unexpectedly. Please click "Notes & Slides" to retry.');
-      }
-    });
-  };
-
-  // Generate notes + slides for ALL sections in the course (called from any section's button)
-  // Generate notes (one per lesson, sequentially) + slides for ONE section
-  const handleGenerateSectionDocs = (section: Section & { lessons: Lesson[] }) => {
-    if (!selectedCourse || generatingSectionDocsId) return;
-    if (!section.lessons?.length) {
-      toast.error('Add lessons to this section before generating.');
-      return;
-    }
-
-    const courseId = selectedCourse;
-    const courseName = courses.find(c => c.id === courseId)?.title || '';
-    // total steps = one per lesson + one slides call
-    const total = section.lessons.length + 1;
-
-    setGeneratingSectionDocsId(section.id);
-    setBgGenStatus({ total, done: 0, current: `Starting…`, errors: 0 });
-
-    (async () => {
-      const { generateLessonNotes, generateSectionSlides } = await import('../../lib/ai');
-      if (!mountedRef.current) return;
-
-      const lessonIds = section.lessons.map(l => l.id);
-      const docRows: Array<{ lesson_id: string; course_id: string; type: string; title: string; content_html: string; order_index: number }> = [];
-
-      // ── Notes: sequential (one at a time) to avoid concurrent parse failures ─
-      let notesGenerated = 0;
-      for (let i = 0; i < section.lessons.length; i++) {
-        if (!mountedRef.current) return;
-        const lesson = section.lessons[i];
-        setBgGenStatus(prev => prev ? { ...prev, done: i, current: `Generating notes: ${lesson.title}` } : null);
-
-        let html: string | null = null;
-        // Try up to 3 times per lesson
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const r = await generateLessonNotes({
-              lesson_title: lesson.title,
-              section_title: section.title,
-              course_title: courseName,
-              target_audience: 'general',
-              difficulty: 'intermediate',
-            });
-            if (r?.content_html?.trim()) { html = r.content_html; break; }
-          } catch (err) {
-            console.warn(`Notes attempt ${attempt + 1} failed for "${lesson.title}":`, err);
-            if (attempt < 2) await new Promise(res => setTimeout(res, 2000));
-          }
-        }
-
-        if (html) {
-          docRows.push({
-            lesson_id: lesson.id,
-            course_id: courseId,
-            type: 'notes',
-            title: `${lesson.title} — Notes`,
-            content_html: html,
-            order_index: 0,
-          });
-          supabase.from('lessons').update({ content: html }).eq('id', lesson.id).then(() => {}, () => {});
-          notesGenerated++;
-        }
-      }
-
-      if (!mountedRef.current) return;
-      setBgGenStatus(prev => prev ? { ...prev, done: section.lessons.length, current: `Generating slides…` } : null);
-
-      // ── Slides: one call covering the whole section ────────────────────────
-      let slidesOk = false;
-      try {
-        const slidesData = await generateSectionSlides({
-          section_title: section.title,
-          course_title: courseName,
-          lessons: section.lessons.map(l => ({ title: l.title, description: '' })),
-          target_audience: 'general',
-          difficulty: 'intermediate',
-        });
-        if (slidesData?.slides?.length) {
-          const slidesHtml = slidesData.slides.map(s =>
-            `<section class="slide" data-slide="${s.slide_number}"><h2>${s.heading}</h2>${s.content_html}${s.speaker_notes ? `<aside class="speaker-notes"><strong>Speaker notes:</strong> ${s.speaker_notes}</aside>` : ''}</section>`
-          ).join('\n');
-          docRows.push({
-            lesson_id: section.lessons[0].id,
-            course_id: courseId,
-            type: 'slides',
-            title: slidesData.slides_title || `${section.title} — Slides`,
-            content_html: `<div class="slides-deck">${slidesHtml}</div>`,
-            order_index: 1,
-          });
-          slidesOk = true;
-        }
-      } catch (err) {
-        console.warn(`Slides failed for "${section.title}":`, err);
-      }
-
-      if (!mountedRef.current) return;
-
-      // ── Persist ────────────────────────────────────────────────────────────
-      if (docRows.length > 0) {
-        try {
-          await supabase.from('lesson_documents').delete().in('lesson_id', lessonIds);
-          await supabase.from('lesson_documents').insert(docRows);
-          const parts: string[] = [];
-          if (notesGenerated > 0) parts.push(`notes for ${notesGenerated}/${section.lessons.length} lessons`);
-          if (slidesOk) parts.push('slides');
-          toast.success(`Generated ${parts.join(' & ')} — ${section.title}`);
-        } catch (dbErr) {
-          console.error('Failed to save documents:', dbErr);
-          toast.error('Generated content but failed to save — please try again.');
-        }
-      } else {
-        toast.error(`Could not generate content for "${section.title}". Please try again.`);
-      }
-
-      if (mountedRef.current) {
-        setBgGenStatus(prev => prev ? { ...prev, done: total } : null);
-        setTimeout(() => {
-          if (mountedRef.current) {
-            setBgGenStatus(null);
-            setGeneratingSectionDocsId(null);
-          }
-        }, 800);
-      }
-    })().catch(err => {
-      console.error('handleGenerateSectionDocs crashed:', err);
-      if (mountedRef.current) {
-        setBgGenStatus(null);
-        setGeneratingSectionDocsId(null);
-        toast.error('Generation failed unexpectedly — please try again.');
-      }
-    });
+    // ── PHASE 2: complete notes, then slides built from them, for every new lesson ──
+    if (newSectionIds.length > 0) setStudio({ sectionIds: newSectionIds, autoStart: true });
   };
 
   const handleAIQuizFromCurriculum = async (e: React.FormEvent) => {
@@ -1598,22 +1476,22 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             {activeTab === 'curriculum' && (
               <div className="space-y-4">
 
-                {/* ─── AI generation progress banner ───────────────────────── */}
-                {bgGenStatus && (
-                  <div className="flex items-center gap-3 px-5 py-3.5 bg-blue-50 border border-blue-200 rounded-xl">
-                    <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-blue-900">
-                        Generating notes &amp; slides — {bgGenStatus.done}/{bgGenStatus.total} complete
-                      </p>
-                      <p className="text-xs text-blue-600 truncate mt-0.5">{bgGenStatus.current}</p>
-                    </div>
-                    <div className="w-28 bg-blue-200 rounded-full h-1.5 shrink-0">
-                      <div
-                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
-                        style={{ width: `${Math.round((bgGenStatus.done / bgGenStatus.total) * 100)}%` }}
-                      />
-                    </div>
+                {/* ─── Whole-course AI tools ──────────────────────────────── */}
+                {sections.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Whole course</p>
+                    <button
+                      onClick={() => setStudio({})}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white border-blue-300 text-blue-700 hover:bg-blue-50"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Notes, slides &amp; PowerPoint for all weeks
+                    </button>
+                    <button
+                      onClick={() => setShowCourseLectures(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white border-sky-300 text-sky-700 hover:bg-sky-50"
+                    >
+                      <Video className="w-3.5 h-3.5" /> Weekly AI lectures
+                    </button>
                   </div>
                 )}
 
@@ -1625,12 +1503,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                         <Sparkles className="w-4 h-4 text-sky-600" />
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-sky-800">Generate Curriculum with AI</p>
-                        <p className="text-xs text-sky-600 mt-0.5">AI creates sections, lessons, quizzes and activities</p>
+                        <p className="text-sm font-semibold text-sky-800">{sections.length > 0 ? 'Add weeks with AI' : 'Generate Curriculum with AI'}</p>
+                        <p className="text-xs text-sky-600 mt-0.5">Talk it through with the AI planner; it remembers this course's plan</p>
                       </div>
                     </div>
                     <button
-                      onClick={() => { setShowAICurriculumPanel(true); setAICurriculumStep('form'); }}
+                      onClick={() => { openAICurriculumPanel(); }}
                       className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-sky-700 bg-white hover:bg-sky-50 border border-sky-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
                     >
                       <Sparkles className="w-3.5 h-3.5" /> Generate
@@ -1650,8 +1528,8 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           {aiCurriculumStep === 'preview' && `Preview — ${aiCurriculumPreview.length} sections generated`}
                         </p>
                         <p className="text-xs text-sky-600 mt-0.5">
-                          {aiCurriculumStep === 'form' && 'Generates sections, lessons, quizzes & activities'}
-                          {aiCurriculumStep === 'loading' && 'This may take up to 30 seconds...'}
+                          {aiCurriculumStep === 'form' && (aiCurriculumMode === 'chat' ? 'Plan the next weeks in a conversation; the AI knows the weeks you already have' : 'Generates sections, lessons, quizzes & activities')}
+                          {aiCurriculumStep === 'loading' && 'This usually takes under a minute per four weeks...'}
                           {aiCurriculumStep === 'preview' && 'Review the curriculum below then click Insert to add it'}
                         </p>
                       </div>
@@ -1662,8 +1540,44 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                       )}
                     </div>
 
+                    {/* Step: Conversation */}
+                    {aiCurriculumStep === 'form' && aiCurriculumMode === 'chat' && (
+                      <div className="flex flex-col h-[60vh] min-h-[420px]">
+                        {plannerReady ? (
+                          <CoursePlannerChat
+                            key={selectedCourse}
+                            messages={plannerMessages}
+                            onMessagesChange={setPlannerMessages}
+                            brief={plannerBrief}
+                            onBriefChange={setPlannerBrief}
+                            onCreate={handleCreateWeeksFromBrief}
+                            context={sections.length > 0 ? {
+                              course_title: courses.find(c => c.id === selectedCourse)?.title || '',
+                              existing_outline: sections.map((sec, i) => `${i + 1}. ${sec.title}${sec.lessons?.length ? ` (lessons: ${sec.lessons.map(l => l.title).join('; ')})` : ''}`).join('\n'),
+                              saved_brief: savedPlan?.brief ?? null,
+                            } : null}
+                            initialResearch={plannerResearch}
+                            onResearchChange={setPlannerResearch}
+                            createLabel={sections.length > 0 ? 'Create these weeks' : 'Create this curriculum'}
+                            openingSuggestions={sections.length > 0
+                              ? ['Add more weeks', 'Go deeper on one topic', 'Add portfolio projects', 'Add job-search preparation']
+                              : undefined}
+                          />
+                        ) : (
+                          <div className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500">
+                            <div className="w-4 h-4 border-2 border-sky-300 border-t-sky-600 rounded-full animate-spin" /> Loading this course's plan…
+                          </div>
+                        )}
+                        <div className="px-6 py-2.5 border-t border-slate-100 text-right">
+                          <button type="button" onClick={() => setAICurriculumMode('form')} className="text-xs font-medium text-slate-500 hover:text-sky-700">
+                            Skip the conversation and use the quick form
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Step: Form */}
-                    {aiCurriculumStep === 'form' && (
+                    {aiCurriculumStep === 'form' && aiCurriculumMode === 'form' && (
                       <form onSubmit={handleAIGenerateCurriculum} className="p-5 space-y-4">
                         <div>
                           <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Course Topic <span className="text-red-500">*</span></label>
@@ -1738,6 +1652,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           </button>
                           <button type="button" onClick={() => setShowAICurriculumPanel(false)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">
                             Cancel
+                          </button>
+                          <button type="button" onClick={() => setAICurriculumMode('chat')} className="ml-auto text-xs font-medium text-sky-700 hover:underline">
+                            Plan it in a conversation instead
                           </button>
                         </div>
                       </form>
@@ -1894,10 +1811,10 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                               disabled={aiCurriculumInserting}
                               className="px-4 py-2 text-sm border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
                             >
-                              Regenerate
+                              {aiCurriculumMode === 'chat' ? 'Back to the conversation' : 'Regenerate'}
                             </button>
                             <div className="flex items-center gap-3">
-                              <p className="text-xs text-slate-400 hidden sm:block">Includes lesson notes, slides, quizzes &amp; activities</p>
+                              <p className="text-xs text-slate-400 hidden sm:block">Then writes complete notes and slides for every lesson</p>
                               <button
                                 type="button"
                                 onClick={handleAICurriculumInsert}
@@ -1929,9 +1846,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                     onRename={() => { setEditingSectionId(section.id); setEditingSectionTitle(section.title); }}
                     onDelete={() => setDeleteTarget({ type: 'section', id: section.id, name: section.title })}
                     onAddLesson={() => { setAddingLessonTo(section.id); setLessonForm({ title: '', type: 'video', content: '', url: '', duration_minutes: 10, is_preview: false, is_required: true }); }}
-                    onGenerateDocs={() => handleGenerateSectionDocs(section)}
+                    onGenerateDocs={() => setStudio({ sectionIds: [section.id] })}
                     onLectureVideo={() => setLectureSection({ id: section.id, title: section.title })}
-                    generatingDocs={generatingSectionDocsId === section.id}
+                    generatingDocs={false}
                   >
                     {editingSectionId === section.id && (
                       <div className="px-4 py-3 bg-sky-50 border-b border-sky-100 flex items-center gap-2">
@@ -1975,7 +1892,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                 <span className="text-xs text-slate-400 flex items-center gap-1"><Clock className="w-3 h-3" />{lesson.duration_minutes}m</span>
                                 {lesson.is_required && <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-md font-medium flex items-center gap-1"><Lock className="w-2.5 h-2.5" />Required</span>}
                                 {lesson.is_preview && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-md font-medium flex items-center gap-1"><Globe className="w-2.5 h-2.5" />Free preview</span>}
-                                <LessonDocumentBadges lessonId={lesson.id} />
+                                <LessonDocumentBadges key={`${lesson.id}-${materialsVersion}`} lessonId={lesson.id} />
                               </div>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
@@ -2148,7 +2065,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                                   Loading documents...
                                 </div>
                               }>
-                                <LessonDocumentViewer lessonId={lesson.id} courseId={selectedCourse} />
+                                <LessonDocumentViewer key={`${lesson.id}-${materialsVersion}`} lessonId={lesson.id} courseId={selectedCourse} />
                               </Suspense>
                             </div>
                           )}
@@ -2983,6 +2900,31 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       </div>
 
       {/* AI Quiz from Curriculum modal */}
+      {studio && selectedCourse && (
+        <Suspense fallback={null}>
+          <CourseContentStudio
+            courseId={selectedCourse}
+            courseTitle={courses.find(c => c.id === selectedCourse)?.title || 'Course'}
+            initialSectionIds={studio.sectionIds}
+            autoStart={studio.autoStart}
+            onClose={() => { setStudio(null); fetchSections().catch(() => {}); }}
+            onChanged={() => setMaterialsVersion(v => v + 1)}
+          />
+        </Suspense>
+      )}
+
+      {showCourseLectures && selectedCourse && (
+        <Suspense fallback={null}>
+          <CourseLecturesModal
+            courseId={selectedCourse}
+            courseTitle={courses.find(c => c.id === selectedCourse)?.title || 'Course'}
+            sections={sections.map(sec => ({ id: sec.id, title: sec.title, lessonCount: sec.lessons?.length || 0 }))}
+            onClose={() => { setShowCourseLectures(false); fetchSections().catch(() => {}); }}
+            onLessonAdded={() => { fetchSections().catch(() => {}); }}
+          />
+        </Suspense>
+      )}
+
       {lectureSection && (
         <Suspense fallback={null}>
           <LectureVideoModal

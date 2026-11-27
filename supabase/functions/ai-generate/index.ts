@@ -80,8 +80,15 @@ function validatePlannerChat(obj: unknown): boolean {
   return !o.ready || (o.brief !== null && typeof o.brief === 'object');
 }
 
+function validateLessonSlides(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return Array.isArray(o.slides) && o.slides.length > 0
+    && (o.slides as Array<Record<string, unknown>>).every(sl => typeof sl.heading === 'string' && typeof sl.content_html === 'string');
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
   course_planner_chat: validatePlannerChat,
+  lesson_slides: validateLessonSlides,
   course_outline: validateCourseOutline,
   course_skeleton: validateCourseSkeleton,
   module_lessons: validateModuleLessons,
@@ -157,6 +164,8 @@ You can search the web. Use it to ground the plan in evidence, not for small tal
 - Do not search before you know the target and the location; ask for them first.
 - Write what you learned into "research_notes": six to ten short factual lines (skills and tools employers ask for most, common entry requirements, anything that should shape the course). Only include what the search results support. If the results were thin or you could not search, say so plainly in research_notes and in your reply, and mark any advice that is your general knowledge as such.
 - Tell the teacher briefly what you found and how it changes your recommendation.
+
+Extending an existing course: when "Existing course" is given below, the teacher is adding to or improving a course that already exists. Read its outline and the plan agreed earlier first; do not ask about anything they already answer. Recommend what to add next (new weeks, deeper coverage, projects, job-search preparation) without repeating weeks that exist. In the brief, num_modules is the number of NEW weeks to add (1 to 12), title_idea is the existing course title, and "approach" should say what the new weeks focus on.
 
 Pinning down specifics is your job, not the teacher's. Before you finish you must know, or have openly assumed: the exact skill or job role the course leads to, the country or city where learners will look for work, their starting level, and the time they have. If the teacher answers vaguely ("students", "get a job"), offer two to four concrete options to pick from rather than accepting the vague answer.
 
@@ -270,28 +279,46 @@ Output shape: {
 }
 Standards:
 - Each section title: "Week N: [Topic]" or "Module N: [Topic]" — specific, academically precise
-- 3-4 lessons per section: mix of article (theoretical/conceptual) and document (applied/analytical) types
+- Exactly the requested number of lessons per section: mix of article (conceptual) and document (applied) types
 - Lesson titles: specific and scholarly (not generic headings like "Introduction to X")
 - Lesson description: 1 precise sentence stating the specific theory, concept, or skill covered
 - estimated_duration_minutes: 60-90 per lesson
 - Quiz: exactly 1 per section with 4-5 questions targeting analysis/application/evaluation; mcq options must be 4 strings; correct_answer must exactly match an option; explanation 1-2 sentences
 - Activity: exactly 1 per section; instructions 2-3 sentences; target higher-order thinking
 - PROGRESSION: scaffold from foundational → applied → critical/evaluative across sections
-- If existing sections provided: build directly on covered material — advance complexity, introduce new frameworks, explicitly connect to prior content`,
+- If existing sections provided: build directly on covered material — advance complexity, introduce new frameworks, explicitly connect to prior content
+- Number the sections from the starting week number given, so they continue the existing course
+- When a COURSE BRIEF is given it overrides the academic style, durations and lesson types above: design every week for those learners and that result, around the real tasks, tools and projects in the brief`,
 
-    lesson_notes: `You are a university lecturer writing clear, scholarly lesson notes for students. ${jsonRule}
+    lesson_notes: `You are an expert teacher writing the complete study notes for one lesson. A learner who reads only these notes must be able to understand and apply everything the lesson promises. ${jsonRule}
 Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-Standards for content_html (target 600-900 words):
-- Semantic HTML only: h2, h3, p, ul, ol, li, strong, em, blockquote. No scripts, no inline styles.
-- Academic register throughout.
-Required sections (keep each concise):
-  1. <h2>Introduction</h2> — topic context and relevance (80-100 words)
-  2. <h2>Learning Objectives</h2> — 4-5 Bloom's-aligned outcomes as a <ul>
-  3. <h2>Core Concepts</h2> — 2-3 subsections (h3), each 120-160 words: definition, key mechanism, brief example
-  4. <h2>Critical Perspectives</h2> — 1-2 contrasting viewpoints or limitations (80-100 words)
-  5. <h2>Summary</h2> — synthesis + 2 study questions (60-80 words)
-key_points: 5-7 precise sentences covering the main concepts
-estimated_read_time_minutes: at 200 words/min`,
+content_html (1,200 to 1,800 words):
+- Semantic HTML only: h2, h3, p, ul, ol, li, strong, em, blockquote, code, pre, table, thead, tbody, tr, th, td. No scripts, styles or images.
+- Teach, do not just describe: explain each idea from first principles, then show it in use.
+Structure:
+  1. <h2>Why this matters</h2> where this is used in real work, and what the learner will be able to do after the lesson.
+  2. <h2>What you will learn</h2> 3 to 5 concrete outcomes as a list.
+  3. One <h2> per core concept (2 to 4 concepts). For each: a plain explanation, how it works step by step, and a concrete example. For technical subjects include a short, correct code or command example in <pre><code>; for other subjects a realistic scenario, calculation or case.
+  4. <h2>Worked example</h2> one end-to-end example that combines the concepts, shown step by step.
+  5. <h2>Common mistakes</h2> 3 to 5 mistakes and how to avoid them.
+  6. <h2>Practice</h2> 2 or 3 exercises, each with a short model answer or hints.
+  7. <h2>Summary</h2> the key ideas in a few sentences, and how they lead into the next lesson.
+Rules:
+- Cover exactly what this lesson's title and description promise. Other lessons of the same week are listed: do not teach their content. Build on earlier weeks without re-teaching them.
+- Be accurate. Where details depend on versions, tools or local rules, say so instead of inventing specifics.
+- key_points: 5 to 8 complete sentences, one per essential idea.
+- estimated_read_time_minutes: at 200 words per minute.
+- When a COURSE BRIEF is given, write for those learners, at that level, in that tone and approach, instead of an academic style.`,
+
+    lesson_slides: `You are an expert teacher turning one lesson's study notes into the slide deck you would teach that lesson from. ${jsonRule}
+Output shape: {"slides_title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
+Rules:
+- Cover EVERY concept, step, example, mistake and exercise in the notes, in the same order. Depth comes from more slides and full speaker notes, never from crowding one slide.
+- 10 to 14 slides: title | what you will learn | one or more slides per concept (split a big concept over several slides) | the worked example walked through over one or more slides | common mistakes | check your understanding (2 or 3 quick questions) | summary and what comes next.
+- content_html is what the audience sees: h3, p, ul, li, strong, code, pre only. At most 6 bullets and about 60 words per slide; a code snippet of at most 12 lines in <pre><code> is allowed.
+- speaker_notes: 60 to 110 words of plain text per slide: what the presenter says to teach this slide, including the explanation, the example and one question to ask the class. Someone who has not read the notes must be able to deliver the lesson from these.
+- Use only what the notes contain; do not add new facts.
+- When a COURSE BRIEF is given, match its learners and tone.`,
 
     presentation_slides: `You are a university academic creating a scholarly lecture slide deck. ${jsonRule}
 Output shape: {"title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
@@ -420,7 +447,14 @@ ${brief ? brief : 'Ensure the course meets tertiary education standards with cle
       const research = notes
         ? `Research already done (from your earlier web searches):\n${notes}\n\n`
         : 'No web research has been done yet.\n\n';
-      return `${research}Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
+      const outline = String(input.existing_outline ?? '').trim().slice(0, 6000);
+      const savedBrief = input.saved_brief && typeof input.saved_brief === 'object'
+        ? `\nPlan agreed earlier:\n${JSON.stringify(input.saved_brief).slice(0, 3000)}\n`
+        : '';
+      const existing = outline
+        ? `Existing course: ${String(input.course_title ?? '').slice(0, 200)}\nCurrent outline:\n${outline}\n${savedBrief}\n`
+        : '';
+      return `${existing}${research}Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
     }
 
     case 'course_skeleton':
@@ -500,17 +534,29 @@ Academic Level: ${input.difficulty}
 Number of Weeks/Sections: ${input.num_sections}
 Lessons per Section: ${input.lessons_per_section}
 
-The curriculum must reflect university-level standards with clear academic progression, scaffolded complexity, and alignment between lessons, assessments, and activities.${input.existing_sections_summary ? `\n\nAlready covered in previous weeks — DO NOT repeat; build directly on these foundations with increased depth and complexity:\n${input.existing_sections_summary}` : ''}`;
+Number the sections starting from Week ${input.start_number ?? 1}.
 
-    case 'lesson_notes':
-      return `Write comprehensive, scholarly university lecture notes for:
-Lesson Title: ${input.lesson_title}
-Section / Module: ${input.section_title}
+${brief ? 'Design to the course brief below.' : 'The curriculum must reflect university-level standards with clear academic progression, scaffolded complexity, and alignment between lessons, assessments, and activities.'}${input.existing_sections_summary ? `\n\nAlready covered in previous weeks — DO NOT repeat; build directly on these foundations with increased depth and complexity:\n${input.existing_sections_summary}` : ''}${input.focus ? `\n\nWhat the teacher asked for in these new weeks: ${input.focus}` : ''}${brief}`;
+
+    case 'lesson_notes': {
+      const others = Array.isArray(input.other_lessons) ? (input.other_lessons as string[]).filter(Boolean) : [];
+      const earlier = Array.isArray(input.previous_weeks) ? (input.previous_weeks as string[]).filter(Boolean) : [];
+      return `Write the complete study notes for this lesson.
 Course: ${input.course_title}
-Target Audience: ${input.target_audience}
-Academic Level: ${input.difficulty}
+Week / module: ${input.section_title}
+Lesson: ${input.lesson_title}${input.lesson_description ? `\nWhat this lesson covers: ${input.lesson_description}` : ''}
+Learners: ${input.target_audience}
+Level: ${input.difficulty}${others.length ? `\n\nOther lessons in this week (do not teach their content):\n${others.map(t => `- ${t}`).join('\n')}` : ''}${earlier.length ? `\n\nEarlier weeks (already taught; build on them):\n${earlier.map(t => `- ${t}`).join('\n')}` : ''}${brief}`;
+    }
 
-Notes must be equivalent to a textbook chapter — detailed, theoretically grounded, with worked examples, critical perspectives, and clear academic structure.`;
+    case 'lesson_slides':
+      return `Create the slide deck for this lesson from its study notes.
+Course: ${input.course_title}
+Week / module: ${input.section_title}
+Lesson: ${input.lesson_title}
+
+Study notes:
+${String(input.notes_text ?? '').slice(0, 14000)}${brief}`;
 
     case 'presentation_slides':
       return `Create a comprehensive university lecture slide deck for:
@@ -622,7 +668,9 @@ function getMaxTokens(task: string, input: Record<string, unknown> = {}): number
   if (task === 'section_notes') return 10000;
   // section_slides: slides only (no notes) — 8 slides
   if (task === 'section_slides') return 4000;
-  if (task === 'lesson_notes') return 4000;
+  // Deep notes and the slide deck built from them are long answers
+  if (task === 'lesson_notes') return 7000;
+  if (task === 'lesson_slides') return 7000;
   if (task === 'presentation_slides') return 4000;
   if (task === 'lesson_content') return 10000;
   if (task === 'generate_exam') return 8000;
@@ -1057,6 +1105,7 @@ Deno.serve(async (req: Request) => {
           flashcards: 'ai_flashcards',
           full_curriculum: 'ai_full_curriculum',
           presentation_slides: 'ai_presentations',
+          lesson_slides: 'ai_presentations',
           section_slides: 'ai_presentations',
           generate_exam: 'ai_exams',
         };
@@ -1231,7 +1280,7 @@ Deno.serve(async (req: Request) => {
     const TOKEN_COSTS: Record<string, number> = {
       course_outline: 5, course_planner_chat: 1, course_skeleton: 2, module_lessons: 1, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
       summarize_lesson: 3, rewrite_content: 5, translate_content: 7, activity_ideas: 4,
-      full_curriculum: 20, lesson_notes: 5, presentation_slides: 10,
+      full_curriculum: 20, lesson_notes: 5, lesson_slides: 6, presentation_slides: 10,
       section_content: 8, section_notes: 5, section_slides: 10, generate_exam: 10,
     };
     if (orgId) {

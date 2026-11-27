@@ -6,7 +6,8 @@ import { supabase } from '../../lib/supabase';
 import AILoader from '../ui/AILoader';
 import CoursePlannerChat, { PLANNER_GREETING } from './CoursePlannerChat';
 import { generateCourseOutline } from '../../lib/ai';
-import type { CourseOutlineOutput, CourseOutlineInput, CourseBrief, PlannerMessage, AIModuleItem, AILessonItem, OutlineProgress } from '../../lib/ai';
+import { saveCoursePlan } from '../../lib/coursePlan';
+import type { CourseOutlineOutput, CourseOutlineInput, CourseBrief, PlannerMessage, WebSource, AIModuleItem, AILessonItem, OutlineProgress } from '../../lib/ai';
 
 interface Props {
   onClose: () => void;
@@ -30,6 +31,7 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
   const [startedFrom, setStartedFrom] = useState<'chat' | 'form'>('chat');
   const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([PLANNER_GREETING]);
   const [brief, setBrief] = useState<CourseBrief | null>(null);
+  const [research, setResearch] = useState<{ notes: string; sources: WebSource[] }>({ notes: '', sources: [] });
   const [form, setForm] = useState({
     topic: '',
     target_audience: 'professionals',
@@ -141,7 +143,15 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
         },
       });
       if (rpcErr) throw rpcErr;
-      navigate(`${navigatePrefix}?courseId=${data}`);
+      if (startedFrom === 'chat' && brief) {
+        // Keep the agreed plan with the course, so notes, slides, lectures and any weeks
+        // added later follow it.
+        await saveCoursePlan(String(data), {
+          brief, research_notes: research.notes, sources: research.sources, messages: plannerMessages,
+        });
+      }
+      // Open the builder and start writing the notes and slides for every lesson
+      navigate(`${navigatePrefix}?courseId=${data}&materials=generate`);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create course');
@@ -188,6 +198,7 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
                 brief={brief}
                 onBriefChange={setBrief}
                 onCreate={handleCreateFromBrief}
+                onResearchChange={setResearch}
               />
             </>
           )}
