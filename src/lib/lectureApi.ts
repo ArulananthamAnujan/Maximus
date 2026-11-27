@@ -10,6 +10,10 @@ export interface LecturePart {
   status: 'draft' | 'rendering' | 'saving' | 'ready' | 'failed';
   error_message: string | null;
   duration_seconds: number | null;
+  lesson_id?: string | null;
+  course_id?: string;
+  /** Where the finished presenter video is kept in course storage */
+  storage_path?: string | null;
   /** The live board shown beside the video (code typed, output, key points) */
   board?: { total_words: number; steps: Array<{ kind: string; title?: string; code?: string; points?: string[] }> } | null;
 }

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Code2, Video, Loader2, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
+import { X, Code2, Film, Video, Loader2, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
 import { callLectureApi, MAX_LECTURE_PART_CHARS as MAX_PART_CHARS, lectureMinutes as minutesFor } from '../../lib/lectureApi';
+import { supabase } from '../../lib/supabase';
+import ComposeLectureModal from '../course/ComposeLectureModal';
+import type { ComposablePart } from '../course/ComposeLectureModal';
+import type { Board } from '../course/LectureBoard';
 import type { LecturePart as Part } from '../../lib/lectureApi';
 import LecturePresenterPicker from './LecturePresenterPicker';
 
@@ -24,6 +28,38 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   // What the presenter service last said about videos still being made
   const [checks, setChecks] = useState<Record<string, { status: string; progress: number | null }>>({});
   const [lastCheck, setLastCheck] = useState<number | null>(null);
+  // Lessons whose video already has the board inside it
+  const [embedded, setEmbedded] = useState<Set<string>>(new Set());
+  const [composing, setComposing] = useState<ComposablePart | null>(null);
+  const [notice, setNotice] = useState('');
+  const readyLessonIds = parts.filter(p => p.status === 'ready' && p.lesson_id).map(p => p.lesson_id as string).join(',');
+  const loadEmbedded = useCallback(async () => {
+    const ids = readyLessonIds ? readyLessonIds.split(',') : [];
+    if (!ids.length) { setEmbedded(new Set()); return; }
+    const { data } = await supabase.from('lesson_boards').select('lesson_id, board').in('lesson_id', ids);
+    setEmbedded(new Set((data ?? []).filter(r => (r.board as { embedded?: boolean } | null)?.embedded).map(r => r.lesson_id as string)));
+  }, [readyLessonIds]);
+  useEffect(() => { loadEmbedded().catch(() => {}); }, [loadEmbedded]);
+
+  /** Puts the original presenter video back on the lesson. */
+  const restoreOriginal = async (p: Part) => {
+    if (!p.lesson_id || !p.storage_path) return;
+    const url = supabase.storage.from('course-videos').getPublicUrl(p.storage_path).data.publicUrl;
+    await supabase.from('lessons').update({ url, video_url: url, video_storage_path: p.storage_path }).eq('id', p.lesson_id);
+    const { data } = await supabase.from('lesson_boards').select('board').eq('lesson_id', p.lesson_id).maybeSingle();
+    if (data?.board) {
+      await supabase.from('lesson_boards').update({ board: { ...(data.board as object), embedded: false }, updated_at: new Date().toISOString() }).eq('lesson_id', p.lesson_id);
+    }
+    await loadEmbedded();
+  };
+
+  const remakeBoard = async () => {
+    // A new board makes a video with the old board inside it out of date
+    const outdated = parts.filter(p => p.lesson_id && embedded.has(p.lesson_id));
+    await run('board', () => callLectureApi('board', { section_id: sectionId }));
+    for (const p of outdated) await restoreOriginal(p).catch(() => {});
+    if (outdated.length) setNotice('The board changed, so the lesson is back to the original video. Put the board inside the video again when you are happy with it.');
+  };
   const [voiceId, setVoiceId] = useState('');
   const readyCountRef = useRef(0);
 
@@ -181,11 +217,11 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
                     <p className="text-xs text-slate-500">
                       {parts.some(p => p.board?.steps?.length)
                         ? `Shown beside the video: ${parts.reduce((n, p) => n + (p.board?.steps?.length ?? 0), 0)} steps of code, output and key points, timed to what the presenter says.`
-                        : 'Shows the code being typed and its output (or the key points) beside the presenter, timed to what she says.'}
+                        : 'Shows the code being typed and its output (or the key points) beside the presenter, timed to what the presenter says.'}
                     </p>
                   </div>
                   <button
-                    onClick={() => run('board', () => callLectureApi('board', { section_id: sectionId }))}
+                    onClick={remakeBoard}
                     disabled={!!busy}
                     className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-50 disabled:opacity-50"
                   >
@@ -193,6 +229,28 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
                     {busy === 'board' ? 'Designing the board…' : parts.some(p => p.board?.steps?.length) ? 'Make the board again' : 'Add live board'}
                   </button>
                 </div>
+                {notice && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">{notice}</p>}
+                {parts.filter(p => p.status === 'ready' && p.lesson_id && p.storage_path && p.board?.steps?.length).map(p => {
+                  const inside = embedded.has(p.lesson_id as string);
+                  return (
+                    <div key={p.id} className="flex items-center gap-2 flex-wrap bg-slate-50 rounded-lg px-3 py-2">
+                      <span className="flex-1 min-w-[180px] text-xs text-slate-700">
+                        {parts.length > 1 && <strong className="font-semibold">Part {p.part_index + 1}: </strong>}
+                        {inside ? 'The board is inside the video.' : 'The board shows beside the video.'}
+                      </span>
+                      <button
+                        onClick={() => setComposing({ id: p.id, title: p.title, lesson_id: p.lesson_id as string, storage_path: p.storage_path as string, board: p.board as unknown as Board })}
+                        disabled={!!busy}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50"
+                      >
+                        <Film className="w-3.5 h-3.5" /> {inside ? 'Make it again' : 'Put the board inside the video'}
+                      </button>
+                      {inside && (
+                        <button onClick={() => restoreOriginal(p)} disabled={!!busy} className="text-xs font-semibold text-slate-600 hover:underline">Use the original video</button>
+                      )}
+                    </div>
+                  );
+                })}
                 {parts.some(p => p.board?.steps?.length) && (
                   <ol className="text-xs text-slate-600 space-y-1 max-h-40 overflow-y-auto pl-1">
                     {parts.flatMap(p => p.board?.steps ?? []).map((st, i) => (
@@ -291,6 +349,16 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
           </div>
         )}
       </div>
+      {composing && (
+        <ComposeLectureModal
+          part={composing}
+          courseId={parts.find(p => p.id === composing.id)?.course_id ?? ''}
+          heading={sectionTitle}
+          subheading={parts.length > 1 ? `Lecture · part ${(parts.find(p => p.id === composing.id)?.part_index ?? 0) + 1} of ${parts.length}` : 'Lecture'}
+          onClose={() => setComposing(null)}
+          onDone={() => { loadEmbedded().catch(() => {}); onLessonAddedRef.current(); }}
+        />
+      )}
     </div>
   );
 }

@@ -261,7 +261,7 @@ Rules:
 
 // ─── Actions ────────────────────────────────────────────────────────────────
 
-const BASE_FIELDS = "id, section_id, course_id, part_index, part_count, title, script, status, avatar_id, voice_id, lesson_id, duration_seconds, error_message, updated_at";
+const BASE_FIELDS = "id, section_id, course_id, part_index, part_count, title, script, status, avatar_id, voice_id, lesson_id, storage_path, duration_seconds, error_message, updated_at";
 const ROW_FIELDS = `${BASE_FIELDS}, board`;
 
 const SETUP_MESSAGE = "Lecture videos are not set up in the database yet. An administrator needs to run database update 055 (lecture videos) in Supabase, then try again.";

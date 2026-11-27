@@ -160,7 +160,8 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
     supabase.from('lesson_boards').select('board').eq('lesson_id', lesson.id).maybeSingle()
       .then(({ data }) => {
         const b = data?.board as Board | undefined;
-        if (active) setBoard(b && Array.isArray(b.steps) && b.steps.length ? { lessonId: lesson.id, board: b } : null);
+        // A board already inside the video is not shown again beside it
+        if (active) setBoard(b && !b.embedded && Array.isArray(b.steps) && b.steps.length ? { lessonId: lesson.id, board: b } : null);
       });
     return () => { active = false; };
   }, [activeLesson]);

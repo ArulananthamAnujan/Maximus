@@ -11,7 +11,14 @@ export interface BoardStep {
   output?: string;
   points?: string[];
 }
-export interface Board { total_words: number; steps: BoardStep[] }
+export interface Board {
+  total_words: number;
+  steps: BoardStep[];
+  /** The board has been put inside the lesson's video, so the player does not show it again */
+  embedded?: boolean;
+  composite_path?: string;
+  original_path?: string;
+}
 
 interface Props {
   board: Board;
