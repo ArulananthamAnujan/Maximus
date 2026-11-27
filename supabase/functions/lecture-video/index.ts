@@ -319,37 +319,67 @@ function findWords(hay: string[], needle: string[], from: number): number {
   return -1;
 }
 
-/** Reads the board format (see writeBoard) and pins each step to a word in the script. */
+// A step starts at a line like "=== STEP" (also "=== STEP 3 ===", "### Step 3", "**=== STEP**").
+const STEP_LINE = /^[ \t]*(?:\*\*)?[ \t]*(?:={2,}|#{1,6})[ \t]*STEP\b.*$/gim;
+// A part of a step starts at a line like "--- CODE" (also "---CODE:", "--- Output ---").
+const SECTION_LINE = /^[ \t]*(?:\*\*)?[ \t]*-{3,}[ \t]*(CODE|OUTPUT|POINTS)\b.*$/i;
+const FIELD_LINE = /^[ \t]*(AT|ANCHOR|KIND|TYPE|TITLE|LANGUAGE|LANG)[ \t]*:[ \t]*(.*)$/i;
+
+const unquote = (s: string) => s.trim().replace(/^[`"'“‘]+|[`"'”’]+$/g, "").trim();
+
+/**
+ * Reads the board format (see writeBoard) and pins each step to a word in the script.
+ * Forgiving about small slips in the format (numbered or bold step lines, fenced code,
+ * "KIND: code (python)"); steps that still cannot be read are left out.
+ */
 export function parseBoard(text: string, script: string): Board | null {
   const scriptWords = words(script);
   if (scriptWords.length === 0) return null;
-  const chunks = text.replace(/^\s*```\w*\s*/, "").replace(/\s*```\s*$/, "").split(/^\s*===\s*STEP\s*$/m).slice(1);
+  const clean = text.replace(/\r\n?/g, "\n").replace(/^[ \t]*```[\w+-]*[ \t]*$/gm, "");
+  const chunks = clean.split(STEP_LINE).slice(1);
   const raw: Array<Omit<BoardStep, "at"> & { anchor: string }> = [];
   for (const chunk of chunks) {
-    const [head, ...rest] = chunk.split(/^\s*---\s*(?=CODE|OUTPUT|POINTS)/m);
-    const field = (name: string) => new RegExp(`^\\s*${name}:\\s*(.+)$`, "mi").exec(head)?.[1]?.trim() ?? "";
-    const parts = new Map<string, string>();
-    for (const sec of rest) {
-      const nl = sec.indexOf("\n");
-      parts.set(sec.slice(0, nl < 0 ? undefined : nl).trim().toUpperCase(), nl < 0 ? "" : sec.slice(nl + 1).replace(/\s+$/, ""));
+    const fields = new Map<string, string>();
+    const sections = new Map<string, string[]>();
+    let current: string | null = null;
+    for (const line of chunk.split("\n")) {
+      const sec = SECTION_LINE.exec(line);
+      if (sec) { current = sec[1].toUpperCase(); sections.set(current, []); continue; }
+      if (current) { sections.get(current)!.push(line); continue; }
+      const f = FIELD_LINE.exec(line.replace(/\*\*|__/g, "").replace(/^[ \t]*[-*][ \t]+/, ""));
+      if (f) {
+        const key = ({ ANCHOR: "AT", TYPE: "KIND", LANG: "LANGUAGE" } as Record<string, string>)[f[1].toUpperCase()] ?? f[1].toUpperCase();
+        if (!fields.has(key)) fields.set(key, unquote(f[2]));
+      }
     }
-    const kind = field("KIND").toLowerCase();
-    const anchor = field("AT");
-    if (!anchor) continue;
-    if (kind === "code" && parts.get("CODE")?.trim()) {
-      raw.push({ anchor, kind: "code", title: field("TITLE").slice(0, 60), language: field("LANGUAGE").toLowerCase().slice(0, 20) || "text",
-        code: parts.get("CODE")!.replace(/^\n+/, "").slice(0, 1500), output: (parts.get("OUTPUT") ?? "").trim().slice(0, 800) || undefined });
+    const section = (name: string) => (sections.get(name) ?? []).join("\n").replace(/^\s*\n/, "").replace(/\s+$/, "");
+    const code = section("CODE");
+    const points = section("POINTS").split("\n")
+      .map(l => l.replace(/\*\*/g, "").replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter(Boolean).slice(0, 6);
+    const title = (fields.get("TITLE") ?? "");
+    const kindText = (fields.get("KIND") ?? "").toLowerCase();
+    let kind: BoardStep["kind"] | null =
+      /code|example|calculation|formula/.test(kindText) ? "code"
+      : /point|bullet|list|idea/.test(kindText) ? "points"
+      : /title|heading|section/.test(kindText) ? "title"
+      : code.trim() ? "code" : points.length ? "points" : title ? "title" : null;
+    if (kind === "code" && !code.trim()) kind = points.length ? "points" : title ? "title" : null;
+    if (kind === "points" && !points.length) kind = code.trim() ? "code" : title ? "title" : null;
+    const anchor = fields.get("AT") ?? "";
+    if (kind === "code") {
+      raw.push({ anchor, kind, title: title.slice(0, 60), language: (fields.get("LANGUAGE") ?? "").toLowerCase().replace(/[^a-z0-9+#-].*$/, "").slice(0, 20) || "text",
+        code: code.slice(0, 1500), output: section("OUTPUT").trim().slice(0, 800) || undefined });
     } else if (kind === "points") {
-      const points = (parts.get("POINTS") ?? "").split("\n").map(l => l.replace(/^\s*[-*•]\s*/, "").trim()).filter(Boolean).slice(0, 6);
-      if (points.length) raw.push({ anchor, kind: "points", title: field("TITLE").slice(0, 80), points: points.map(x => x.slice(0, 120)) });
-    } else if (kind === "title" && field("TITLE")) {
-      raw.push({ anchor, kind: "title", title: field("TITLE").slice(0, 80) });
+      raw.push({ anchor, kind, title: title.slice(0, 80), points: points.map(x => x.slice(0, 120)) });
+    } else if (kind === "title") {
+      raw.push({ anchor, kind, title: title.slice(0, 80) });
     }
   }
   // Pin to the script in order; a step whose words are not found goes between its neighbours
   let from = 0;
   const placed: Array<number | null> = raw.map(step => {
     const w = words(step.anchor);
+    if (w.length === 0) return null;
     for (const n of [w.length, 6, 4, 3]) {
       const i = findWords(scriptWords, w.slice(0, Math.min(n, w.length)), from);
       if (i >= 0) { from = i + 1; return i; }
@@ -366,15 +396,19 @@ export function parseBoard(text: string, script: string): Board | null {
     }
     const last = steps[steps.length - 1]?.at ?? -1;
     const { anchor: _anchor, ...rest } = step;
-    steps.push({ ...rest, at: Math.max(at, last + 1) } as BoardStep);
+    steps.push({ ...rest, at: Math.min(scriptWords.length - 1, Math.max(at, last + 1)) } as BoardStep);
   });
-  return steps.length >= 2 ? { total_words: scriptWords.length, steps } : null;
+  return steps.length >= 1 ? { total_words: scriptWords.length, steps } : null;
 }
 
-async function writeBoard(courseTitle: string, sectionTitle: string, script: string, notes: string): Promise<Board> {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) throw new UserError("AI is not set up yet. An administrator needs to add the ANTHROPIC_API_KEY secret.", 503);
-  const system = `You design the live board shown next to a video lecture. While the presenter speaks, the board shows the code being typed and what it prints, or the key points when there is no code.
+/** Drops the last, cut-off step of an answer that hit the length limit. */
+function dropCutOffStep(text: string): string {
+  let last = -1;
+  for (const m of text.matchAll(STEP_LINE)) last = m.index ?? last;
+  return last > 0 ? text.slice(0, last) : text;
+}
+
+const BOARD_SYSTEM = `You design the live board shown next to a video lecture. While the presenter speaks, the board shows the code being typed and what it prints, or the key points when there is no code.
 Write the board in exactly this plain-text format, with nothing before or after it (no JSON, no markdown fences):
 === STEP
 AT: 6 to 10 consecutive words copied exactly from the script, where this step should appear
@@ -401,28 +435,46 @@ Rules:
 - KIND title: an optional heading step at a major change of topic (TITLE only).
 - For subjects without code, use points, and code steps with LANGUAGE text for formulas, calculations or worked examples.
 - Never add facts the script and notes do not support.`;
+
+/** Designs the board for one part's script, trying a second time if the first answer cannot be read. */
+async function writeBoard(courseTitle: string, sectionTitle: string, script: string, notes: string, deadline: number): Promise<Board> {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new UserError("AI is not set up yet. An administrator needs to add the ANTHROPIC_API_KEY secret.", 503);
   const user = `Course: ${courseTitle}\nModule: ${sectionTitle}\n\nScript the presenter says:\n${script.slice(0, 6000)}${notes ? `\n\nLesson notes (for exact code and names):\n${notes.slice(0, 8000)}` : ""}`;
-  let res: Response;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4000, temperature: 0.3, system, messages: [{ role: "user", content: user }] }),
-      signal: AbortSignal.timeout(110_000),
-    });
-  } catch {
-    throw new UserError("The AI took too long to design the board. Please try again.", 504);
+  const reminder = "\n\nImportant: your previous answer could not be read. Start every step with a line that is exactly === STEP, then the AT, KIND and TITLE lines, then the --- CODE, --- OUTPUT or --- POINTS parts. Nothing else.";
+  for (let attempt = 1; ; attempt++) {
+    const timeLeft = deadline - Date.now();
+    let res: Response;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6", max_tokens: 6000, temperature: attempt === 1 ? 0.3 : 0.2, system: BOARD_SYSTEM,
+          messages: [{ role: "user", content: attempt === 1 ? user : user + reminder }],
+        }),
+        signal: AbortSignal.timeout(Math.max(20_000, timeLeft)),
+      });
+    } catch {
+      throw new UserError("The AI took too long to design the board. Please try again.", 504);
+    }
+    if (!res.ok) {
+      console.error("Anthropic error", res.status, (await res.text()).slice(0, 300));
+      throw new UserError([429, 500, 502, 503, 529].includes(res.status)
+        ? "The AI service is busy right now. Please try again in a minute."
+        : "The AI could not design the board. Please try again.", 503);
+    }
+    const data = await res.json() as { stop_reason?: string; content: Array<{ type: string; text?: string }> };
+    let text = data.content.find(c => c.type === "text")?.text ?? "";
+    if (data.stop_reason === "max_tokens") text = dropCutOffStep(text);
+    const board = parseBoard(text, script);
+    if (board) return board;
+    console.error(`board unreadable (attempt ${attempt}, stop ${data.stop_reason}, ${text.length} chars):`, JSON.stringify(text.slice(0, 700)));
+    // Try once more if there is time for it within this request
+    if (attempt >= 2 || deadline - Date.now() < 45_000) {
+      throw new UserError("The AI returned an unusable board. Please try again.", 502);
+    }
   }
-  if (!res.ok) {
-    console.error("Anthropic error", res.status, (await res.text()).slice(0, 300));
-    throw new UserError([429, 500, 502, 503, 529].includes(res.status)
-      ? "The AI service is busy right now. Please try again in a minute."
-      : "The AI could not design the board. Please try again.", 503);
-  }
-  const data = await res.json() as { content: Array<{ type: string; text?: string }> };
-  const board = parseBoard(data.content.find(c => c.type === "text")?.text ?? "", script);
-  if (!board) throw new UserError("The AI returned an unusable board. Please try again.", 502);
-  return board;
 }
 
 /** Shows the board on the lecture's lesson, once the video has become a lesson. */
@@ -434,17 +486,28 @@ async function publishBoard(admin: Admin, row: { lesson_id?: string | null; cour
   if (error) console.error("board publish failed:", error.code, error.message);
 }
 
-async function actionBoard(admin: Admin, userId: string, sectionId: string) {
+/** Designs the board for each part of a module's lecture (only the parts without one when `onlyMissing`). */
+async function actionBoard(admin: Admin, userId: string, sectionId: string, onlyMissing = false) {
   const { section, course, orgId } = await loadSectionForStaff(admin, userId, sectionId);
-  const rows = (await listRows(admin, sectionId)).filter((r: { script: string }) => String(r.script ?? "").trim().length > 50);
-  if (rows.length === 0) throw new UserError("Write this module's lecture script first.");
+  const withScript = (await listRows(admin, sectionId)).filter((r: { script: string }) => String(r.script ?? "").trim().length > 50);
+  if (withScript.length === 0) throw new UserError("Write this module's lecture script first.");
+  const rows = onlyMissing
+    ? withScript.filter((r: { board?: { steps?: unknown[] } | null }) => !r.board?.steps?.length)
+    : withScript;
+  if (rows.length === 0) return { parts: await listRows(admin, sectionId) };
   const { data: lessons } = await admin.from("lessons").select("id, content").eq("section_id", sectionId).order("order_index");
   const lectureLessons = new Set(rows.map((r: { lesson_id: string | null }) => r.lesson_id).filter(Boolean));
   const notes = (lessons ?? []).filter((l: { id: string }) => !lectureLessons.has(l.id))
     .map((l: { content: string | null }) => htmlToText(String(l.content ?? ""))).join("\n\n").slice(0, 8000);
   await ensureOrgBalance(admin, orgId, BOARD_TOKEN_COST * rows.length);
-  for (const row of rows) {
-    const board = await writeBoard(course.title, section.title, row.script, notes);
+  // The parts are designed side by side, within the time the course build waits (145 seconds)
+  const deadline = Date.now() + 130_000;
+  const results = await Promise.allSettled(rows.map((row: { script: string }) => writeBoard(course.title, section.title, row.script, notes, deadline)));
+  // Keep every part that worked, even when another part failed
+  for (const [i, result] of results.entries()) {
+    if (result.status !== "fulfilled") continue;
+    const row = rows[i];
+    const board = result.value;
     await chargeOrgTokens(admin, orgId, userId, "lecture_board", BOARD_TOKEN_COST);
     const { error } = await admin.from("lecture_videos").update({ board }).eq("id", row.id);
     if (error) {
@@ -454,6 +517,13 @@ async function actionBoard(admin: Admin, userId: string, sectionId: string) {
         : "Could not save the board. Please try again.", isMissingSchema(error) ? 503 : 500);
     }
     if (row.status === "ready") await publishBoard(admin, row, board);
+  }
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) {
+    const done = results.length - results.filter(r => r.status === "rejected").length;
+    const reason = failed.reason instanceof UserError ? failed.reason.message : "The AI could not design the board. Please try again.";
+    throw new UserError(done > 0 ? `${reason} (${done} of ${results.length} parts have a board now.)` : reason,
+      failed.reason instanceof UserError ? failed.reason.status : 500);
   }
   return { parts: await listRows(admin, sectionId) };
 }
@@ -853,7 +923,7 @@ Deno.serve(async (req: Request) => {
       case "sync": return json(await actionSync(admin, user.id, body.section_id));
       case "discard": return json(await actionDiscard(admin, user.id, body.section_id));
       case "course_status": return json(await actionCourseStatus(admin, user.id, body.course_id));
-      case "board": return json(await actionBoard(admin, user.id, body.section_id));
+      case "board": return json(await actionBoard(admin, user.id, body.section_id, String(body.only_missing) === "true"));
       default: return json({ error: "Unknown action" }, 400);
     }
   } catch (err) {

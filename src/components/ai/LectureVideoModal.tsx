@@ -54,9 +54,23 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   };
 
   const remakeBoard = async () => {
+    const before = new Map(parts.map(p => [p.id, JSON.stringify(p.board ?? null)]));
+    setBusy('board');
+    setError('');
+    let fresh: Part[] | null = null;
+    try {
+      fresh = (await callLectureApi<{ parts: Part[] }>('board', { section_id: sectionId })).parts;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+      // One part can have a new board even when another part failed
+      fresh = await callLectureApi<{ parts: Part[] }>('sync', { section_id: sectionId }).then(r => r.parts).catch(() => null);
+    } finally {
+      setBusy('');
+    }
+    if (!fresh) return;
+    applyParts(fresh);
     // A new board makes a video with the old board inside it out of date
-    const outdated = parts.filter(p => p.lesson_id && embedded.has(p.lesson_id));
-    await run('board', () => callLectureApi('board', { section_id: sectionId }));
+    const outdated = fresh.filter(p => p.lesson_id && embedded.has(p.lesson_id) && JSON.stringify(p.board ?? null) !== before.get(p.id));
     for (const p of outdated) await restoreOriginal(p).catch(() => {});
     if (outdated.length) setNotice('The board changed, so the lesson is back to the original video. Put the board inside the video again when you are happy with it.');
   };

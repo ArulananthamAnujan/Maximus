@@ -284,7 +284,8 @@ async function runTask(admin: Admin, task: Task, job: Job) {
       return;
     case "lecture_board":
       if (!task.section_id) throw new Error("This week no longer exists.");
-      await lecture(userId, "board", { section_id: task.section_id });
+      // A retry only designs the parts still without a board
+      await lecture(userId, "board", { section_id: task.section_id, only_missing: true });
       return;
     case "lecture_video": {
       if (!task.section_id) throw new Error("This week no longer exists.");
