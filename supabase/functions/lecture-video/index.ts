@@ -660,7 +660,7 @@ function describeSaveError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   const sizeMb = err instanceof SaveError ? err.sizeMb : 0;
   if (/\(413\)|maximum allowed size|payload too large|entity too large|too large/i.test(message)) {
-    return `The presenter service has finished this video, but it${sizeMb ? ` (${sizeMb} MB)` : ""} is larger than your Supabase upload limit, so it cannot be saved yet. In Supabase, go to Storage, Settings, and raise "Upload file size limit" above that size (the free plan allows at most 50 MB). It is then saved automatically, without making the video again.`;
+    return `The presenter service has finished this video, but it${sizeMb ? ` (${sizeMb} MB)` : ""} is larger than your Supabase upload limit, so it cannot be saved yet. In Supabase, go to Storage, Settings, and set "Global file size limit" to 5 GB (it cannot be lower than the course-videos bucket's own 5 GB limit; the free plan allows at most 50 MB). It is then saved automatically, without making the video again.`;
   }
   if (/timeout|timed out|aborted/i.test(message)) {
     return "The presenter service has finished this video, but copying it into your storage took too long. It is tried again automatically.";

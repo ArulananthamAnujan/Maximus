@@ -403,8 +403,8 @@ export async function composeLectureVideo(opts: ComposeOptions): Promise<File> {
   } catch {
     throw new Error('The browser would not record this video (it may be blocked by storage settings).');
   }
-  // Keep the file a sensible size: about 45 MB at most, sharper for short parts
-  const videoBits = Math.round(Math.min(2_500_000, Math.max(700_000, (45 * 8 * 1_048_576) / duration - 96_000)));
+  // Sharp enough to read code (about 19 MB a minute), but never more than about 450 MB
+  const videoBits = Math.round(Math.min(2_500_000, Math.max(1_000_000, (450 * 8 * 1_048_576) / duration - 96_000)));
   const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBits, audioBitsPerSecond: 96_000 });
   const chunks: Blob[] = [];
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };

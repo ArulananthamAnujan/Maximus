@@ -115,7 +115,7 @@ export default function ComposeLectureModal({ part, courseId, heading, subheadin
       }).catch(err => {
         const text = err instanceof Error ? err.message : '';
         throw new Error(/413|too large|maximum allowed size/i.test(text)
-          ? `The finished video (${Math.round(file.size / 1_048_576)} MB) is larger than your Supabase upload limit. Raise it in Supabase under Storage, Settings, "Upload file size limit", then try again.`
+          ? `The finished video (${Math.round(file.size / 1_048_576)} MB) is larger than your Supabase upload limit. In Supabase, go to Storage, Settings, set "Global file size limit" to 5 GB, then try again.`
           : 'Could not upload the finished video. Please try again.');
       });
       const url = supabase.storage.from(BUCKET).getPublicUrl(objectName).data.publicUrl;
