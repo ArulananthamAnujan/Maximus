@@ -261,7 +261,8 @@ Rules:
 
 // ─── Actions ────────────────────────────────────────────────────────────────
 
-const ROW_FIELDS = "id, section_id, course_id, part_index, part_count, title, script, status, avatar_id, voice_id, lesson_id, duration_seconds, error_message, updated_at";
+const BASE_FIELDS = "id, section_id, course_id, part_index, part_count, title, script, status, avatar_id, voice_id, lesson_id, duration_seconds, error_message, updated_at";
+const ROW_FIELDS = `${BASE_FIELDS}, board`;
 
 const SETUP_MESSAGE = "Lecture videos are not set up in the database yet. An administrator needs to run database update 055 (lecture videos) in Supabase, then try again.";
 
@@ -272,11 +273,189 @@ function isMissingSchema(error: { code?: string; message?: string } | null | und
     || /does not exist|could not find the (table|column)/i.test(String(error.message ?? ""));
 }
 
-async function listRows(admin: Admin, sectionId: string) {
-  const { data, error } = await admin.from("lecture_videos").select(ROW_FIELDS).eq("section_id", sectionId).order("part_index");
+/** Lecture rows with their boards; without the boards if database update 059 has not been run yet. */
+async function selectRows(admin: Admin, column: "section_id" | "course_id", id: string) {
+  let { data, error } = await admin.from("lecture_videos").select(ROW_FIELDS).eq(column, id).order("part_index");
+  if (error && /board/i.test(String(error.message ?? ""))) {
+    ({ data, error } = await admin.from("lecture_videos").select(BASE_FIELDS).eq(column, id).order("part_index"));
+  }
   if (isMissingSchema(error)) throw new UserError(SETUP_MESSAGE, 503);
-  if (error) throw new UserError("Could not load this module's lectures. Please try again.", 500);
+  if (error) throw new UserError("Could not load the lectures. Please try again.", 500);
   return data ?? [];
+}
+
+async function listRows(admin: Admin, sectionId: string) {
+  return await selectRows(admin, "section_id", sectionId);
+}
+
+// ─── Live board ─────────────────────────────────────────────────────────────
+// What appears next to the presenter while a lecture plays: the code being typed and
+// what it prints, or the key points. Each step is pinned to the words in the script
+// where it should appear; the player turns that into a time in the video.
+
+const BOARD_TOKEN_COST = 3;
+
+export interface BoardStep {
+  at: number;
+  kind: "code" | "points" | "title";
+  title?: string;
+  language?: string;
+  code?: string;
+  output?: string;
+  points?: string[];
+}
+export interface Board { total_words: number; steps: BoardStep[] }
+
+const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+
+/** Index of the first occurrence of `needle` in `hay` at or after `from`, or -1. */
+function findWords(hay: string[], needle: string[], from: number): number {
+  if (needle.length === 0) return -1;
+  for (let i = Math.max(0, from); i + needle.length <= hay.length; i++) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) { ok = false; break; }
+    if (ok) return i;
+  }
+  return -1;
+}
+
+/** Reads the board format (see writeBoard) and pins each step to a word in the script. */
+export function parseBoard(text: string, script: string): Board | null {
+  const scriptWords = words(script);
+  if (scriptWords.length === 0) return null;
+  const chunks = text.replace(/^\s*```\w*\s*/, "").replace(/\s*```\s*$/, "").split(/^\s*===\s*STEP\s*$/m).slice(1);
+  const raw: Array<Omit<BoardStep, "at"> & { anchor: string }> = [];
+  for (const chunk of chunks) {
+    const [head, ...rest] = chunk.split(/^\s*---\s*(?=CODE|OUTPUT|POINTS)/m);
+    const field = (name: string) => new RegExp(`^\\s*${name}:\\s*(.+)$`, "mi").exec(head)?.[1]?.trim() ?? "";
+    const parts = new Map<string, string>();
+    for (const sec of rest) {
+      const nl = sec.indexOf("\n");
+      parts.set(sec.slice(0, nl < 0 ? undefined : nl).trim().toUpperCase(), nl < 0 ? "" : sec.slice(nl + 1).replace(/\s+$/, ""));
+    }
+    const kind = field("KIND").toLowerCase();
+    const anchor = field("AT");
+    if (!anchor) continue;
+    if (kind === "code" && parts.get("CODE")?.trim()) {
+      raw.push({ anchor, kind: "code", title: field("TITLE").slice(0, 60), language: field("LANGUAGE").toLowerCase().slice(0, 20) || "text",
+        code: parts.get("CODE")!.replace(/^\n+/, "").slice(0, 1500), output: (parts.get("OUTPUT") ?? "").trim().slice(0, 800) || undefined });
+    } else if (kind === "points") {
+      const points = (parts.get("POINTS") ?? "").split("\n").map(l => l.replace(/^\s*[-*•]\s*/, "").trim()).filter(Boolean).slice(0, 6);
+      if (points.length) raw.push({ anchor, kind: "points", title: field("TITLE").slice(0, 80), points: points.map(x => x.slice(0, 120)) });
+    } else if (kind === "title" && field("TITLE")) {
+      raw.push({ anchor, kind: "title", title: field("TITLE").slice(0, 80) });
+    }
+  }
+  // Pin to the script in order; a step whose words are not found goes between its neighbours
+  let from = 0;
+  const placed: Array<number | null> = raw.map(step => {
+    const w = words(step.anchor);
+    for (const n of [w.length, 6, 4, 3]) {
+      const i = findWords(scriptWords, w.slice(0, Math.min(n, w.length)), from);
+      if (i >= 0) { from = i + 1; return i; }
+    }
+    return null;
+  });
+  const steps: BoardStep[] = [];
+  raw.forEach((step, i) => {
+    let at = placed[i];
+    if (at === null) {
+      const prev = placed.slice(0, i).reverse().find(x => x !== null) ?? 0;
+      const next = placed.slice(i + 1).find(x => x !== null) ?? scriptWords.length;
+      at = Math.round((prev + next) / 2);
+    }
+    const last = steps[steps.length - 1]?.at ?? -1;
+    const { anchor: _anchor, ...rest } = step;
+    steps.push({ ...rest, at: Math.max(at, last + 1) } as BoardStep);
+  });
+  return steps.length >= 2 ? { total_words: scriptWords.length, steps } : null;
+}
+
+async function writeBoard(courseTitle: string, sectionTitle: string, script: string, notes: string): Promise<Board> {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new UserError("AI is not set up yet. An administrator needs to add the ANTHROPIC_API_KEY secret.", 503);
+  const system = `You design the live board shown next to a video lecture. While the presenter speaks, the board shows the code being typed and what it prints, or the key points when there is no code.
+Write the board in exactly this plain-text format, with nothing before or after it (no JSON, no markdown fences):
+=== STEP
+AT: 6 to 10 consecutive words copied exactly from the script, where this step should appear
+KIND: code
+TITLE: a short file name or label, e.g. inspect_data.py
+LANGUAGE: python
+--- CODE
+the code, as it would be typed
+--- OUTPUT
+what running it prints (leave this part out when nothing is printed)
+=== STEP
+AT: ...
+KIND: points
+TITLE: a short heading
+--- POINTS
+- a short point
+- another point
+Rules:
+- 5 to 12 steps, in the order of the script. AT must be copied word for word from the script, at the moment the presenter starts talking about that step.
+- Code: real, correct, runnable code for exactly what the presenter explains. The script says code out loud ("pd dot read underscore csv"); write it properly (pd.read_csv). At most 12 lines per step. Build on earlier steps the way a teacher would type in one session.
+- Output: realistic and consistent with the code and any data it uses. Keep it short.
+- Use the lesson notes for exact names and code when they cover the topic.
+- Points: for ideas without code, 2 to 5 points of at most 10 words each.
+- KIND title: an optional heading step at a major change of topic (TITLE only).
+- For subjects without code, use points, and code steps with LANGUAGE text for formulas, calculations or worked examples.
+- Never add facts the script and notes do not support.`;
+  const user = `Course: ${courseTitle}\nModule: ${sectionTitle}\n\nScript the presenter says:\n${script.slice(0, 6000)}${notes ? `\n\nLesson notes (for exact code and names):\n${notes.slice(0, 8000)}` : ""}`;
+  let res: Response;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4000, temperature: 0.3, system, messages: [{ role: "user", content: user }] }),
+      signal: AbortSignal.timeout(110_000),
+    });
+  } catch {
+    throw new UserError("The AI took too long to design the board. Please try again.", 504);
+  }
+  if (!res.ok) {
+    console.error("Anthropic error", res.status, (await res.text()).slice(0, 300));
+    throw new UserError([429, 500, 502, 503, 529].includes(res.status)
+      ? "The AI service is busy right now. Please try again in a minute."
+      : "The AI could not design the board. Please try again.", 503);
+  }
+  const data = await res.json() as { content: Array<{ type: string; text?: string }> };
+  const board = parseBoard(data.content.find(c => c.type === "text")?.text ?? "", script);
+  if (!board) throw new UserError("The AI returned an unusable board. Please try again.", 502);
+  return board;
+}
+
+/** Shows the board on the lecture's lesson, once the video has become a lesson. */
+async function publishBoard(admin: Admin, row: { lesson_id?: string | null; course_id: string; status?: string }, board: Board | null) {
+  if (!board || !row.lesson_id) return;
+  const { error } = await admin.from("lesson_boards").upsert({
+    lesson_id: row.lesson_id, course_id: row.course_id, board, updated_at: new Date().toISOString(),
+  });
+  if (error) console.error("board publish failed:", error.code, error.message);
+}
+
+async function actionBoard(admin: Admin, userId: string, sectionId: string) {
+  const { section, course, orgId } = await loadSectionForStaff(admin, userId, sectionId);
+  const rows = (await listRows(admin, sectionId)).filter((r: { script: string }) => String(r.script ?? "").trim().length > 50);
+  if (rows.length === 0) throw new UserError("Write this module's lecture script first.");
+  const { data: lessons } = await admin.from("lessons").select("id, content").eq("section_id", sectionId).order("order_index");
+  const lectureLessons = new Set(rows.map((r: { lesson_id: string | null }) => r.lesson_id).filter(Boolean));
+  const notes = (lessons ?? []).filter((l: { id: string }) => !lectureLessons.has(l.id))
+    .map((l: { content: string | null }) => htmlToText(String(l.content ?? ""))).join("\n\n").slice(0, 8000);
+  await ensureOrgBalance(admin, orgId, BOARD_TOKEN_COST * rows.length);
+  for (const row of rows) {
+    const board = await writeBoard(course.title, section.title, row.script, notes);
+    await chargeOrgTokens(admin, orgId, userId, "lecture_board", BOARD_TOKEN_COST);
+    const { error } = await admin.from("lecture_videos").update({ board }).eq("id", row.id);
+    if (error) {
+      console.error("board save failed:", error.code, error.message);
+      throw new UserError(isMissingSchema(error)
+        ? "Live boards are not set up in the database yet. An administrator needs to run database update 059 (lecture boards)."
+        : "Could not save the board. Please try again.", isMissingSchema(error) ? 503 : 500);
+    }
+    if (row.status === "ready") await publishBoard(admin, row, board);
+  }
+  return { parts: await listRows(admin, sectionId) };
 }
 
 async function actionOptions() {
@@ -531,6 +710,10 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
     lessonId = inserted.id;
   }
 
+  // A board made from the script before the video was finished goes onto the new lesson
+  const { data: withBoard, error: boardError } = await admin.from("lecture_videos").select("board").eq("id", row.id).maybeSingle();
+  if (!boardError) await publishBoard(admin, { lesson_id: lessonId, course_id: String(row.course_id) }, (withBoard?.board ?? null) as Board | null);
+
   await admin.from("lecture_videos").update({
     status: "ready", storage_path: path, lesson_id: lessonId, duration_seconds: durationSeconds, error_message: null,
   }).eq("id", row.id);
@@ -592,8 +775,7 @@ async function actionCourseStatus(admin: Admin, userId: string, courseId: string
     if (Date.now() > deadline) break;
     await actionSync(admin, userId, sectionId as string, deadline, true);
   }
-  const { data } = await admin.from("lecture_videos").select(ROW_FIELDS).eq("course_id", courseId).order("part_index");
-  return { parts: data ?? [] };
+  return { parts: await selectRows(admin, "course_id", courseId) };
 }
 
 async function actionDiscard(admin: Admin, userId: string, sectionId: string) {
@@ -640,6 +822,7 @@ Deno.serve(async (req: Request) => {
       case "sync": return json(await actionSync(admin, user.id, body.section_id));
       case "discard": return json(await actionDiscard(admin, user.id, body.section_id));
       case "course_status": return json(await actionCourseStatus(admin, user.id, body.course_id));
+      case "board": return json(await actionBoard(admin, user.id, body.section_id));
       default: return json({ error: "Unknown action" }, 400);
     }
   } catch (err) {

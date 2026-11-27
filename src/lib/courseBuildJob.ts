@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-export type BuildTaskKind = 'notes' | 'slides' | 'guide' | 'lecture_script' | 'lecture_video' | 'quiz' | 'capstone';
+export type BuildTaskKind = 'notes' | 'slides' | 'guide' | 'lecture_script' | 'lecture_video' | 'lecture_board' | 'quiz' | 'capstone';
 export type BuildTaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface BuildJob {
@@ -28,6 +28,7 @@ export interface BuildOptions {
   lectures: boolean;
   quizzes: boolean;
   capstone: boolean;
+  boards: boolean;
   check_scripts: boolean;
   avatar_id?: string;
   voice_id?: string;
@@ -71,9 +72,9 @@ export async function loadLatestBuild(courseId: string): Promise<{ job: BuildJob
   return { job: job as BuildJob, tasks: (tasks ?? []) as BuildTask[] };
 }
 
-export type BuildGroup = 'materials' | 'lectures' | 'quizzes' | 'capstone' | 'guides';
+export type BuildGroup = 'materials' | 'lectures' | 'boards' | 'quizzes' | 'capstone' | 'guides';
 export const GROUP_OF: Record<BuildTaskKind, BuildGroup> = {
-  notes: 'materials', slides: 'materials', guide: 'guides', lecture_script: 'lectures', lecture_video: 'lectures', quiz: 'quizzes', capstone: 'capstone',
+  notes: 'materials', slides: 'materials', guide: 'guides', lecture_script: 'lectures', lecture_video: 'lectures', lecture_board: 'boards', quiz: 'quizzes', capstone: 'capstone',
 };
 
 export interface GroupProgress { total: number; done: number; failed: number; skipped: number; running: string[] }
@@ -99,9 +100,9 @@ export function buildCounts(tasks: BuildTask[]) {
 }
 
 export const GROUP_LABEL: Record<BuildGroup, string> = {
-  materials: 'Notes & slides', lectures: 'Lectures', quizzes: 'Quizzes', capstone: 'Capstone', guides: 'Teacher guides',
+  materials: 'Notes & slides', lectures: 'Lectures', boards: 'Live boards', quizzes: 'Quizzes', capstone: 'Capstone', guides: 'Teacher guides',
 };
-export const GROUP_ORDER: BuildGroup[] = ['materials', 'lectures', 'quizzes', 'capstone', 'guides'];
+export const GROUP_ORDER: BuildGroup[] = ['materials', 'lectures', 'boards', 'quizzes', 'capstone', 'guides'];
 
 /** Rough minutes left, from how fast items have finished so far (null until there is enough to go on). */
 export function buildMinutesLeft(job: BuildJob, tasks: BuildTask[]): number | null {

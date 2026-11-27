@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Video, Loader2, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
+import { X, Code2, Video, Loader2, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
 import { callLectureApi, MAX_LECTURE_PART_CHARS as MAX_PART_CHARS, lectureMinutes as minutesFor } from '../../lib/lectureApi';
 import type { LecturePart as Part } from '../../lib/lectureApi';
 import LecturePresenterPicker from './LecturePresenterPicker';
@@ -17,7 +17,7 @@ const POLL_MS = 15000;
 export default function LectureVideoModal({ sectionId, sectionTitle, onClose, onLessonAdded }: Props) {
   const [parts, setParts] = useState<Part[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'' | 'draft' | 'save' | 'render' | 'discard'>('');
+  const [busy, setBusy] = useState<'' | 'draft' | 'save' | 'render' | 'discard' | 'board'>('');
   const [error, setError] = useState('');
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [avatarId, setAvatarId] = useState('');
@@ -157,6 +157,40 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
                   </div>
                 </div>
               ))}
+
+              {/* Live board beside the video: code typed as the presenter speaks */}
+              <div className="border border-slate-200 rounded-xl px-4 py-3 space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Code2 className="w-5 h-5 text-sky-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-slate-800">Live board</p>
+                    <p className="text-xs text-slate-500">
+                      {parts.some(p => p.board?.steps?.length)
+                        ? `Shown beside the video: ${parts.reduce((n, p) => n + (p.board?.steps?.length ?? 0), 0)} steps of code, output and key points, timed to what the presenter says.`
+                        : 'Shows the code being typed and its output (or the key points) beside the presenter, timed to what she says.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => run('board', () => callLectureApi('board', { section_id: sectionId }))}
+                    disabled={!!busy}
+                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-50 disabled:opacity-50"
+                  >
+                    {busy === 'board' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Code2 className="w-3.5 h-3.5" />}
+                    {busy === 'board' ? 'Designing the board…' : parts.some(p => p.board?.steps?.length) ? 'Make the board again' : 'Add live board'}
+                  </button>
+                </div>
+                {parts.some(p => p.board?.steps?.length) && (
+                  <ol className="text-xs text-slate-600 space-y-1 max-h-40 overflow-y-auto pl-1">
+                    {parts.flatMap(p => p.board?.steps ?? []).map((st, i) => (
+                      <li key={i} className="flex gap-2 min-w-0">
+                        <span className="text-slate-400 w-5 text-right shrink-0">{i + 1}.</span>
+                        <span className="font-medium text-slate-700 shrink-0">{st.kind === 'code' ? 'Code' : st.kind === 'points' ? 'Points' : 'Heading'}:</span>
+                        <span className="truncate font-mono">{st.kind === 'code' ? (st.code ?? '').split('\n')[0] : st.kind === 'points' ? (st.title || (st.points ?? [])[0]) : st.title}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
 
               {/* Script review */}
               {hasDrafts && (

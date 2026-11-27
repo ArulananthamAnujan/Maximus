@@ -282,6 +282,10 @@ async function runTask(admin: Admin, task: Task, job: Job) {
       if (!task.section_id) throw new Error("This week no longer exists.");
       await lecture(userId, "draft", { section_id: task.section_id });
       return;
+    case "lecture_board":
+      if (!task.section_id) throw new Error("This week no longer exists.");
+      await lecture(userId, "board", { section_id: task.section_id });
+      return;
     case "lecture_video": {
       if (!task.section_id) throw new Error("This week no longer exists.");
       const { avatar_id, voice_id } = job.options as { avatar_id?: string; voice_id?: string };
@@ -382,7 +386,7 @@ async function runAndContinue(admin: Admin, taskId: string) {
     }
     if (task.kind.startsWith("lecture") && STOP_LECTURES.test(message)) {
       await admin.from("course_build_tasks").update({ status: "skipped", error: message, finished_at: new Date().toISOString() })
-        .eq("job_id", job.id).eq("status", "queued").in("kind", ["lecture_script", "lecture_video"]);
+        .eq("job_id", job.id).eq("status", "queued").in("kind", ["lecture_script", "lecture_video", "lecture_board"]);
     }
   }
   await admin.from("course_build_jobs").update({ updated_at: new Date().toISOString() }).eq("id", job.id);
@@ -392,7 +396,7 @@ async function runAndContinue(admin: Admin, taskId: string) {
 // ─── Planning a build ───────────────────────────────────────────────────────
 
 interface Options {
-  materials?: boolean; guides?: boolean; lectures?: boolean; quizzes?: boolean; capstone?: boolean;
+  materials?: boolean; guides?: boolean; lectures?: boolean; quizzes?: boolean; capstone?: boolean; boards?: boolean;
   check_scripts?: boolean; avatar_id?: string; voice_id?: string;
 }
 
@@ -444,6 +448,18 @@ async function planTasks(admin: Admin, courseId: string, o: Options) {
     }
   }
   if (o.capstone && !(capstones ?? []).length && weeks.length) add({ phase: 2, kind: "capstone", label: "Capstone project" });
+  // Live boards beside the lecture videos: for scripts written now and existing lectures without one
+  if (o.boards) {
+    const { data: boardRows, error: boardErr } = await admin.from("lecture_videos").select("section_id, board").eq("course_id", courseId);
+    if (!boardErr) {
+      const newScripts = new Set(tasks.filter(t => t.kind === "lecture_script").map(t => t.section_id));
+      for (const w of weeks) {
+        const parts = (boardRows ?? []).filter((r: { section_id: string }) => r.section_id === w.id);
+        const missing = parts.length > 0 && parts.some((r: { board: { steps?: unknown[] } | null }) => !r.board?.steps?.length);
+        if (newScripts.has(w.id) || missing) add({ phase: 3, kind: "lecture_board", section_id: w.id, label: w.title });
+      }
+    }
+  }
   return tasks;
 }
 
@@ -485,7 +501,7 @@ export async function handler(req: Request): Promise<Response> {
       await canManage(courseId);
       const o = (body.options ?? {}) as Options;
       const options: Options = {
-        materials: !!o.materials, guides: !!o.guides, lectures: !!o.lectures, quizzes: !!o.quizzes, capstone: !!o.capstone,
+        materials: !!o.materials, guides: !!o.guides, lectures: !!o.lectures, quizzes: !!o.quizzes, capstone: !!o.capstone, boards: !!o.boards,
         check_scripts: !!o.check_scripts,
         avatar_id: typeof o.avatar_id === "string" ? o.avatar_id.slice(0, 100) : undefined,
         voice_id: typeof o.voice_id === "string" ? o.voice_id.slice(0, 100) : undefined,

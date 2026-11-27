@@ -10,6 +10,8 @@ export interface LecturePart {
   status: 'draft' | 'rendering' | 'saving' | 'ready' | 'failed';
   error_message: string | null;
   duration_seconds: number | null;
+  /** The live board shown beside the video (code typed, output, key points) */
+  board?: { total_words: number; steps: Array<{ kind: string; title?: string; code?: string; points?: string[] }> } | null;
 }
 
 export interface AvatarOption { id: string; name: string; gender: string | null; preview_image_url: string | null; default_voice_id: string | null }

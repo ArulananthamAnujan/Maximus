@@ -19,8 +19,10 @@ import { useHasCourseAccess } from '../../hooks/useAccess';
 import { useCourseProgress, useUpdateLessonProgress } from '../../hooks/useProgress';
 import { toast as sonnerToast } from 'sonner';
 import type { Course, Section, Lesson, Quiz, QuizAttempt } from '../../types';
+import type { Board } from '../../components/course/LectureBoard';
 
 const FlashcardStudyModal = lazy(() => import('../../components/ai/FlashcardStudyModal'));
+const LectureBoard = lazy(() => import('../../components/course/LectureBoard'));
 const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocumentViewer').then(m => ({ default: m.default })));
 
 interface SectionWithLessons extends Section {
@@ -145,10 +147,23 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
   const accessLoading = !preview && access.isLoading;
   const { data: courseProgressData } = useCourseProgress(preview ? undefined : courseId);
   const [weekRatings, setWeekRatings] = useState<Map<string, number>>(new Map());
+  // The live board shown beside an AI lecture video
+  const [board, setBoard] = useState<{ lessonId: string; board: Board } | null>(null);
   const courseProgressRows = courseProgressData ?? EMPTY_PROGRESS;
   const updateProgressMutation = useUpdateLessonProgress();
 
   const activeMediaUrl = useMediaUrl(activeLesson?.url);
+  useEffect(() => {
+    const lesson = activeLesson;
+    if (!lesson || lesson.type !== 'video') return;
+    let active = true;
+    supabase.from('lesson_boards').select('board').eq('lesson_id', lesson.id).maybeSingle()
+      .then(({ data }) => {
+        const b = data?.board as Board | undefined;
+        if (active) setBoard(b && Array.isArray(b.steps) && b.steps.length ? { lessonId: lesson.id, board: b } : null);
+      });
+    return () => { active = false; };
+  }, [activeLesson]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressSaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartTime = useRef<number>(Date.now());
@@ -698,7 +713,7 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
 
         {/* Main content */}
         <div className="flex-1 overflow-y-auto min-w-0">
-          <div className="max-w-4xl mx-auto p-4 sm:p-6">
+          <div className={`${board && activeLesson && board.lessonId === activeLesson.id ? 'max-w-7xl' : 'max-w-4xl'} mx-auto p-4 sm:p-6`}>
 
             {preview && (
               <div role="status" className="flex items-start gap-2.5 mb-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900">
@@ -848,12 +863,13 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                           </a>
                         );
                       }
-                      return (
+                      const lessonBoard = board && board.lessonId === activeLesson.id ? board.board : null;
+                      const player = (
                         <div className="rounded-2xl overflow-hidden bg-black shadow-lg">
                           <video ref={videoRef} src={safeUrl(url)} controls className="w-full aspect-video"
                             onTimeUpdate={() => {
                               const video = videoRef.current;
-                              if (!video || !hasAccess) return;
+                              if (!video || !hasAccess || preview) return;
                               const percent = Math.floor((video.currentTime / video.duration) * 100);
                               if (percent >= 90 && activeLesson && !completedLessons.has(activeLesson.id) && courseId) {
                                 updateProgressMutation.mutate({
@@ -871,6 +887,17 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                               }
                             }}
                           />
+                        </div>
+                      );
+                      if (!lessonBoard) return player;
+                      return (
+                        <div className="grid gap-3 grid-cols-1 xl:grid-cols-2 items-stretch">
+                          <div className="min-w-0">{player}</div>
+                          <div className="h-80 sm:h-96 xl:h-auto min-w-0">
+                            <Suspense fallback={<div className="h-full rounded-2xl bg-slate-900" />}>
+                              <LectureBoard board={lessonBoard} videoRef={videoRef} heading={activeLesson.title} />
+                            </Suspense>
+                          </div>
                         </div>
                       );
                     })()}

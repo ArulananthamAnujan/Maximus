@@ -33,7 +33,7 @@ const STOP_ALL = /not enough tokens|out of credit|not set up|api key|permission|
 export default function CourseLecturesModal({ courseId, courseTitle, sections, onClose, onLessonAdded }: Props) {
   const [parts, setParts] = useState<LecturePart[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'' | 'scripts' | 'render'>('');
+  const [busy, setBusy] = useState<'' | 'scripts' | 'render' | 'boards'>('');
   const [progress, setProgress] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [avatarId, setAvatarId] = useState('');
@@ -127,6 +127,29 @@ export default function CourseLecturesModal({ courseId, courseTitle, sections, o
     setBusy('');
   };
 
+  // Weeks with a script but no live board yet (finished videos included)
+  const needBoards = weeks.filter(w => w.parts.length > 0 && w.parts.some(p => !p.board?.steps?.length));
+  const addBoards = async () => {
+    setBusy('boards');
+    setErrors([]);
+    const failures: string[] = [];
+    for (let i = 0; i < needBoards.length; i++) {
+      const week = needBoards[i];
+      setProgress(`Designing live board ${i + 1} of ${needBoards.length}: ${week.title}`);
+      try {
+        await callLectureApi('board', { section_id: week.id });
+      } catch (e) {
+        const text = e instanceof Error ? e.message : 'Failed.';
+        failures.push(`${week.title}: ${text}`);
+        if (STOP_ALL.test(text)) break;
+      }
+    }
+    await refresh().catch(() => {});
+    setErrors(failures);
+    setProgress('');
+    setBusy('');
+  };
+
   const label: Record<WeekStatus, string> = {
     none: 'No script yet',
     draft: 'Script ready to review',
@@ -181,6 +204,7 @@ export default function CourseLecturesModal({ courseId, courseTitle, sections, o
                         <p className={`text-xs ${w.status === 'failed' ? 'text-red-600' : 'text-slate-500'}`}>
                           {w.lessonCount === 0 ? 'No lessons yet' : label[w.status]}
                           {w.parts.length > 0 && ` · about ${minutes} min${w.parts.length > 1 ? ` in ${w.parts.length} parts` : ''}`}
+                          {w.parts.length > 0 && (w.parts.every(p => p.board?.steps?.length) ? ' · live board added' : ' · no live board')}
                           {failed?.error_message ? ` · ${failed.error_message}` : ''}
                         </p>
                       </div>
@@ -233,6 +257,14 @@ export default function CourseLecturesModal({ courseId, courseTitle, sections, o
                 className="px-4 py-2.5 text-sm font-semibold border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 disabled:opacity-40"
               >
                 {needScripts.length === 0 ? 'Every week has a script' : `Write scripts for ${needScripts.length} week${needScripts.length === 1 ? '' : 's'}`}
+              </button>
+            )}
+            {!busy && needBoards.length > 0 && (
+              <button
+                onClick={addBoards}
+                className="px-4 py-2.5 text-sm font-semibold border border-sky-300 rounded-xl text-sky-700 hover:bg-sky-50"
+              >
+                Add live boards to {needBoards.length} lecture{needBoards.length === 1 ? '' : 's'}
               </button>
             )}
             {!busy && readyToMake.length > 0 && (

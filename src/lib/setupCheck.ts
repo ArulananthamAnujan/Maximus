@@ -12,6 +12,8 @@ export interface BuildSetup {
   ai: AIServiceInfo | null;
   /** Database update 055 (lecture videos) has been run */
   lectureTable: boolean | null;
+  /** Database update 059 (live boards for lectures) has been run */
+  boardsTable: boolean | null;
   /** The course-build function is deployed and database update 058 has been run */
   backgroundBuilds: boolean | null;
 }
@@ -54,13 +56,14 @@ async function functionDeployed(name: string): Promise<boolean | null> {
 }
 
 export async function checkBuildSetup(): Promise<BuildSetup> {
-  const [ai, lectureTable, buildTable, buildFunction] = await Promise.all([
+  const [ai, lectureTable, boardsTable, buildTable, buildFunction] = await Promise.all([
     aiServiceInfo().catch(() => null),
     tableExists('lecture_videos'),
+    tableExists('lesson_boards'),
     tableExists('course_build_jobs'),
     functionDeployed('course-build'),
   ]);
   const backgroundBuilds = buildTable === false || buildFunction === false ? false
     : buildTable === null || buildFunction === null ? null : true;
-  return { ai, lectureTable, backgroundBuilds };
+  return { ai, lectureTable, boardsTable, backgroundBuilds };
 }

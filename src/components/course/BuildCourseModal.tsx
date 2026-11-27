@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Sparkles, Loader2, CheckCircle2, AlertTriangle, Circle, Square, Download, FileText, Video, HelpCircle, Trophy, BookOpen } from 'lucide-react';
+import { X, Sparkles, Loader2, CheckCircle2, AlertTriangle, Circle, Square, Download, FileText, Video, HelpCircle, Trophy, BookOpen, Code2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { generateLessonMaterials, runWithLimit, hasOwnNotes } from '../../lib/courseContent';
 import type { ContentSection, LessonJob } from '../../lib/courseContent';
 import { createWeekQuiz, createCapstoneDraft } from '../../lib/courseBuild';
@@ -35,7 +36,7 @@ function groupProblems(problems: Problem[]): Array<{ message: string; labels: st
   return Array.from(groups, ([message, labels]) => ({ message, labels }));
 }
 
-export type BuildFocus = 'materials' | 'lectures' | 'quizzes' | 'guides';
+export type BuildFocus = 'materials' | 'lectures' | 'quizzes' | 'guides' | 'boards';
 
 interface Props {
   ws: Workspace;
@@ -49,7 +50,7 @@ interface Props {
   onDownloadCourse: () => void;
 }
 
-type StepKey = 'materials' | 'lectures' | 'quizzes' | 'capstone' | 'guides';
+type StepKey = 'materials' | 'lectures' | 'boards' | 'quizzes' | 'capstone' | 'guides';
 type StepState = { total: number; done: number; failed: number; current: string; status: 'waiting' | 'running' | 'done' | 'skipped' | 'stopped' };
 
 // Lessons written at the same time (each is two AI requests: notes, then slides).
@@ -57,13 +58,14 @@ const PARALLEL_LESSONS = 3;
 // Out of tokens, video service not set up, or not allowed: every remaining item would fail too.
 const STOP_ALL = /not enough tokens|insufficient tokens|out of credit|not set up|api key|permission|inactive/i;
 // Org token prices (see the ai-generate and lecture-video functions).
-const COST = { notes: 5, slides: 6, guide: 4, quiz: 6, capstone: 6, script: 5 };
+const COST = { notes: 5, slides: 6, guide: 4, quiz: 6, capstone: 6, script: 5, board: 3 };
 
 const STEP_LABEL: Record<StepKey, { title: string; icon: typeof FileText }> = {
   materials: { title: 'Notes & slides', icon: FileText },
   lectures: { title: 'Weekly AI lecture videos', icon: Video },
   quizzes: { title: 'Weekly quizzes', icon: HelpCircle },
   capstone: { title: 'Capstone project', icon: Trophy },
+  boards: { title: 'Live boards beside the lectures', icon: Code2 },
   guides: { title: 'Teacher guides', icon: BookOpen },
 };
 const SERVER_POLL_MS = 4000;
@@ -83,13 +85,29 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
 
   const [opt, setOpt] = useState(() => only ? {
     materials: only === 'materials', guides: only === 'guides', lectures: only === 'lectures', quizzes: only === 'quizzes', capstone: false,
+    boards: only === 'boards' || only === 'lectures',
   } : {
     materials: missingMaterials.length > 0,
     guides: false,
     lectures: weeksNeedingLecture.length > 0,
     quizzes: weeksWithoutQuiz.length > 0,
     capstone: !hasCapstone && weeks.length > 0,
+    boards: true,
   });
+  // Which weeks' lectures already have a live board (null until known, or when boards are not set up)
+  const [boardWeeks, setBoardWeeks] = useState<Map<string, boolean> | null>(null);
+  useEffect(() => {
+    let active = true;
+    supabase.from('lecture_videos').select('section_id, board').eq('course_id', ws.course.id).then(({ data, error }) => {
+      if (!active || error) return;
+      const m = new Map<string, boolean>();
+      for (const r of (data ?? []) as Array<{ section_id: string; board: { steps?: unknown[] } | null }>) {
+        m.set(r.section_id, (m.get(r.section_id) ?? true) && !!r.board?.steps?.length);
+      }
+      setBoardWeeks(m);
+    });
+    return () => { active = false; };
+  }, [ws.course.id]);
   const [checkScripts, setCheckScripts] = useState(false);
   const [understood, setUnderstood] = useState(false);
   const [avatarId, setAvatarId] = useState('');
@@ -128,6 +146,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         guides: o.guides && !aiCannot(result, 'teacher_guide'),
         capstone: o.capstone && !aiCannot(result, 'assessment_draft'),
         lectures: o.lectures && result.lectureTable !== false,
+        boards: o.boards && result.boardsTable !== false && result.lectureTable !== false,
       }));
     }).catch(() => {});
     return () => { active = false; };
@@ -135,6 +154,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const guidesBlocked = aiCannot(setup, 'teacher_guide');
   const capstoneBlocked = aiCannot(setup, 'assessment_draft');
   const lecturesBlocked = setup?.lectureTable === false;
+  const boardsBlocked = lecturesBlocked || setup?.boardsTable === false;
   const runInBrowser = setup?.backgroundBuilds === false;
 
   // Opening the dialog while a build is under way shows its progress
@@ -186,13 +206,18 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const lecturesToRun = opt.lectures ? weeksNeedingLecture.filter(x => !checkScripts || x.lecture.state === 'none') : [];
   const quizzesToRun = opt.quizzes ? weeksWithoutQuiz : [];
   const runCapstone = opt.capstone && !hasCapstone;
-  const nothingToDo = lessonJobs.length === 0 && lecturesToRun.length === 0 && quizzesToRun.length === 0 && !runCapstone;
+  // Boards: lectures that already have a script but no board, plus the scripts written now
+  const newScriptWeeks = new Set(lecturesToRun.filter(x => x.lecture.state === 'none').map(x => x.week.id));
+  const weeksNeedingBoard = weeks.filter(w => (boardWeeks?.get(w.id) === false) || (boardWeeks !== null && !boardWeeks.has(w.id) && newScriptWeeks.has(w.id)));
+  const boardsAvailable = boardWeeks !== null && !boardsBlocked;
+  const boardsToRun = opt.boards && boardsAvailable ? weeksNeedingBoard : [];
+  const nothingToDo = lessonJobs.length === 0 && lecturesToRun.length === 0 && quizzesToRun.length === 0 && !runCapstone && boardsToRun.length === 0;
   const needPresenter = lecturesToRun.length > 0 && !checkScripts;
   const canStart = !nothingToDo && (!needPresenter || (avatarId && voiceId && understood));
 
   const tokens = lessonJobs.reduce((n, j) => n + (j.needNotes ? COST.notes : 0) + (j.needSlides ? COST.slides : 0) + (j.needGuide ? COST.guide : 0), 0)
     + lecturesToRun.filter(x => x.lecture.state === 'none').length * COST.script
-    + quizzesToRun.length * COST.quiz + (runCapstone ? COST.capstone : 0);
+    + quizzesToRun.length * COST.quiz + (runCapstone ? COST.capstone : 0) + boardsToRun.length * COST.board;
   const minutes = Math.max(1, Math.round((lessonJobs.length * 1.5) / PARALLEL_LESSONS + lecturesToRun.length * 0.7 + quizzesToRun.length * 0.5 + (runCapstone ? 1 : 0)));
 
   const update = (key: StepKey, patch: Partial<StepState>) => setSteps(prev => ({ ...prev, [key]: { ...(prev[key] as StepState), ...patch } }));
@@ -208,6 +233,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
     const initial: Partial<Record<StepKey, StepState>> = {};
     if (lessonJobs.length) initial.materials = { total: lessonJobs.length, done: 0, failed: 0, current: '', status: 'waiting' };
     if (lecturesToRun.length) initial.lectures = { total: lecturesToRun.length, done: 0, failed: 0, current: '', status: 'waiting' };
+    if (boardsToRun.length) initial.boards = { total: boardsToRun.length, done: 0, failed: 0, current: '', status: 'waiting' };
     if (quizzesToRun.length) initial.quizzes = { total: quizzesToRun.length, done: 0, failed: 0, current: '', status: 'waiting' };
     if (runCapstone) initial.capstone = { total: 1, done: 0, failed: 0, current: '', status: 'waiting' };
     setSteps(initial);
@@ -259,6 +285,28 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
       update('lectures', { status: stopped() ? 'stopped' : 'done', current: '' });
     }
 
+    // 2b. A live board for each lecture, from its script
+    if (boardsToRun.length && !stopped()) {
+      update('boards', { status: 'running' });
+      let done = 0;
+      let failed = 0;
+      for (const week of boardsToRun) {
+        if (stopped()) break;
+        update('boards', { current: week.title });
+        try {
+          await callLectureApi('board', { section_id: week.id });
+          done += 1;
+        } catch (e) {
+          failed += 1;
+          const text = e instanceof Error ? e.message : 'Failed.';
+          fail(`Live board: ${week.title}`, text);
+          if (STOP_ALL.test(text)) break;
+        }
+        update('boards', { done, failed });
+      }
+      update('boards', { status: stopped() ? 'stopped' : 'done', current: '' });
+    }
+
     // 3. A quiz for every week that has none.
     if (quizzesToRun.length && !stopped()) {
       update('quizzes', { status: 'running' });
@@ -308,6 +356,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
     try {
       const r = await startServerBuild(ws.course.id, {
         materials: opt.materials, guides: opt.guides, lectures: opt.lectures, quizzes: opt.quizzes, capstone: opt.capstone,
+        boards: opt.boards && boardsAvailable,
         check_scripts: checkScripts, avatar_id: avatarId || undefined, voice_id: voiceId || undefined,
       });
       if (!r.job_id) { setStartError('Nothing is missing any more.'); return; }
@@ -389,13 +438,14 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         <div ref={bodyRef} className="flex-1 overflow-y-auto p-6 space-y-5">
           {showSetup && (
             <>
-              {setup && (aiIsOld(setup) || guidesBlocked || capstoneBlocked || lecturesBlocked || runInBrowser) && (
+              {setup && (aiIsOld(setup) || guidesBlocked || capstoneBlocked || lecturesBlocked || runInBrowser || setup.boardsTable === false) && (
                 <div role="status" className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1.5">
                   <p className="font-semibold">Your server is missing some updates</p>
                   <ul className="list-disc pl-5 space-y-1 text-xs">
                     {(aiIsOld(setup) || guidesBlocked || capstoneBlocked) && (
                       <li>The AI service is an older version{guidesBlocked || capstoneBlocked ? ': teacher guides and the capstone are switched off' : ''}{aiIsOld(setup) ? ', and long notes can time out' : ''}. Fix: deploy the latest <strong>ai-generate</strong> function.</li>
                     )}
+                    {!lecturesBlocked && setup.boardsTable === false && <li>Live boards beside the lectures are not set up in the database, so they are switched off. Fix: run database update <strong>059</strong> (lecture boards).</li>}
                     {lecturesBlocked && <li>Lecture videos are not set up in the database, so they are switched off. Fix: run database update <strong>055</strong> (lecture videos).</li>}
                     {runInBrowser && <li>Background building is not set up, so this build runs in this browser: keep this page open until it finishes. Fix: run database update <strong>058</strong> and deploy the <strong>course-build</strong> function.</li>}
                   </ul>
@@ -424,6 +474,10 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
                   lecturesBlocked ? 'Not available until lecture videos are set up in the database (see above).'
                     : weeksNeedingLecture.length ? 'A presenter teaches each week from its notes. Videos finish on their own after this.' : 'Every week already has a lecture (or one is being made).',
                   weeksNeedingLecture.length === 0 || lecturesBlocked)}
+                {option('boards', `Live board for ${weeksNeedingBoard.length} lecture${weeksNeedingBoard.length === 1 ? '' : 's'}`,
+                  boardsBlocked ? 'Not available until it is set up in the database (see above).'
+                    : weeksNeedingBoard.length ? 'Beside the presenter: the code being typed and its output, or the key points, as she speaks.' : 'Every lecture already has a live board.',
+                  !boardsAvailable || weeksNeedingBoard.length === 0)}
                 {option('quizzes', `Quiz for ${weeksWithoutQuiz.length} week${weeksWithoutQuiz.length === 1 ? '' : 's'}`,
                   weeksWithoutQuiz.length ? '8 auto-marked questions per week, written from that week\'s notes.' : 'Every week already has a quiz.',
                   weeksWithoutQuiz.length === 0)}
