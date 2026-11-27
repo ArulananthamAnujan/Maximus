@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { generateLessonNotes, generateLessonSlides } from './ai';
+import { generateLessonNotes, generateLessonSlides, generateTeacherGuide } from './ai';
 import { audienceFromPlan } from './coursePlan';
 import type { CoursePlan } from './coursePlan';
 import { stripHtml, slidesToHtml, parseSlidesFromHtml } from './slides';
@@ -24,6 +24,7 @@ export interface ContentSection {
 export interface LessonMaterials {
   notes: boolean;
   slides: boolean;
+  guide?: boolean;
 }
 
 /** Loads the course's weeks and lessons, leaving out lessons that are AI lecture videos. */
@@ -46,9 +47,14 @@ export async function loadCourseStructure(courseId: string): Promise<ContentSect
 
 /** Which lessons already have notes and slides. */
 export async function loadMaterialStatus(lessonIds: string[]): Promise<Map<string, LessonMaterials>> {
-  const status = new Map<string, LessonMaterials>(lessonIds.map(id => [id, { notes: false, slides: false }]));
+  const status = new Map<string, LessonMaterials>(lessonIds.map(id => [id, { notes: false, slides: false, guide: false }]));
   for (let i = 0; i < lessonIds.length; i += 200) {
-    const { data } = await supabase.from('lesson_documents').select('lesson_id, type').in('lesson_id', lessonIds.slice(i, i + 200));
+    const chunk = lessonIds.slice(i, i + 200);
+    const [{ data }, { data: guides }] = await Promise.all([
+      supabase.from('lesson_documents').select('lesson_id, type').in('lesson_id', chunk),
+      supabase.from('lesson_teacher_guides').select('lesson_id').in('lesson_id', chunk),
+    ]);
+    for (const g of guides ?? []) { const e = status.get(g.lesson_id); if (e) e.guide = true; }
     for (const row of data ?? []) {
       const entry = status.get(row.lesson_id);
       if (!entry) continue;
@@ -73,6 +79,8 @@ export interface LessonJob {
   lesson: ContentLesson;
   needNotes: boolean;
   needSlides: boolean;
+  /** Also write the teacher's session plan for live classes. */
+  needGuide?: boolean;
 }
 
 export interface CourseContext {
@@ -97,7 +105,7 @@ function lessonDescription(lesson: ContentLesson, hasNotes: boolean): string {
 export async function generateLessonMaterials(
   job: LessonJob,
   ctx: CourseContext,
-  onStage?: (stage: 'notes' | 'slides') => void,
+  onStage?: (stage: 'notes' | 'slides' | 'guide') => void,
 ): Promise<void> {
   const { section, lesson } = job;
   const { target_audience, difficulty, brief } = audienceFromPlan(ctx.plan);
@@ -143,6 +151,28 @@ export async function generateLessonMaterials(
     });
     if (!deck?.slides?.length) throw new Error('The AI returned no slides.');
     await replaceDocument(lesson.id, ctx.courseId, 'slides', deck.slides_title || `${lesson.title} — Slides`, slidesToHtml(deck.slides), 1);
+  }
+
+  if (job.needGuide) {
+    if (!notesHtml) {
+      const { data } = await supabase.from('lesson_documents')
+        .select('content_html').eq('lesson_id', lesson.id).eq('type', 'notes').maybeSingle();
+      notesHtml = data?.content_html ?? '';
+    }
+    if (!notesHtml) throw new Error('This lesson has no notes to plan a session from.');
+    onStage?.('guide');
+    const guide = await generateTeacherGuide({
+      course_title: ctx.courseTitle,
+      section_title: section.title,
+      lesson_title: lesson.title,
+      session_minutes: 60,
+      notes_text: stripHtml(notesHtml),
+      brief,
+    });
+    const { error } = await supabase.from('lesson_teacher_guides').upsert({
+      lesson_id: lesson.id, course_id: ctx.courseId, content_html: guide.content_html, updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error('Could not save the teacher guide.');
   }
 }
 

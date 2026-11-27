@@ -5,12 +5,16 @@ import { studentNavItems } from './studentNav';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import type { Assignment, AssignmentSubmission } from '../../types';
+import type { AssignmentSubmission } from '../../types';
+import type { WsAssignment } from '../../lib/workspace';
+import { sanitizeHtml, safeUrl } from '../../lib/utils';
 
-interface AssignmentWithSubmission extends Assignment {
+interface AssignmentWithSubmission extends WsAssignment {
   course: { title: string };
-  submission: AssignmentSubmission | null;
+  submission: (AssignmentSubmission & { rubric_scores?: Record<string, number> | null }) | null;
 }
+
+const KIND_LABEL: Record<string, string> = { lab: 'Lab', assignment: 'Assignment', capstone: 'Capstone project' };
 
 export default function StudentAssignments() {
   const { profile } = useAuth();
@@ -28,17 +32,27 @@ export default function StudentAssignments() {
 
   const fetchData = async () => {
     if (!profile) return;
-    const { data: enrollments } = await supabase.from('enrollments').select('course_id').eq('student_id', profile.id);
-    const courseIds = (enrollments || []).map(e => e.course_id);
+    // Both enrolment tables: courses bought or joined through the site live in course_enrollments
+    const [{ data: legacy }, { data: current }] = await Promise.all([
+      supabase.from('enrollments').select('course_id').eq('student_id', profile.id),
+      supabase.from('course_enrollments').select('course_id').eq('user_id', profile.id).in('payment_status', ['not_required', 'completed']),
+    ]);
+    const courseIds = [...new Set([...(legacy || []), ...(current || [])].map(e => e.course_id))];
     if (courseIds.length === 0) { setLoading(false); return; }
 
     const [assignRes, subRes] = await Promise.all([
-      supabase.from('assignments').select('*, course:courses(title)').in('course_id', courseIds).order('due_date', { ascending: true }),
+      // Only published assignments of released weeks come back (enforced by the database)
+      supabase.from('assignments').select('*, course:courses(title)').in('course_id', courseIds).eq('is_published', true).order('due_date', { ascending: true }),
       supabase.from('assignment_submissions').select('*').eq('student_id', profile.id),
     ]);
 
     const submissionMap = new Map((subRes.data || []).map(s => [s.assignment_id, s]));
-    setAssignments((assignRes.data || []).map(a => ({ ...a, submission: submissionMap.get(a.id) || null })) as AssignmentWithSubmission[]);
+    setAssignments((assignRes.data || []).map(a => ({
+      ...a,
+      rubric: Array.isArray(a.rubric) ? a.rubric : [],
+      resources: Array.isArray(a.resources) ? a.resources : [],
+      submission: submissionMap.get(a.id) || null,
+    })) as AssignmentWithSubmission[]);
     setLoading(false);
   };
 
@@ -51,6 +65,7 @@ export default function StudentAssignments() {
       assignment_id: assignmentId,
       student_id: profile.id,
       content: drafts[assignmentId],
+      status: 'submitted',
       submitted_at: new Date().toISOString(),
     }, { onConflict: 'assignment_id,student_id' });
     if (error) {
@@ -109,7 +124,7 @@ export default function StudentAssignments() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 dark:text-white truncate">{a.title}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{a.course?.title}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{KIND_LABEL[a.kind] ?? 'Assignment'} · {a.course?.title}</p>
                     <div className="flex items-center gap-3 mt-1.5">
                       <span className={`badge flex items-center gap-1 ${cfg.color}`}>{cfg.icon}{cfg.label}</span>
                       {a.due_date && (
@@ -117,13 +132,13 @@ export default function StudentAssignments() {
                           Due: {new Date(a.due_date).toLocaleDateString('en-AU')}
                         </span>
                       )}
-                      <span className="text-xs text-gray-400">Max: {a.max_marks} marks</span>
+                      <span className="text-xs text-gray-400">{a.total_points ?? 100} points{a.estimated_minutes ? ` · about ${a.estimated_minutes >= 120 ? `${Math.round(a.estimated_minutes / 60)} h` : `${a.estimated_minutes} min`}` : ''}</span>
                     </div>
                   </div>
                   {a.submission?.grade !== null && a.submission?.grade !== undefined && (
                     <div className="text-right shrink-0">
                       <p className="text-2xl font-bold font-playfair text-green-600">{a.submission.grade}</p>
-                      <p className="text-xs text-gray-400">/{a.max_marks}</p>
+                      <p className="text-xs text-gray-400">/{a.total_points ?? 100}</p>
                     </div>
                   )}
                 </button>
@@ -131,9 +146,51 @@ export default function StudentAssignments() {
                 {isExpanded && (
                   <div className="border-t border-gray-100 dark:border-navy-700 p-5 space-y-4">
                     <div>
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Instructions</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{a.description}</p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Brief</p>
+                      {a.brief_html
+                        ? <div className="prose prose-sm max-w-none dark:prose-invert [&_pre]:bg-slate-900 [&_pre]:text-slate-100 [&_pre]:p-3 [&_pre]:rounded-lg" dangerouslySetInnerHTML={{ __html: sanitizeHtml(a.brief_html) }} />
+                        : <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{a.description}</p>}
                     </div>
+
+                    {a.resources.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resources</p>
+                        <ul className="text-sm text-gray-600 dark:text-gray-400 list-disc pl-5 space-y-0.5">
+                          {a.resources.map((r, i) => {
+                            const href = safeUrl(r.url);
+                            return <li key={i}>{href ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-sky-700 hover:underline">{r.title}</a> : r.title}{r.note ? ` — ${r.note}` : ''}</li>;
+                          })}
+                        </ul>
+                      </div>
+                    )}
+
+                    {a.rubric.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">How it will be marked</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border border-gray-200 dark:border-navy-600">
+                            <thead className="bg-gray-50 dark:bg-navy-700">
+                              <tr>
+                                <th className="text-left p-2 border border-gray-200 dark:border-navy-600">Criterion</th>
+                                {a.rubric[0].levels.map(l => <th key={l.label} className="text-left p-2 border border-gray-200 dark:border-navy-600">{l.label}</th>)}
+                                {a.submission?.rubric_scores && Object.keys(a.submission.rubric_scores).length > 0 && <th className="text-left p-2 border border-gray-200 dark:border-navy-600">Your score</th>}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {a.rubric.map(c => (
+                                <tr key={c.name}>
+                                  <td className="p-2 border border-gray-200 dark:border-navy-600 font-semibold align-top">{c.name} <span className="font-normal text-gray-400">({c.points})</span></td>
+                                  {c.levels.map(l => <td key={l.label} className="p-2 border border-gray-200 dark:border-navy-600 align-top text-gray-600 dark:text-gray-400">{l.descriptor} <span className="text-gray-400">({l.points})</span></td>)}
+                                  {a.submission?.rubric_scores && Object.keys(a.submission.rubric_scores).length > 0 && (
+                                    <td className="p-2 border border-gray-200 dark:border-navy-600 font-semibold align-top">{a.submission.rubric_scores[c.name] ?? '–'}</td>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
                     {a.submission?.grade !== null && a.submission?.grade !== undefined && a.submission.feedback && (
                       <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800">

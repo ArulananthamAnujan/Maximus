@@ -122,6 +122,7 @@ const TeacherF2FRequests = lazy(() => import('./pages/teacher/TeacherF2FRequests
 const StudentDashboard = lazy(() => import('./pages/student/StudentDashboard'));
 const StudentCourses = lazy(() => import('./pages/student/StudentCourses'));
 const StudentCoursePlayer = lazy(() => import('./pages/student/StudentCoursePlayer'));
+const CoursePreviewAsStudent = lazy(() => import('./pages/shared/CoursePreviewAsStudent'));
 const StudentQuizzes = lazy(() => import('./pages/student/StudentQuizzes'));
 const StudentAssignments = lazy(() => import('./pages/student/StudentAssignments'));
 const StudentCertificates = lazy(() => import('./pages/student/StudentCertificates'));
@@ -268,6 +269,7 @@ export default function App() {
                 <Route path="/teacher/courses" element={<ProtectedRoute role="teacher"><TeacherCourses /></ProtectedRoute>} />
                 <Route path="/teacher/builder" element={<ProtectedRoute role="teacher"><CourseBuilder /></ProtectedRoute>} />
                 <Route path="/teacher/builder/:courseId" element={<ProtectedRoute role="teacher"><CourseBuilder /></ProtectedRoute>} />
+                <Route path="/preview/course/:courseId" element={<ProtectedRoute role={['teacher', 'admin', 'org_admin']}><CoursePreviewAsStudent /></ProtectedRoute>} />
                 <Route path="/teacher/quizzes" element={<ProtectedRoute role="teacher"><TeacherQuizzes /></ProtectedRoute>} />
                 <Route path="/teacher/assignments" element={<ProtectedRoute role="teacher"><TeacherAssignments /></ProtectedRoute>} />
                 <Route path="/teacher/students" element={<ProtectedRoute role="teacher"><TeacherStudents /></ProtectedRoute>} />

@@ -20,7 +20,7 @@ interface Props {
   onChanged: () => void;
 }
 
-type LessonState = { stage: 'queued' | 'notes' | 'slides' | 'done' | 'failed'; error?: string };
+type LessonState = { stage: 'queued' | 'notes' | 'slides' | 'guide' | 'done' | 'failed'; error?: string };
 
 // Lessons generated at the same time. Each lesson is two AI requests (notes, then slides).
 const PARALLEL_LESSONS = 3;
@@ -35,6 +35,7 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
   const [loadError, setLoadError] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<'missing' | 'all'>('missing');
+  const [includeGuides, setIncludeGuides] = useState(false);
   const [running, setRunning] = useState(false);
   const [lessonState, setLessonState] = useState<Record<string, LessonState>>({});
   const [summary, setSummary] = useState<{ done: number; failed: number; stopped: boolean } | null>(null);
@@ -80,11 +81,12 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
         const st = status.get(lesson.id) ?? { notes: false, slides: false };
         const needNotes = mode === 'all' || !st.notes;
         const needSlides = mode === 'all' || needNotes || !st.slides;
-        if (needNotes || needSlides) list.push({ section, lesson, needNotes, needSlides });
+        const needGuide = includeGuides && (mode === 'all' || needNotes || !st.guide);
+        if (needNotes || needSlides || needGuide) list.push({ section, lesson, needNotes, needSlides, needGuide });
       }
     }
     return list;
-  }, [sections, selected, status, mode]);
+  }, [sections, selected, status, mode, includeGuides]);
 
   const start = useCallback(async () => {
     if (jobs.length === 0 || running) return;
@@ -104,7 +106,7 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
         await generateLessonMaterials(job, ctx, stage => setLessonState(prev => ({ ...prev, [id]: { stage } })));
         done += 1;
         setLessonState(prev => ({ ...prev, [id]: { stage: 'done' } }));
-        setStatus(prev => new Map(prev).set(id, { notes: true, slides: true }));
+        setStatus(prev => new Map(prev).set(id, { notes: true, slides: true, guide: prev.get(id)?.guide || !!job.needGuide }));
         onChangedRef.current();
       } catch (err) {
         failed += 1;
@@ -196,7 +198,7 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
           </div>
           <div className="min-w-0 flex-1">
             <h3 id="studio-title" className="font-bold text-slate-900">Course materials</h3>
-            <p className="text-xs text-slate-500 truncate">Complete study notes and a slide deck built from them, for every lesson</p>
+            <p className="text-xs text-slate-500 truncate">Complete study notes, slides built from them, and optional teacher guides</p>
           </div>
           <button onClick={handleClose} aria-label="Close" className="p-2 rounded-lg text-slate-400 hover:bg-slate-100">
             <X className="w-4 h-4" />
@@ -240,7 +242,7 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
                     const slidesDone = st.filter(x => x.slides).length;
                     const complete = section.lessons.length > 0 && notesDone === section.lessons.length && slidesDone === section.lessons.length;
                     const weekStates = section.lessons.map(l => lessonState[l.id]).filter(Boolean);
-                    const busy = weekStates.some(s => s.stage === 'notes' || s.stage === 'slides');
+                    const busy = weekStates.some(s => s.stage === 'notes' || s.stage === 'slides' || s.stage === 'guide');
                     const weekFailed = weekStates.filter(s => s.stage === 'failed');
                     return (
                       <div key={section.id} className="px-4 py-3">
@@ -281,13 +283,14 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
                                 <li key={l.id} className="flex items-start gap-2 text-xs">
                                   {ls.stage === 'done' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-px" />}
                                   {ls.stage === 'failed' && <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-px" />}
-                                  {(ls.stage === 'notes' || ls.stage === 'slides') && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0 mt-px" />}
+                                  {(ls.stage === 'notes' || ls.stage === 'slides' || ls.stage === 'guide') && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0 mt-px" />}
                                   {ls.stage === 'queued' && <span className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0 mt-px" />}
                                   <span className="min-w-0">
                                     <span className="text-slate-700">{l.title}</span>
                                     <span className="text-slate-400">
                                       {ls.stage === 'notes' && ' — writing notes…'}
                                       {ls.stage === 'slides' && ' — building slides from the notes…'}
+                                      {ls.stage === 'guide' && ' — writing the teacher guide…'}
                                     </span>
                                     {ls.stage === 'failed' && <span className="block text-red-600">{ls.error}</span>}
                                   </span>
@@ -315,6 +318,10 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
                 <label className="flex items-start gap-2.5 text-sm text-slate-700 cursor-pointer">
                   <input type="radio" name="studio-mode" checked={mode === 'all'} onChange={() => setMode('all')} className="mt-1 accent-blue-600" />
                   <span><strong>Regenerate everything in the selected weeks</strong><span className="block text-xs text-slate-500">Replaces existing notes and slides, including any edits made to them.</span></span>
+                </label>
+                <label className="flex items-start gap-2.5 text-sm text-slate-700 cursor-pointer pt-1">
+                  <input type="checkbox" checked={includeGuides} onChange={e => setIncludeGuides(e.target.checked)} className="mt-1 accent-blue-600" />
+                  <span><strong>Also write teacher guides</strong><span className="block text-xs text-slate-500">A session plan per lesson for live classes: timings, activities, questions, misconceptions. Teachers only.</span></span>
                 </label>
               </fieldset>
 

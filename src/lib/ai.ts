@@ -20,6 +20,8 @@ export interface WebSource {
 export interface CourseBrief {
   /** What employers currently ask for, from the planner's web research. */
   market_findings?: string[];
+  /** Summary of the teacher's own uploaded material, when the course is built around it. */
+  teacher_material?: string;
   title_idea: string;
   topic: string;
   audience: string;
@@ -70,6 +72,7 @@ export interface QuizFromContentInput {
   num_questions: number;
   question_types: ('mcq' | 'true_false' | 'short_answer')[];
   difficulty: 'easy' | 'medium' | 'hard';
+  brief?: CourseBrief;
 }
 
 export interface FlashcardsInput {
@@ -326,6 +329,8 @@ export interface PlannerCourseContext {
   /** One line per existing week with its lessons. */
   existing_outline: string;
   saved_brief?: CourseBrief | null;
+  /** The teacher's own material, as text for the planner. */
+  material_summary?: string;
 }
 
 export const plannerChat = (
@@ -337,7 +342,12 @@ export const plannerChat = (
     messages,
     research_notes: research.notes,
     sources: research.sources,
-    ...(context ? { course_title: context.course_title, existing_outline: context.existing_outline, saved_brief: context.saved_brief ?? null } : {}),
+    ...(context ? {
+      course_title: context.course_title,
+      existing_outline: context.existing_outline,
+      saved_brief: context.saved_brief ?? null,
+      material_summary: context.material_summary ?? '',
+    } : {}),
   });
 
 export async function generateCourseOutline(
@@ -609,3 +619,48 @@ export const aiHealthCheck = async (): Promise<AIHealthOutput> => {
   if (!response.ok) throw new Error('Health check failed');
   return response.json() as Promise<AIHealthOutput>;
 };
+
+// ─── Course workspace helpers ───────────────────────────────────────────────
+
+/** Revises a lesson's notes according to the teacher's instruction. */
+export const improveNotes = (input: { course_title: string; lesson_title: string; instruction: string; notes_html: string; brief?: CourseBrief }) =>
+  callAI<{ content_html: string }>('improve_notes', input);
+
+/** A session plan for teaching one lesson live (staff only). */
+export const generateTeacherGuide = (input: { course_title: string; section_title: string; lesson_title: string; session_minutes: number; notes_text: string; brief?: CourseBrief }) =>
+  callAI<{ content_html: string }>('teacher_guide', input);
+
+export interface AssessmentDraft {
+  title: string;
+  brief_html: string;
+  deliverables: string[];
+  estimated_minutes: number;
+  rubric: Array<{ name: string; points: number; levels: Array<{ label: string; points: number; descriptor: string }> }>;
+  resources: Array<{ title: string; note?: string }>;
+  solution_html: string;
+  marking_notes: string;
+}
+
+/** Drafts a lab, weekly assignment or capstone: brief, rubric, model answer and marking notes. */
+export const draftAssessment = (input: {
+  kind: 'lab' | 'assignment' | 'capstone';
+  course_title: string;
+  total_points: number;
+  weeks: string[];
+  notes_text?: string;
+  request?: string;
+  brief?: CourseBrief;
+}) => callAI<AssessmentDraft>('assessment_draft', input);
+
+export interface MaterialSummary {
+  summary: string;
+  audience: string;
+  level: string;
+  topics: string[];
+  suggested_weeks: Array<{ title: string; lessons: string[] }>;
+  notes_for_planner: string;
+}
+
+/** Reads a teacher's own material (text, or a PDF as base64) so a course can be built around it. */
+export const summarizeMaterial = (input: { file_name: string; material_text?: string; material_pdf_base64?: string }) =>
+  callAI<MaterialSummary>('summarize_material', input);

@@ -7,11 +7,14 @@ import AILoader from '../ui/AILoader';
 import CoursePlannerChat, { PLANNER_GREETING } from './CoursePlannerChat';
 import { generateCourseOutline } from '../../lib/ai';
 import { saveCoursePlan } from '../../lib/coursePlan';
+import type { CoursePlan } from '../../lib/coursePlan';
 import type { CourseOutlineOutput, CourseOutlineInput, CourseBrief, PlannerMessage, WebSource, AIModuleItem, AILessonItem, OutlineProgress } from '../../lib/ai';
 
 interface Props {
   onClose: () => void;
   navigatePrefix: string; // '/teacher/builder' or '/admin/builder'
+  /** Start by uploading the teacher's own material. */
+  startWithUpload?: boolean;
 }
 
 type Step = 'chat' | 'form' | 'generating' | 'preview' | 'saving';
@@ -23,7 +26,7 @@ const TARGET_AUDIENCES = [
   { value: 'professionals', label: 'Professionals' },
 ];
 
-export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Props) {
+export default function AICourseGeneratorModal({ onClose, navigatePrefix, startWithUpload }: Props) {
   const navigate = useNavigate();
 
   // The conversation is the default way in; the quick form remains for people who know exactly what they want.
@@ -32,6 +35,7 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
   const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([PLANNER_GREETING]);
   const [brief, setBrief] = useState<CourseBrief | null>(null);
   const [research, setResearch] = useState<{ notes: string; sources: WebSource[] }>({ notes: '', sources: [] });
+  const [material, setMaterial] = useState<CoursePlan['material']>(null);
   const [form, setForm] = useState({
     topic: '',
     target_audience: 'professionals',
@@ -143,11 +147,11 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
         },
       });
       if (rpcErr) throw rpcErr;
-      if (startedFrom === 'chat' && brief) {
+      if (startedFrom === 'chat' && (brief || material)) {
         // Keep the agreed plan with the course, so notes, slides, lectures and any weeks
         // added later follow it.
         await saveCoursePlan(String(data), {
-          brief, research_notes: research.notes, sources: research.sources, messages: plannerMessages,
+          brief, research_notes: research.notes, sources: research.sources, messages: plannerMessages, material,
         });
       }
       // Open the builder and start writing the notes and slides for every lesson
@@ -199,6 +203,8 @@ export default function AICourseGeneratorModal({ onClose, navigatePrefix }: Prop
                 onBriefChange={setBrief}
                 onCreate={handleCreateFromBrief}
                 onResearchChange={setResearch}
+                onMaterialChange={setMaterial}
+                startWithUpload={startWithUpload}
               />
             </>
           )}

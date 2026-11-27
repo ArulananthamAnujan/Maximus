@@ -86,7 +86,24 @@ function validateLessonSlides(obj: unknown): boolean {
     && (o.slides as Array<Record<string, unknown>>).every(sl => typeof sl.heading === 'string' && typeof sl.content_html === 'string');
 }
 
+function validateHtmlOnly(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.content_html === 'string' && o.content_html.trim().length > 50;
+}
+function validateAssessmentDraft(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.title === 'string' && typeof o.brief_html === 'string' && o.brief_html.length > 50 && Array.isArray(o.rubric);
+}
+function validateMaterialSummary(obj: unknown): boolean {
+  const o = obj as Record<string, unknown>;
+  return typeof o.summary === 'string' && Array.isArray(o.topics);
+}
+
 const validators: Record<string, (o: unknown) => boolean> = {
+  improve_notes: validateHtmlOnly,
+  teacher_guide: validateHtmlOnly,
+  assessment_draft: validateAssessmentDraft,
+  summarize_material: validateMaterialSummary,
   course_planner_chat: validatePlannerChat,
   lesson_slides: validateLessonSlides,
   course_outline: validateCourseOutline,
@@ -310,6 +327,50 @@ Rules:
 - estimated_read_time_minutes: at 200 words per minute.
 - When a COURSE BRIEF is given, write for those learners, at that level, in that tone and approach, instead of an academic style.`,
 
+    improve_notes: `You are an expert teacher revising one lesson's study notes exactly as the teacher asks. ${jsonRule}
+Output shape: {"content_html": string}
+Rules:
+- Apply the teacher's instruction fully. Keep every part of the notes the instruction does not touch, word for word where possible.
+- Same allowed HTML: h2, h3, p, ul, ol, li, strong, em, blockquote, code, pre, table, thead, tbody, tr, th, td. No scripts, styles or images.
+- Stay accurate. Where a detail depends on versions, tools or local rules, say so instead of inventing specifics.
+- When a COURSE BRIEF is given, keep writing for those learners and in that tone.`,
+
+    teacher_guide: `You are an experienced teacher writing the session plan another teacher will use to teach this lesson live. ${jsonRule}
+Output shape: {"content_html": string}
+content_html (500 to 900 words), allowed HTML: h2, h3, p, ul, ol, li, strong, em, table, thead, tbody, tr, th, td. Sections:
+  1. <h2>Before the session</h2> what to prepare (materials, setup, files), and what students should have done.
+  2. <h2>Session plan</h2> a table with columns Time | Activity | What the teacher does | What students do. Timings must add up to the session length given.
+  3. <h2>Key points to emphasise</h2>
+  4. <h2>Questions to ask</h2> 4 to 6 questions, each with what a good answer includes.
+  5. <h2>Common misconceptions</h2> and how to address each one.
+  6. <h2>Checking understanding</h2> quick checks during and at the end of the session.
+  7. <h2>Support and stretch</h2> how to help students who struggle, and extend those who finish early.
+  8. <h2>After the session</h2> follow-up work and what comes next.
+Rules: base everything on the lesson notes provided; be practical and specific; when a COURSE BRIEF is given, plan for those learners.`,
+
+    assessment_draft: `You are an assessment designer creating an authentic task, its marking rubric and the teacher's model answer. ${jsonRule}
+Output shape: {"title": string, "brief_html": string, "deliverables": string[], "estimated_minutes": number, "rubric": [{"name": string, "points": number, "levels": [{"label": string, "points": number, "descriptor": string}]}], "resources": [{"title": string, "note": string}], "solution_html": string, "marking_notes": string}
+By kind:
+- "lab": a hands-on practical for one week (30 to 120 minutes). brief_html: goal, setup, numbered step-by-step tasks, what the result should look like, an extension task. For technical subjects include starter code in <pre><code>. solution_html: the complete worked solution (with code where relevant). Rubric: 3 criteria.
+- "assignment": a task for one week that applies its lessons to a realistic situation (1 to 4 hours). brief_html: scenario, task, deliverables, constraints, how it will be assessed. solution_html: an outline of a strong answer. Rubric: 4 or 5 criteria.
+- "capstone": the final project of the whole course, integrating every major skill, the kind of work a graduate would show an employer (10 to 30 hours). brief_html: scenario based on the target job, milestones, deliverables (including a short presentation or write-up), constraints, how it will be assessed. solution_html: what an excellent submission contains, milestone by milestone. Rubric: 5 or 6 criteria including communication of results.
+Rules:
+- Mirror real work for the target roles in the COURSE BRIEF when one is given; otherwise realistic work for the subject.
+- Assess only what the weeks covered teach.
+- Rubric: points across criteria add up exactly to the total points given. Each criterion has four levels, labelled Excellent, Good, Developing, Not yet, with points from high to low and descriptors that describe observable evidence.
+- resources: kinds of public datasets, tools or references to use. Do not invent URLs; name a source only if you are confident it exists, in "note".
+- marking_notes: guidance for the marker (what to look for, common weaknesses, how to give feedback).
+- brief_html and solution_html allowed HTML: h2, h3, p, ul, ol, li, strong, em, code, pre, table, thead, tbody, tr, th, td.`,
+
+    summarize_material: `You read a teacher's own teaching material (a syllabus, slides, notes or a textbook chapter) so a course can be built around it. ${jsonRule}
+Output shape: {"summary": string, "audience": string, "level": string, "topics": string[], "suggested_weeks": [{"title": string, "lessons": string[]}], "notes_for_planner": string}
+Rules:
+- summary: 6 to 10 sentences on what the material teaches, in what order, and its style (theory, practical, exam-focused...).
+- topics: the 8 to 25 main topics, in the material's order.
+- suggested_weeks: a week-by-week outline that follows the material's own structure and order (3 to 12 weeks, 2 to 6 lessons each).
+- notes_for_planner: gaps, outdated parts, or anything the course designer should know.
+- Use only what the material contains. If it is too short or unreadable, say so in summary and return empty lists.`,
+
     lesson_slides: `You are an expert teacher turning one lesson's study notes into the slide deck you would teach that lesson from. ${jsonRule}
 Output shape: {"slides_title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
 Rules:
@@ -414,6 +475,7 @@ function briefBlock(brief: unknown): string {
     ['Teaching approach', b.approach], ['Must include', list(b.must_include)],
     ['Projects / portfolio pieces', list(b.projects)], ['Assessment', b.assessment], ['Tone', b.tone],
     ['What employers ask for (from current job-market research)', list(b.market_findings)],
+    ["Teacher's own material to follow", typeof b.teacher_material === 'string' ? b.teacher_material.slice(0, 3000) : ''],
     ['Typical lesson length (minutes)', b.lesson_minutes],
   ].filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
   if (lines.length === 0) return '';
@@ -454,7 +516,11 @@ ${brief ? brief : 'Ensure the course meets tertiary education standards with cle
       const existing = outline
         ? `Existing course: ${String(input.course_title ?? '').slice(0, 200)}\nCurrent outline:\n${outline}\n${savedBrief}\n`
         : '';
-      return `${existing}${research}Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
+      const material = String(input.material_summary ?? '').trim().slice(0, 5000);
+      const materialBlock = material
+        ? `Teacher's own material (build the course around it, following its content and order unless the teacher says otherwise):\n${material}\n\n`
+        : '';
+      return `${existing}${materialBlock}${research}Conversation so far:\n\n${transcript}\n\nReply to the teacher's latest message.`;
     }
 
     case 'course_skeleton':
@@ -495,7 +561,7 @@ Number of Questions: ${input.num_questions}
 Question Types: ${Array.isArray(input.question_types) ? (input.question_types as string[]).join(', ') : input.question_types}
 Difficulty: ${input.difficulty}
 
-Questions must target higher-order thinking (Bloom's levels 3-6: apply, analyse, evaluate, create). Avoid pure recall questions.`;
+Questions must target higher-order thinking (Bloom's levels 3-6: apply, analyse, evaluate, create). Avoid pure recall questions.${brief}`;
 
     case 'flashcards':
       return `Create university-level study flashcards from this lesson content:
@@ -548,6 +614,38 @@ Lesson: ${input.lesson_title}${input.lesson_description ? `\nWhat this lesson co
 Learners: ${input.target_audience}
 Level: ${input.difficulty}${others.length ? `\n\nOther lessons in this week (do not teach their content):\n${others.map(t => `- ${t}`).join('\n')}` : ''}${earlier.length ? `\n\nEarlier weeks (already taught; build on them):\n${earlier.map(t => `- ${t}`).join('\n')}` : ''}${brief}`;
     }
+
+    case 'improve_notes':
+      return `Revise these study notes.
+Course: ${input.course_title}
+Lesson: ${input.lesson_title}
+Teacher's instruction: ${String(input.instruction ?? '').slice(0, 1500)}
+
+Current notes (HTML):
+${String(input.notes_html ?? '').slice(0, 30000)}${brief}`;
+
+    case 'teacher_guide':
+      return `Write the session plan for teaching this lesson live.
+Course: ${input.course_title}
+Week / module: ${input.section_title}
+Lesson: ${input.lesson_title}
+Session length: ${input.session_minutes || 60} minutes
+
+Lesson notes:
+${String(input.notes_text ?? '').slice(0, 14000)}${brief}`;
+
+    case 'assessment_draft': {
+      const weeks = Array.isArray(input.weeks) ? (input.weeks as string[]).filter(Boolean) : [];
+      return `Create a ${input.kind} for this course.
+Course: ${input.course_title}
+Total points: ${input.total_points || 100}
+${weeks.length ? `Weeks it covers:\n${weeks.map(w => `- ${w}`).join('\n')}\n` : ''}${input.request ? `Teacher's request: ${String(input.request).slice(0, 1500)}\n` : ''}${input.notes_text ? `\nWhat the lessons teach (excerpts):\n${String(input.notes_text).slice(0, 12000)}\n` : ''}${brief}`;
+    }
+
+    case 'summarize_material':
+      return input.material_text
+        ? `Material file: ${input.file_name || 'uploaded file'}\n\n${String(input.material_text).slice(0, 60000)}`
+        : `The material is the attached document (${input.file_name || 'uploaded PDF'}). Read all of it.`;
 
     case 'lesson_slides':
       return `Create the slide deck for this lesson from its study notes.
@@ -671,6 +769,10 @@ function getMaxTokens(task: string, input: Record<string, unknown> = {}): number
   // Deep notes and the slide deck built from them are long answers
   if (task === 'lesson_notes') return 7000;
   if (task === 'lesson_slides') return 7000;
+  if (task === 'improve_notes') return 7000;
+  if (task === 'teacher_guide') return 5000;
+  if (task === 'assessment_draft') return 7000;
+  if (task === 'summarize_material') return 4000;
   if (task === 'presentation_slides') return 4000;
   if (task === 'lesson_content') return 10000;
   if (task === 'generate_exam') return 8000;
@@ -725,7 +827,7 @@ async function callAnthropic(
   userPrompt: string,
   task: string,
   strict = false,
-  opts: { maxTokens?: number; timeoutMs?: number; webSearchUses?: number } = {}
+  opts: { maxTokens?: number; timeoutMs?: number; webSearchUses?: number; pdfBase64?: string } = {}
 ): Promise<{ content: string; inputTokens: number; outputTokens: number; stopReason: string; sources: WebSource[]; searches: number }> {
   const strictAddition = strict ? '\n\nCRITICAL: Output ONLY the JSON object. No text before or after. No markdown fences.' : '';
   const deadline = Date.now() + (opts.timeoutMs ?? 120000);
@@ -742,7 +844,14 @@ async function callAnthropic(
 
   let lastError: unknown = null;
   for (const tools of toolVariants) {
-    const messages: Array<{ role: string; content: unknown }> = [{ role: 'user', content: userPrompt }];
+    // A teacher's PDF is sent as a document the model reads directly (text, tables and images).
+    const firstContent: unknown = opts.pdfBase64
+      ? [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.pdfBase64 } },
+          { type: 'text', text: userPrompt },
+        ]
+      : userPrompt;
+    const messages: Array<{ role: string; content: unknown }> = [{ role: 'user', content: firstContent }];
     const allBlocks: AnthropicBlock[] = [];
     let inputTokens = 0;
     let outputTokens = 0;
@@ -1106,6 +1215,10 @@ Deno.serve(async (req: Request) => {
           full_curriculum: 'ai_full_curriculum',
           presentation_slides: 'ai_presentations',
           lesson_slides: 'ai_presentations',
+          improve_notes: 'ai_lesson_content',
+          teacher_guide: 'ai_lesson_content',
+          assessment_draft: 'ai_quiz_generation',
+          summarize_material: 'ai_course_outline',
           section_slides: 'ai_presentations',
           generate_exam: 'ai_exams',
         };
@@ -1150,6 +1263,18 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // A PDF must not go through text sanitising (it would be cut short); keep it aside.
+    let pdfBase64: string | undefined;
+    if (task === 'summarize_material' && typeof rawInput.material_pdf_base64 === 'string') {
+      pdfBase64 = rawInput.material_pdf_base64;
+      delete rawInput.material_pdf_base64;
+      // About 12 MB of PDF; larger files should be split
+      if (pdfBase64.length > 16_000_000 || !/^[A-Za-z0-9+/=]+$/.test(pdfBase64.slice(0, 1000))) {
+        return new Response(JSON.stringify({ error: 'That PDF is too large or not valid. Please upload a file under 12 MB.' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
     const input = sanitizeInput(rawInput);
     const systemPrompt = getSystemPrompt(task);
     const userPrompt = getUserPrompt(task, input);
@@ -1185,6 +1310,7 @@ Deno.serve(async (req: Request) => {
           maxTokens,
           timeoutMs: Math.max(remaining - 2000, 5000),
           webSearchUses: wantsSearch && attempt === 0 ? PLANNER_MAX_SEARCHES : undefined,
+          pdfBase64,
         });
         lastUpstreamError = null;
         if (result.sources.length) sources = result.sources;
@@ -1280,7 +1406,7 @@ Deno.serve(async (req: Request) => {
     const TOKEN_COSTS: Record<string, number> = {
       course_outline: 5, course_planner_chat: 1, course_skeleton: 2, module_lessons: 1, lesson_content: 8, quiz_from_content: 6, flashcards: 4,
       summarize_lesson: 3, rewrite_content: 5, translate_content: 7, activity_ideas: 4,
-      full_curriculum: 20, lesson_notes: 5, lesson_slides: 6, presentation_slides: 10,
+      full_curriculum: 20, lesson_notes: 5, lesson_slides: 6, improve_notes: 4, teacher_guide: 4, assessment_draft: 6, summarize_material: 8, presentation_slides: 10,
       section_content: 8, section_notes: 5, section_slides: 10, generate_exam: 10,
     };
     if (orgId) {

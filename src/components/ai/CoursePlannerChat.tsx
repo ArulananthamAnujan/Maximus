@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Loader2, Target, Users, Clock, Hammer, Globe } from 'lucide-react';
+import { Send, Sparkles, Loader2, Target, Users, Clock, Hammer, Globe, Paperclip, FileCheck2, X } from 'lucide-react';
+import { readMaterial, MATERIAL_ACCEPT } from '../../lib/materialFile';
+import { materialForPlanner } from '../../lib/coursePlan';
+import type { CoursePlan } from '../../lib/coursePlan';
 import { plannerChat } from '../../lib/ai';
 import type { CourseBrief, PlannerMessage, PlannerCourseContext, WebSource } from '../../lib/ai';
 import { safeUrl } from '../../lib/utils';
@@ -20,6 +23,13 @@ interface Props {
   createLabel?: string;
   /** Tap-to-send answers shown before the first reply. */
   openingSuggestions?: string[];
+  /** The teacher's own material the course is built around. */
+  initialMaterial?: CoursePlan['material'];
+  onMaterialChange?: (material: CoursePlan['material']) => void;
+  /** Open the file picker as soon as the chat appears. */
+  startWithUpload?: boolean;
+  /** Send this message as soon as the chat appears. */
+  initialMessage?: string;
 }
 
 export const PLANNER_GREETING: PlannerMessage = {
@@ -36,6 +46,7 @@ const OPENING_SUGGESTIONS = [
 export default function CoursePlannerChat({
   messages, onMessagesChange, brief, onBriefChange, onCreate,
   context, initialResearch, onResearchChange, createLabel, openingSuggestions,
+  initialMaterial, onMaterialChange, startWithUpload, initialMessage,
 }: Props) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -55,9 +66,21 @@ export default function CoursePlannerChat({
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, sending, brief]);
 
-  const send = async (text: string) => {
+  const [material, setMaterial] = useState<CoursePlan['material']>(initialMaterial ?? null);
+  const materialRef = useRef(material);
+  const [reading, setReading] = useState('');
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const send = async (text: string, materialOverride?: CoursePlan['material']) => {
     const content = text.trim();
     if (!content || sending) return;
+    const currentMaterial = materialOverride !== undefined ? materialOverride : materialRef.current;
+    const ctx = {
+      course_title: context?.course_title ?? '',
+      existing_outline: context?.existing_outline ?? '',
+      saved_brief: context?.saved_brief ?? null,
+      material_summary: materialForPlanner(currentMaterial),
+    };
     const next: PlannerMessage[] = [...messages, { role: 'teacher', content }];
     onMessagesChange(next);
     setDraft('');
@@ -65,7 +88,7 @@ export default function CoursePlannerChat({
     setError('');
     setSending(true);
     try {
-      const result = await plannerChat(next, research, context);
+      const result = await plannerChat(next, research, ctx);
       const nextResearch = {
         notes: result.research_notes?.trim() ? result.research_notes : research.notes,
         sources: result.sources ?? research.sources,
@@ -91,6 +114,32 @@ export default function CoursePlannerChat({
     const id = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
     return () => clearInterval(id);
   }, [sending]);
+
+  const uploadFile = async (file: File) => {
+    setError('');
+    setReading(file.name);
+    try {
+      const m = await readMaterial(file);
+      setMaterial(m);
+      materialRef.current = m;
+      onMaterialChange?.(m);
+      setReading('');
+      await send(`I've uploaded my own material: "${m.file_name}". Please build the course around it.`, m);
+    } catch (err) {
+      setReading('');
+      setError(err instanceof Error ? err.message : 'That file could not be read.');
+    }
+  };
+
+  // Opened from "Build from my own material" or with a question typed elsewhere
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    if (startWithUpload) fileRef.current?.click();
+    else if (initialMessage?.trim()) send(initialMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const lastIsTeacher = messages[messages.length - 1]?.role === 'teacher';
 
@@ -198,10 +247,39 @@ export default function CoursePlannerChat({
             ))}
           </div>
         )}
+        {(material || reading) && (
+          <div className="flex items-center gap-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-3 py-1.5">
+            {reading ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <FileCheck2 className="w-3.5 h-3.5 shrink-0" />}
+            <span className="flex-1 min-w-0 truncate">
+              {reading ? `Reading "${reading}"… this can take a minute` : `Building around your material: ${material?.file_name}`}
+            </span>
+            {material && !reading && (
+              <button type="button" aria-label="Stop using this material" onClick={() => { setMaterial(null); materialRef.current = null; onMaterialChange?.(null); }} className="p-0.5"><X className="w-3.5 h-3.5" /></button>
+            )}
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept={MATERIAL_ACCEPT}
+          className="hidden"
+          aria-label="Upload your own material"
+          onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadFile(f); }}
+        />
         <form
           onSubmit={e => { e.preventDefault(); send(draft); }}
           className="flex items-end gap-2"
         >
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={sending || !!reading}
+            title="Use my own material (PDF, Word, PowerPoint)"
+            aria-label="Use my own material (PDF, Word, PowerPoint)"
+            className="h-11 w-11 shrink-0 rounded-xl border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-sky-700 disabled:opacity-40 flex items-center justify-center"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <label htmlFor="planner-message" className="sr-only">Your message to the course planner</label>
           <textarea
             id="planner-message"

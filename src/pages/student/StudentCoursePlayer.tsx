@@ -7,9 +7,10 @@ import {
   Link as LinkIcon, BookOpen, Lock, Menu, X, ChevronDown, ChevronUp,
   BookMarked, Sparkles, ClipboardList, Clock, Brain, Zap,
   ChevronRight, ListVideo, Award, AlignLeft, HelpCircle, ExternalLink,
-  Trophy,
+  Trophy, Eye, Star, CalendarClock,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import type { NavItem } from '../../components/layout/DashboardLayout';
 import { studentNavItems } from './studentNav';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -24,6 +25,60 @@ const LessonDocumentViewer = lazy(() => import('../../components/ui/LessonDocume
 
 interface SectionWithLessons extends Section {
   lessons: Lesson[];
+  release_at?: string | null;
+}
+
+/** The date a week opens, while it is still in the future. */
+const opensOn = (section: { release_at?: string | null }): string | null =>
+  section.release_at && new Date(section.release_at).getTime() > Date.now() ? section.release_at : null;
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
+/** Asks for a 1–5 rating when a student finishes a week's lessons. */
+function WeekFeedbackCard({ weekLabel, saved, disabled, onSave }: {
+  weekLabel: string;
+  saved: number | null;
+  disabled: boolean;
+  onSave: (rating: number, comment: string) => Promise<boolean>;
+}) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const [sending, setSending] = useState(false);
+  const [done, setDone] = useState(false);
+  if (saved !== null || done) {
+    return (
+      <p className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 px-1">
+        <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" /> Thanks for rating {weekLabel}.
+      </p>
+    );
+  }
+  return (
+    <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 p-4 shadow-sm space-y-3">
+      <p className="text-sm font-semibold text-gray-900 dark:text-white">You finished {weekLabel}. How useful was it?</p>
+      <div className="flex gap-1" role="radiogroup" aria-label={`Rate ${weekLabel}`}>
+        {[1, 2, 3, 4, 5].map(n => (
+          <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} out of 5`} onClick={() => setRating(n)}
+            className="p-1 rounded-md hover:bg-amber-50 dark:hover:bg-navy-700">
+            <Star className={`w-6 h-6 ${n <= rating ? 'text-amber-500 fill-amber-400' : 'text-gray-300'}`} />
+          </button>
+        ))}
+      </div>
+      {rating > 0 && (
+        <>
+          <textarea value={comment} onChange={e => setComment(e.target.value.slice(0, 2000))} rows={2}
+            placeholder="Anything that was unclear, or that helped? (optional)" aria-label="Comment"
+            className="w-full text-sm rounded-xl border border-gray-200 dark:border-navy-600 bg-white dark:bg-navy-900 px-3 py-2 text-gray-800 dark:text-gray-200" />
+          <div className="flex items-center gap-3">
+            <button type="button" disabled={sending || disabled} onClick={async () => { setSending(true); const ok = await onSave(rating, comment.trim()); setSending(false); if (ok) setDone(true); }}
+              className="px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+              {sending ? 'Sending…' : 'Send'}
+            </button>
+            <span className="text-xs text-gray-400">{disabled ? 'Ratings are not saved in preview.' : 'Your teacher sees your rating and comment.'}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 interface Activity {
@@ -53,8 +108,17 @@ type TabId = 'lesson' | 'materials' | 'activities' | 'ai-tools';
 
 const EMPTY_PROGRESS: never[] = [];
 
-export default function StudentCoursePlayer() {
+interface PlayerProps {
+  /** A teacher looking at the course as students see it: nothing is saved. */
+  preview?: boolean;
+  navItems?: NavItem[];
+  /** Where "Back" goes in preview. */
+  backTo?: string;
+}
+
+export default function StudentCoursePlayer({ preview = false, navItems, backTo }: PlayerProps = {}) {
   const { courseId } = useParams<{ courseId: string }>();
+  const nav = navItems ?? studentNavItems;
   const { profile } = useAuth();
   const { toast } = useToast();
 
@@ -76,8 +140,11 @@ export default function StudentCoursePlayer() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<TabId>('lesson');
 
-  const { hasAccess, isLoading: accessLoading } = useHasCourseAccess(courseId);
-  const { data: courseProgressData } = useCourseProgress(courseId);
+  const access = useHasCourseAccess(preview ? undefined : courseId);
+  const hasAccess = preview || access.hasAccess;
+  const accessLoading = !preview && access.isLoading;
+  const { data: courseProgressData } = useCourseProgress(preview ? undefined : courseId);
+  const [weekRatings, setWeekRatings] = useState<Map<string, number>>(new Map());
   const courseProgressRows = courseProgressData ?? EMPTY_PROGRESS;
   const updateProgressMutation = useUpdateLessonProgress();
 
@@ -92,7 +159,7 @@ export default function StudentCoursePlayer() {
     );
     setCompletedLessons(completed);
     // If all required lessons are already complete, try to issue a certificate in case it was missed
-    if (courseId && profile && courseProgressRows.length > 0) {
+    if (courseId && profile && !preview && courseProgressRows.length > 0) {
       const reqLessons = sections.flatMap(s => s.lessons.filter(l => l.is_required));
       if (reqLessons.length > 0 && reqLessons.every(l => completed.has(l.id))) {
         maybeIssueCertificate(courseId);
@@ -109,13 +176,18 @@ export default function StudentCoursePlayer() {
         supabase.from('quizzes').select('*').eq('course_id', courseId).order('created_at'),
         supabase.from('quiz_attempts').select('*').eq('student_id', profile.id),
       ]);
+      if (!preview) {
+        supabase.from('week_feedback').select('section_id, rating').eq('course_id', courseId).eq('student_id', profile.id)
+          .then(({ data }) => setWeekRatings(new Map((data ?? []).map(r => [r.section_id, r.rating]))));
+      }
 
       if (courseRes.data) setCourse(courseRes.data as Course);
 
       if (sectionsRes.data) {
         const secs = sectionsRes.data.map(s => ({
           ...s,
-          lessons: [...(s.lessons || [])].sort((a, b) => a.order_index - b.order_index),
+          // Weeks that have not opened yet show no lessons (the database already hides them from students)
+          lessons: opensOn(s) ? [] : [...(s.lessons || [])].sort((a, b) => a.order_index - b.order_index),
         })) as SectionWithLessons[];
         setSections(secs);
 
@@ -152,7 +224,8 @@ export default function StudentCoursePlayer() {
 
       if (quizRes.data) {
         const attempts = (attemptRes.data || []) as QuizAttempt[];
-        const quizzesWithAttempts: QuizWithAttempt[] = (quizRes.data as Quiz[]).map(q => {
+        const notOpenYet = new Set((sectionsRes.data ?? []).filter(s => opensOn(s)).map(s => s.id));
+        const quizzesWithAttempts: QuizWithAttempt[] = (quizRes.data as Quiz[]).filter(q => !q.section_id || !notOpenYet.has(q.section_id)).map(q => {
           const qAttempts = attempts.filter(a => a.quiz_id === q.id);
           const best = qAttempts.sort((a, b) => b.score - a.score)[0] || null;
           return { ...q, bestAttempt: best };
@@ -163,7 +236,7 @@ export default function StudentCoursePlayer() {
       setLoading(false);
     };
     fetchData();
-  }, [courseId, profile]);
+  }, [courseId, profile, preview]);
 
   useEffect(() => {
     if (!profile) return;
@@ -179,6 +252,7 @@ export default function StudentCoursePlayer() {
 
   const generateStudentAI = async (task: string) => {
     if (!profile || !activeLesson || !courseId) return;
+    if (preview) { sonnerToast.info('AI study tools are for students, so they are turned off in preview.'); return; }
     const cost = STUDENT_AI_COSTS[task] ?? 3;
     if ((tokenBalance ?? 0) < cost) {
       sonnerToast.error(`Not enough tokens. This action costs ${cost} tokens.`);
@@ -247,7 +321,7 @@ export default function StudentCoursePlayer() {
   }, [activeLesson?.id]);
 
   const saveVideoProgress = useCallback(() => {
-    if (!activeLesson || !courseId || !hasAccess) return;
+    if (!activeLesson || !courseId || !hasAccess || preview) return;
     const video = videoRef.current;
     if (!video || video.duration === 0) return;
     const position = Math.floor(video.currentTime);
@@ -260,7 +334,7 @@ export default function StudentCoursePlayer() {
       progressPercent: percent, status: isCompleted ? 'completed' : 'in_progress',
       completedAt: isCompleted ? new Date().toISOString() : null,
     });
-  }, [activeLesson, courseId, hasAccess, updateProgressMutation]);
+  }, [activeLesson, courseId, hasAccess, preview, updateProgressMutation]);
 
   useEffect(() => {
     if (!activeLesson || activeLesson.type !== 'video') return;
@@ -307,6 +381,7 @@ export default function StudentCoursePlayer() {
     activeLesson?.id === sections[activeSectionIndex].lessons[sections[activeSectionIndex].lessons.length - 1]?.id;
   // Block "Next" if section is finished but quiz not yet passed
   const mustTakeSectionQuiz =
+    !preview &&
     isLastLessonInSection &&
     activeSectionAllLessonsComplete &&
     activeSectionQuiz !== null &&
@@ -314,7 +389,7 @@ export default function StudentCoursePlayer() {
 
   // Issues a certificate if the course has no blocking conditions (no required quizzes unpassed, no ungraded exams)
   const maybeIssueCertificate = async (cId: string) => {
-    if (!profile) return;
+    if (!profile || preview) return;
 
     // Already have one?
     const { data: existing } = await supabase.from('certificates').select('id').eq('student_id', profile.id).eq('course_id', cId).maybeSingle();
@@ -347,6 +422,11 @@ export default function StudentCoursePlayer() {
 
   const handleMarkComplete = async () => {
     if (!activeLesson || !profile || completedLessons.has(activeLesson.id) || !courseId) return;
+    if (preview) {
+      setCompletedLessons(prev => new Set(prev).add(activeLesson.id));
+      sonnerToast.info('Preview: marked complete for now, but nothing is saved.');
+      return;
+    }
     setMarking(true);
     updateProgressMutation.mutate({
       lessonId: activeLesson.id, courseId,
@@ -375,7 +455,7 @@ export default function StudentCoursePlayer() {
       sonnerToast.error('You need to enrol to access this lesson');
       return;
     }
-    if (!bypassGate && hasAccess) {
+    if (!bypassGate && hasAccess && !preview) {
       const targetSectionIndex = sections.findIndex(s => s.lessons.some(l => l.id === lesson.id));
       if (targetSectionIndex > 0 && isSectionLocked(targetSectionIndex)) {
         const blockingSection = sections.slice(0, targetSectionIndex).reverse().find(s => !isSectionQuizPassed(s.id));
@@ -394,7 +474,7 @@ export default function StudentCoursePlayer() {
 
   if (loading || accessLoading) {
     return (
-      <DashboardLayout navItems={studentNavItems} title="Loading..." subtitle="">
+      <DashboardLayout navItems={nav} title="Loading..." subtitle="">
         <div className="flex flex-col items-center justify-center h-64 gap-3">
           <div className="w-10 h-10 border-4 border-sky-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-sm text-gray-400">Loading course...</p>
@@ -405,7 +485,7 @@ export default function StudentCoursePlayer() {
 
   if (!hasAccess && !(activeLesson?.is_preview)) {
     return (
-      <DashboardLayout navItems={studentNavItems} title="Access Denied" subtitle="">
+      <DashboardLayout navItems={nav} title="Access Denied" subtitle="">
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-20 h-20 rounded-2xl bg-gray-100 dark:bg-navy-800 flex items-center justify-center mb-5">
             <Lock className="w-10 h-10 text-gray-300 dark:text-navy-600" />
@@ -449,10 +529,11 @@ export default function StudentCoursePlayer() {
           const isExpanded = expandedSections.has(section.id);
           const sectionCompleted = section.lessons.filter(l => completedLessons.has(l.id)).length;
           const hasActiveLesson = section.lessons.some(l => l.id === activeLesson?.id);
-          const sectionLocked = hasAccess && isSectionLocked(si);
+          const opens = opensOn(section);
+          const sectionLocked = !!opens || (hasAccess && !preview && isSectionLocked(si));
           const sectionQuiz = getQuizForSection(section.id);
           const quizPassed = isSectionQuizPassed(section.id);
-          const allLessonsInSectionDone = section.lessons.every(l => completedLessons.has(l.id));
+          const allLessonsInSectionDone = section.lessons.length > 0 && section.lessons.every(l => completedLessons.has(l.id));
           const showQuizRequired = !sectionLocked && sectionQuiz && !quizPassed && allLessonsInSectionDone;
 
           return (
@@ -472,7 +553,7 @@ export default function StudentCoursePlayer() {
                       : 'bg-gray-50 dark:bg-navy-900/30 hover:bg-gray-100 dark:hover:bg-navy-800/50'
                 }`}
               >
-                {sectionLocked && <Lock className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
+                {opens ? <CalendarClock className="w-3.5 h-3.5 text-gray-400 shrink-0" /> : sectionLocked && <Lock className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
                 <div className="flex-1 min-w-0">
                   <p className={`text-xs font-bold uppercase tracking-wide truncate ${
                     sectionLocked ? 'text-gray-400 dark:text-gray-500'
@@ -482,9 +563,11 @@ export default function StudentCoursePlayer() {
                     Week {si + 1}: {section.title}
                   </p>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {sectionLocked
-                      ? 'Locked — complete previous quiz'
-                      : `${sectionCompleted}/${section.lessons.length} complete`}
+                    {opens
+                      ? `Opens ${shortDate(opens)}`
+                      : sectionLocked
+                        ? 'Locked — complete previous quiz'
+                        : `${sectionCompleted}/${section.lessons.length} complete`}
                   </p>
                 </div>
                 {!sectionLocked && (isExpanded
@@ -589,7 +672,7 @@ export default function StudentCoursePlayer() {
   };
 
   return (
-    <DashboardLayout navItems={studentNavItems} title={course?.title || 'Course'} subtitle="">
+    <DashboardLayout navItems={nav} title={course?.title || 'Course'} subtitle="">
       <div className="flex gap-0 -m-4 sm:-m-6 h-[calc(100vh-7rem)]">
 
         {/* Desktop sidebar */}
@@ -617,15 +700,22 @@ export default function StudentCoursePlayer() {
         <div className="flex-1 overflow-y-auto min-w-0">
           <div className="max-w-4xl mx-auto p-4 sm:p-6">
 
+            {preview && (
+              <div role="status" className="flex items-start gap-2.5 mb-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900">
+                <Eye className="w-4 h-4 mt-0.5 shrink-0" />
+                <span><strong>Student preview.</strong> This is what students see. Weeks that have not opened yet are locked, as they will be for students. Progress, ratings and AI tools are not saved here.</span>
+              </div>
+            )}
+
             {/* Top bar */}
             <div className="flex items-center gap-3 mb-5">
               <button onClick={() => setSidebarOpen(true)}
                 className="lg:hidden flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 bg-white dark:bg-navy-800 border border-gray-200 dark:border-navy-700 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-700 transition-colors">
                 <Menu className="w-4 h-4" /> Contents
               </button>
-              <Link to="/student/courses"
+              <Link to={preview ? (backTo || '/') : '/student/courses'}
                 className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-sky-600 dark:hover:text-sky-400 transition-colors font-medium">
-                <ChevronLeft className="w-4 h-4" /> Back to Courses
+                <ChevronLeft className="w-4 h-4" /> {preview ? 'Back to the course builder' : 'Back to Courses'}
               </Link>
               <div className="hidden lg:flex ml-auto items-center gap-2 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-navy-800 border border-gray-100 dark:border-navy-700 px-3 py-1.5 rounded-full">
                 <div className="w-16 h-1.5 bg-gray-100 dark:bg-navy-700 rounded-full overflow-hidden">
@@ -907,6 +997,26 @@ export default function StudentCoursePlayer() {
                           </Link>
                         </div>
                       </div>
+                    )}
+
+                    {/* Rate the week once its lessons are done */}
+                    {hasAccess && activeSectionIndex >= 0 && activeSectionAllLessonsComplete && courseId && profile && (
+                      <WeekFeedbackCard
+                        key={sections[activeSectionIndex].id}
+                        weekLabel={`week ${activeSectionIndex + 1}`}
+                        saved={weekRatings.get(sections[activeSectionIndex].id) ?? null}
+                        disabled={preview}
+                        onSave={async (rating, comment) => {
+                          const sectionId = sections[activeSectionIndex].id;
+                          const { error } = await supabase.from('week_feedback').upsert(
+                            { course_id: courseId, section_id: sectionId, student_id: profile.id, rating, comment, updated_at: new Date().toISOString() },
+                            { onConflict: 'section_id,student_id' },
+                          );
+                          if (error) { sonnerToast.error('Could not send your rating. Please try again.'); return false; }
+                          setWeekRatings(prev => new Map(prev).set(sectionId, rating));
+                          return true;
+                        }}
+                      />
                     )}
 
                     {/* Lesson navigation */}
