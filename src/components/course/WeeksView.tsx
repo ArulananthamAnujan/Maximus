@@ -23,6 +23,8 @@ export interface WeeksViewActions {
   onOpenWeekQuiz: (section: { id: string; title: string }) => void;
   onOpenAssignment: (opts: { kind: AssignmentKind; sectionId?: string | null; assignment?: WsAssignment }) => void;
   onOpenQuizzes: () => void;
+  /** Build everything that is missing, for every week, in one go. */
+  onBuildAll: () => void;
 }
 
 interface Props extends WeeksViewActions {
@@ -266,11 +268,18 @@ export default function WeeksView(props: Props) {
             {ws.sections.length} week{ws.sections.length === 1 ? '' : 's'} · {totalLessons} lesson{totalLessons === 1 ? '' : 's'}
             {minutes > 0 && ` · about ${Math.round(minutes / 60)} h of study`}
           </p>
-          {!addingWeek && (
-            <button onClick={() => setAddingWeek(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold border border-slate-300 rounded-lg bg-white hover:bg-slate-50">
-              <Plus className="w-4 h-4" /> Add week
-            </button>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {!addingWeek && (
+              <button onClick={() => setAddingWeek(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold border border-slate-300 rounded-lg bg-white hover:bg-slate-50">
+                <Plus className="w-4 h-4" /> Add week
+              </button>
+            )}
+            {ws.sections.length > 0 && (
+              <button onClick={props.onBuildAll} className="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-semibold rounded-lg bg-sky-600 hover:bg-sky-700 text-white">
+                <Sparkles className="w-4 h-4" /> Build the whole course
+              </button>
+            )}
+          </div>
         </div>
 
         {addingWeek && (

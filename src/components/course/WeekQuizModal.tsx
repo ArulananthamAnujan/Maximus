@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { generateQuiz } from '../../lib/ai';
 import type { AIQuizQuestion } from '../../lib/ai';
 import { audienceFromPlan } from '../../lib/coursePlan';
-import { stripHtml } from '../../lib/slides';
+import { weekNotesText, hasEnoughNotes } from '../../lib/courseBuild';
 import { weekLessons } from '../../lib/workspace';
 import type { Workspace } from '../../lib/workspace';
 import NumberInput from '../ui/NumberInput';
@@ -29,13 +29,7 @@ export default function WeekQuizModal({ ws, section, onClose, onCreated }: Props
 
   const weekText = async () => {
     const sec = ws.sections.find(s => s.id === section.id);
-    const lessons = sec ? weekLessons(sec, ws) : [];
-    const { data } = await supabase.from('lesson_documents').select('lesson_id, content_html').eq('type', 'notes').in('lesson_id', lessons.map(l => l.id));
-    const byLesson = new Map((data ?? []).map(d => [d.lesson_id, d.content_html]));
-    return lessons
-      .map(l => `## ${l.title}\n${stripHtml(byLesson.get(l.id) || l.content || l.description || '')}`)
-      .join('\n\n')
-      .slice(0, 16000);
+    return weekNotesText(sec ? weekLessons(sec, ws) : []);
   };
 
   const generate = async () => {
@@ -43,7 +37,7 @@ export default function WeekQuizModal({ ws, section, onClose, onCreated }: Props
     setError('');
     try {
       const text = await weekText();
-      if (text.replace(/##.*\n/g, '').trim().length < 300) throw new Error('This week needs lesson notes first; the quiz is written from them.');
+      if (!hasEnoughNotes(text)) throw new Error('This week needs lesson notes first; the quiz is written from them.');
       const { brief } = audienceFromPlan(ws.plan);
       const r = await generateQuiz({ lesson_content: text, num_questions: count, question_types: types, difficulty, brief });
       const qs = (r.questions ?? []).filter(q => q.question && q.correct_answer);

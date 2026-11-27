@@ -4,6 +4,7 @@ import { weekStatus, weekLessons, weekLecture, readiness } from '../../lib/works
 import type { Workspace } from '../../lib/workspace';
 
 export interface AssistantActions {
+  onBuildAll: () => void;
   onOpenPlanner: (opts?: { message?: string; upload?: boolean }) => void;
   onOpenStudio: (sectionIds?: string[]) => void;
   onOpenLectures: () => void;
@@ -25,7 +26,11 @@ export default function AssistantPanel({ ws, ...a }: AssistantActions & { ws: Wo
   }
 
   const weeksNeedingMaterials = ws.sections.filter(s => weekStatus(s, ws).issues.some(i => /notes|slides/.test(i)));
-  if (weeksNeedingMaterials.length === 1) {
+  const noQuizCount = ws.sections.filter(s => weekLessons(s, ws).length > 0 && !ws.quizzes.some(q => q.section_id === s.id)).length;
+  const missingKinds = [weeksNeedingMaterials.length > 0, noQuizCount > 0, ws.sections.some(s => weekLessons(s, ws).length > 0 && weekLecture(s, ws).state === 'none')].filter(Boolean).length;
+  if (ws.sections.length > 1 && (weeksNeedingMaterials.length > 1 || missingKinds > 1)) {
+    suggestions.push({ key: 'build', title: 'Build the whole course in one go', detail: 'Notes, slides, quizzes, lectures and the capstone for every week', run: a.onBuildAll });
+  } else if (weeksNeedingMaterials.length === 1) {
     const s = weeksNeedingMaterials[0];
     suggestions.push({ key: 'finish', title: `Finish "${s.title}"`, detail: weekStatus(s, ws).issues.filter(i => /notes|slides/.test(i)).join(', '), run: () => a.onOpenStudio([s.id]) });
   } else if (weeksNeedingMaterials.length > 1) {
@@ -96,6 +101,9 @@ export default function AssistantPanel({ ws, ...a }: AssistantActions & { ws: Wo
       {ws.sections.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Whole course</p>
+          <button onClick={a.onBuildAll} className="w-full flex items-center gap-2 text-left text-sm font-semibold text-sky-700 hover:text-sky-800 py-1.5">
+            <Sparkles className="w-4 h-4" /> Build everything that is missing
+          </button>
           <button onClick={() => a.onOpenStudio()} className="w-full flex items-center gap-2 text-left text-sm text-slate-700 hover:text-sky-700 py-1.5">
             <FileText className="w-4 h-4 text-blue-500" /> Notes, slides &amp; teacher guides
           </button>

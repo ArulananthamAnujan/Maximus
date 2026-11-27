@@ -16,6 +16,8 @@ import type { WorkspaceTab } from '../../components/course/CourseHeader';
 import WeeksView from '../../components/course/WeeksView';
 import AssistantPanel from '../../components/course/AssistantPanel';
 import type { QuizWithQuestions } from '../../components/course/QuizzesTab';
+import type { BuildFocus } from '../../components/course/BuildCourseModal';
+import { callLectureApi } from '../../lib/lectureApi';
 
 const LessonPanel = lazy(() => import('../../components/course/LessonPanel'));
 const OverviewView = lazy(() => import('../../components/course/OverviewView'));
@@ -29,6 +31,7 @@ const PublishDialog = lazy(() => import('../../components/course/PublishDialog')
 const PlanWeeksModal = lazy(() => import('../../components/course/PlanWeeksModal'));
 const WeekQuizModal = lazy(() => import('../../components/course/WeekQuizModal'));
 const AssignmentEditorModal = lazy(() => import('../../components/course/AssignmentEditorModal'));
+const BuildCourseModal = lazy(() => import('../../components/course/BuildCourseModal'));
 const SubmissionsModal = lazy(() => import('../../components/course/SubmissionsModal'));
 const AICourseGeneratorModal = lazy(() => import('../../components/ai/AICourseGeneratorModal'));
 const LectureVideoModal = lazy(() => import('../../components/ai/LectureVideoModal'));
@@ -85,6 +88,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [weekQuiz, setWeekQuiz] = useState<{ id: string; title: string } | null>(null);
   const [assignmentEditor, setAssignmentEditor] = useState<null | { kind: AssignmentKind; sectionId?: string | null; assignment?: WsAssignment }>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [build, setBuild] = useState<null | { only?: BuildFocus }>(null);
   const [marking, setMarking] = useState<WsAssignment | null>(null);
   const [marksVersion, setMarksVersion] = useState(0);
   const [downloading, setDownloading] = useState(false);
@@ -155,6 +159,16 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     setParams({ materials: null }, true);
   }, [searchParams, ws, courseId, setParams]);
 
+  // While lecture videos are being made, check on them; this also adds finished ones to the course
+  const lecturesMaking = !!ws?.lectures.some(l => l.status === 'rendering' || l.status === 'saving');
+  useEffect(() => {
+    if (!lecturesMaking || !courseId) return;
+    const id = setInterval(() => {
+      callLectureApi('course_status', { course_id: courseId }).then(() => reload()).catch(() => {});
+    }, 45000);
+    return () => clearInterval(id);
+  }, [lecturesMaking, courseId, reload]);
+
   const reloadAll = useCallback(async () => {
     await reload();
     if (tab === 'assessments' && assessSub === 'quizzes') await fetchQuizzesFull();
@@ -194,11 +208,12 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     switch (item.key) {
       case 'content': if (ws.sections.length === 0) setPlanner({}); else setTab('weeks'); break;
       case 'description': case 'thumbnail': setTab('settings'); break;
-      case 'notes': case 'slides': case 'guides': setStudio({}); break;
-      case 'quizzes': setTab('weeks'); break;
+      case 'notes': case 'slides': setBuild({ only: 'materials' }); break;
+      case 'guides': setBuild({ only: 'guides' }); break;
+      case 'quizzes': setBuild({ only: 'quizzes' }); break;
       case 'capstone': setAssignmentEditor({ kind: 'capstone', sectionId: null }); break;
       case 'schedule': setTab('schedule'); break;
-      case 'lectures': setShowLectures(true); break;
+      case 'lectures': setBuild({ only: 'lectures' }); break;
     }
   };
 
@@ -316,6 +331,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   ) : (
     <AssistantPanel
       ws={ws}
+      onBuildAll={() => setBuild({})}
       onOpenPlanner={opts => setPlanner(opts ?? {})}
       onOpenStudio={ids => setStudio({ sectionIds: ids })}
       onOpenLectures={() => setShowLectures(true)}
@@ -360,6 +376,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
               onOpenWeekQuiz={s => setWeekQuiz(s)}
               onOpenAssignment={opts => setAssignmentEditor(opts)}
               onOpenQuizzes={() => { setAssessSub('quizzes'); setTab('assessments'); }}
+              onBuildAll={() => setBuild({})}
             />
           )}
 
@@ -390,6 +407,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
       </div>
 
       <Suspense fallback={null}>
+        {build && (
+          <BuildCourseModal ws={ws} only={build.only} onClose={() => { setBuild(null); reload(); }} onChanged={() => { reload(); }} onDownloadCourse={downloadCourse} />
+        )}
         {publishOpen && (
           <PublishDialog ws={ws} percent={ready.percent} items={ready.items} onClose={() => setPublishOpen(false)} onChanged={reload} onFix={fixItem} />
         )}
