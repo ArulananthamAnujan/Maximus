@@ -97,3 +97,32 @@ export function buildCounts(tasks: BuildTask[]) {
   const finished = tasks.filter(t => t.status !== 'queued' && t.status !== 'running').length;
   return { total: tasks.length, done, failed, finished };
 }
+
+export const GROUP_LABEL: Record<BuildGroup, string> = {
+  materials: 'Notes & slides', lectures: 'Lectures', quizzes: 'Quizzes', capstone: 'Capstone', guides: 'Teacher guides',
+};
+export const GROUP_ORDER: BuildGroup[] = ['materials', 'lectures', 'quizzes', 'capstone', 'guides'];
+
+/** Rough minutes left, from how fast items have finished so far (null until there is enough to go on). */
+export function buildMinutesLeft(job: BuildJob, tasks: BuildTask[]): number | null {
+  const { total, finished } = buildCounts(tasks);
+  if (finished < 2 || finished >= total) return null;
+  const elapsed = Date.now() - new Date(job.created_at).getTime();
+  if (elapsed <= 0) return null;
+  const perItem = elapsed / finished;
+  return Math.max(1, Math.round(((total - finished) * perItem) / 60000));
+}
+
+/** Running builds for a set of courses, with how far each has got. */
+export async function loadRunningBuilds(courseIds: string[]): Promise<Map<string, { done: number; total: number }>> {
+  const out = new Map<string, { done: number; total: number }>();
+  if (courseIds.length === 0) return out;
+  const { data: jobs } = await supabase.from('course_build_jobs').select('id, course_id').eq('status', 'running').in('course_id', courseIds);
+  if (!jobs?.length) return out;
+  const { data: tasks } = await supabase.from('course_build_tasks').select('job_id, status').in('job_id', jobs.map(j => j.id));
+  for (const j of jobs) {
+    const mine = (tasks ?? []).filter(t => t.job_id === j.id);
+    out.set(j.course_id, { done: mine.filter(t => t.status !== 'queued' && t.status !== 'running').length, total: mine.length });
+  }
+  return out;
+}

@@ -354,19 +354,39 @@ The plan (500 to 900 words), allowed HTML: h2, h3, p, ul, ol, li, strong, em, ta
   8. <h2>After the session</h2> follow-up work and what comes next.
 Rules: base everything on the lesson notes provided; be practical and specific; when a COURSE BRIEF is given, plan for those learners.`,
 
-    assessment_draft: `You are an assessment designer creating an authentic task, its marking rubric and the teacher's model answer. ${jsonRule}
-Output shape: {"title": string, "brief_html": string, "deliverables": string[], "estimated_minutes": number, "rubric": [{"name": string, "points": number, "levels": [{"label": string, "points": number, "descriptor": string}]}], "resources": [{"title": string, "note": string}], "solution_html": string, "marking_notes": string}
+    assessment_draft: `You are an assessment designer creating an authentic task, its marking rubric and the teacher's model answer.
+Write it in exactly this plain-text format, with nothing before or after it (no JSON, no markdown fences):
+TITLE: the task title
+MINUTES: how long it takes a student, as a number
+=== BRIEF
+the brief for students, as HTML
+=== DELIVERABLES
+- one deliverable per line
+=== RUBRIC
+CRITERION: criterion name | points
+Excellent | points | what the work shows at this level
+Good | points | descriptor
+Developing | points | descriptor
+Not yet | points | descriptor
+CRITERION: next criterion name | points
+...
+=== RESOURCES
+- resource title | note
+=== MODEL ANSWER
+the model answer, as HTML
+=== MARKING NOTES
+guidance for the marker, as plain text
 By kind:
-- "lab": a hands-on practical for one week (30 to 120 minutes). brief_html: goal, setup, numbered step-by-step tasks, what the result should look like, an extension task. For technical subjects include starter code in <pre><code>. solution_html: the complete worked solution (with code where relevant). Rubric: 3 criteria.
-- "assignment": a task for one week that applies its lessons to a realistic situation (1 to 4 hours). brief_html: scenario, task, deliverables, constraints, how it will be assessed. solution_html: an outline of a strong answer. Rubric: 4 or 5 criteria.
-- "capstone": the final project of the whole course, integrating every major skill, the kind of work a graduate would show an employer (10 to 30 hours). brief_html: scenario based on the target job, milestones, deliverables (including a short presentation or write-up), constraints, how it will be assessed. solution_html: what an excellent submission contains, milestone by milestone. Rubric: 5 or 6 criteria including communication of results.
+- "lab": a hands-on practical for one week (30 to 120 minutes). Brief: goal, setup, numbered step-by-step tasks, what the result should look like, an extension task. For technical subjects include starter code in <pre><code>. Model answer: the complete worked solution (with code where relevant). Rubric: 3 criteria.
+- "assignment": a task for one week that applies its lessons to a realistic situation (1 to 4 hours). Brief: scenario, task, deliverables, constraints, how it will be assessed. Model answer: an outline of a strong answer. Rubric: 4 or 5 criteria.
+- "capstone": the final project of the whole course, integrating every major skill, the kind of work a graduate would show an employer (10 to 30 hours). Brief: scenario based on the target job, milestones, deliverables (including a short presentation or write-up), constraints, how it will be assessed. Model answer: what an excellent submission contains, milestone by milestone, concisely. Rubric: 5 or 6 criteria including communication of results.
 Rules:
 - Mirror real work for the target roles in the COURSE BRIEF when one is given; otherwise realistic work for the subject.
 - Assess only what the weeks covered teach.
 - Rubric: points across criteria add up exactly to the total points given. Each criterion has four levels, labelled Excellent, Good, Developing, Not yet, with points from high to low and descriptors that describe observable evidence.
-- resources: kinds of public datasets, tools or references to use. Do not invent URLs; name a source only if you are confident it exists, in "note".
-- marking_notes: guidance for the marker (what to look for, common weaknesses, how to give feedback).
-- brief_html and solution_html allowed HTML: h2, h3, p, ul, ol, li, strong, em, code, pre, table, thead, tbody, tr, th, td.`,
+- Resources: kinds of public datasets, tools or references to use. Do not invent URLs; name a source only if you are confident it exists, in the note.
+- Marking notes: what to look for, common weaknesses, how to give feedback.
+- Brief and model answer allowed HTML: h2, h3, p, ul, ol, li, strong, em, code, pre, table, thead, tbody, tr, th, td.`,
 
     suggest_marks: `You are an experienced, fair marker suggesting a mark for one student's submission. A teacher will check your suggestion before the student sees anything. ${jsonRule}
 Output shape: {"criteria": [{"name": string, "level": string, "points": number, "reason": string}], "total": number, "feedback": string, "confidence": "high" | "medium" | "low", "flags": string[]}
@@ -1018,7 +1038,69 @@ function parseJSON(text: string): unknown | null {
 /** Version of this function, reported to the app so it can tell when it is out of date. */
 const AI_SERVICE_VERSION = '2026-11-28';
 
-const TEXT_TASKS = new Set(['lesson_notes', 'lesson_slides', 'improve_notes', 'teacher_guide']);
+const TEXT_TASKS = new Set(['lesson_notes', 'lesson_slides', 'improve_notes', 'teacher_guide', 'assessment_draft']);
+
+type Rubric = Array<{ name: string; points: number; levels: Array<{ label: string; points: number; descriptor: string }> }>;
+
+/** Scales a rubric so its points add up exactly to the total (the model's sums are often off by a few). */
+function fitRubric(rubric: Rubric, total: number): Rubric {
+  const sum = rubric.reduce((n, c) => n + c.points, 0);
+  if (!total || !sum || sum === total) return rubric;
+  const out = rubric.map(c => {
+    const points = Math.max(1, Math.round((c.points * total) / sum));
+    return { ...c, points, levels: c.levels.map(l => ({ ...l, points: Math.round((l.points * points) / (c.points || 1)) })) };
+  });
+  const drift = total - out.reduce((n, c) => n + c.points, 0);
+  if (drift) {
+    const biggest = out.reduce((a, b) => (b.points > a.points ? b : a));
+    const old = biggest.points;
+    biggest.points += drift;
+    biggest.levels = biggest.levels.map(l => ({ ...l, points: l.points === old ? biggest.points : Math.min(l.points, biggest.points) }));
+  }
+  return out;
+}
+
+/** Reads the sectioned plain-text assessment (see the assessment_draft prompt). */
+function parseAssessment(text: string, complete: boolean, input: Record<string, unknown>): Record<string, unknown> | null {
+  const sections = new Map<string, string>();
+  const heads = [...text.matchAll(/^\s*===\s*([A-Z][A-Z ]*?)\s*$/gm)];
+  heads.forEach((h, i) => {
+    const start = (h.index ?? 0) + h[0].length;
+    const end = i + 1 < heads.length ? heads[i + 1].index ?? text.length : text.length;
+    sections.set(h[1].trim(), text.slice(start, end).trim());
+  });
+  const lastSection = heads.length ? heads[heads.length - 1][1].trim() : '';
+  const html = (name: string) => {
+    const v = sections.get(name) ?? '';
+    return !complete && name === lastSection ? cutToLastBlock(v) : v;
+  };
+  const brief = html('BRIEF');
+  if (stripTags(brief).length < 100) return null;
+  const bullets = (name: string) => (sections.get(name) ?? '').split('\n').map(l => l.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean);
+
+  let rubric: Rubric = [];
+  for (const line of (sections.get('RUBRIC') ?? '').split('\n')) {
+    const crit = /^\s*CRITERION:\s*(.+?)\s*\|\s*(\d+(?:\.\d+)?)/i.exec(line);
+    if (crit) { rubric.push({ name: crit[1].trim(), points: Math.round(Number(crit[2])), levels: [] }); continue; }
+    const level = /^\s*[-*]?\s*([^|]+?)\s*\|\s*(\d+(?:\.\d+)?)\s*\|\s*(.+)$/.exec(line);
+    if (level && rubric.length) rubric[rubric.length - 1].levels.push({ label: level[1].trim(), points: Math.round(Number(level[2])), descriptor: level[3].trim() });
+  }
+  // A criterion cut off mid-way is dropped
+  if (!complete && lastSection === 'RUBRIC' && rubric.length && rubric[rubric.length - 1].levels.length < 4) rubric = rubric.slice(0, -1);
+  rubric = rubric.filter(c => c.name && c.points > 0);
+  if (rubric.length === 0) return null;
+
+  return {
+    title: /^\s*TITLE:\s*(.+)$/m.exec(text)?.[1]?.trim() || 'Assessment',
+    estimated_minutes: Number(/^\s*MINUTES:\s*(\d+)/m.exec(text)?.[1]) || 0,
+    brief_html: brief,
+    deliverables: bullets('DELIVERABLES'),
+    rubric: fitRubric(rubric, Number(input.total_points) || 0),
+    resources: bullets('RESOURCES').map(l => { const [title, ...note] = l.split('|'); return { title: title.trim(), note: note.join('|').trim() }; }).filter(r => r.title),
+    solution_html: html('MODEL ANSWER'),
+    marking_notes: sections.get('MARKING NOTES') ?? '',
+  };
+}
 
 async function streamAnthropicText(
   apiKey: string,
@@ -1112,6 +1194,7 @@ function cutToLastBlock(html: string): string {
 /** Turns a plain-text answer into the same shape the JSON tasks return. */
 function textToResult(task: string, raw: string, complete: boolean, input: Record<string, unknown>): Record<string, unknown> | null {
   const text = stripFences(raw);
+  if (task === 'assessment_draft') return parseAssessment(text, complete, input);
   if (task === 'lesson_slides') {
     const title = /^\s*TITLE:\s*(.+)$/m.exec(text)?.[1]?.trim();
     let slides = text.split(/^\s*===\s*SLIDE:?\s*/m).slice(1).map((chunk, i) => {

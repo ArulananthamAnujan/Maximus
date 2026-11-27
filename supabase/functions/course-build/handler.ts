@@ -38,6 +38,8 @@ const PARALLEL = 3;
 const STOP_JOB = /not enough tokens|insufficient tokens|organisation is inactive|not available on your current plan/i;
 // The video service is not set up or out of credit: stop the remaining lecture tasks only.
 const STOP_LECTURES = /not set up|api key|out of credit|avatar|heygen/i;
+// Slow or busy AI: worth one more try before reporting the item as failed.
+const TRY_AGAIN = /took too long|too long to answer|busy|overloaded|try again in a minute|did not respond|Request failed \(5\d\d\)/i;
 // The deployed AI function cannot do this kind of task yet: skip the rest of that kind.
 const STOP_KIND = /AI service on the server is out of date/i;
 
@@ -362,6 +364,13 @@ async function runAndContinue(admin: Admin, taskId: string) {
     await admin.from("course_build_tasks").update({ status: "done", error: null, finished_at: new Date().toISOString() }).eq("id", task.id);
   } catch (e) {
     const message = (e instanceof Error ? e.message : "Something went wrong.").slice(0, 500);
+    if (TRY_AGAIN.test(message) && task.attempts < 2) {
+      // Back in the queue for one more try (the claim counts attempts)
+      await admin.from("course_build_tasks").update({ status: "queued", started_at: null, error: message }).eq("id", task.id);
+      await admin.from("course_build_jobs").update({ updated_at: new Date().toISOString() }).eq("id", job.id);
+      await pump(admin, job.id);
+      return;
+    }
     await admin.from("course_build_tasks").update({ status: "failed", error: message, finished_at: new Date().toISOString() }).eq("id", task.id);
     if (STOP_JOB.test(message)) {
       await stopJob(admin, job.id, message);

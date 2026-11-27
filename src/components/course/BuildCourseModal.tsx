@@ -9,7 +9,7 @@ import { weekLessons, weekLecture, isReadingLesson, lessonState } from '../../li
 import type { Workspace } from '../../lib/workspace';
 import LecturePresenterPicker from '../ai/LecturePresenterPicker';
 import {
-  startServerBuild, stopServerBuild, loadLatestBuild, groupProgress, BuildServiceUnavailable,
+  startServerBuild, stopServerBuild, loadLatestBuild, groupProgress, BuildServiceUnavailable, buildCounts, buildMinutesLeft,
 } from '../../lib/courseBuildJob';
 import type { BuildJob, BuildTask } from '../../lib/courseBuildJob';
 import { checkBuildSetup, aiCannot, aiIsOld } from '../../lib/setupCheck';
@@ -458,6 +458,16 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
             </>
           )}
 
+          {!showSetup && server && (() => {
+            const c = buildCounts(server.tasks);
+            const left = serverRunning ? buildMinutesLeft(server.job, server.tasks) : null;
+            return (
+              <p className="text-sm font-semibold text-slate-800">
+                {c.finished} of {c.total} done{left !== null ? ` · about ${left} minute${left === 1 ? '' : 's'} left` : ''}
+              </p>
+            );
+          })()}
+
           {!showSetup && (
             <ol className="space-y-3" aria-live="polite">
               {(Object.keys(STEP_LABEL) as StepKey[]).filter(k => shownSteps[k]).map(k => {
@@ -490,9 +500,9 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
           {isFinished && !showSetup && (
             <div className="text-sm text-slate-700 space-y-1.5">
               <p className="font-semibold text-slate-900">{server?.job.status === 'stopped' ? 'Stopped.' : shownProblems.length ? 'Finished, with some problems.' : 'Done.'}</p>
-              {shownSteps.lectures && !scriptsOnly && <p>The lecture videos are being made, usually within 30 minutes. Each one is added to its week when ready; if you close the course before then, they are added the next time you open it.</p>}
-              {shownSteps.lectures && scriptsOnly && <p>The lecture scripts are written. Open <strong>Weekly AI lectures</strong> to check them and make the videos.</p>}
-              {shownSteps.capstone && <p>The capstone is saved <strong>hidden</strong>. Check it on the Assessments tab, then make it visible.</p>}
+              {!!shownSteps.lectures?.done && !scriptsOnly && <p>The lecture videos are being made, usually within 30 minutes. Each one is added to its week when ready; if you close the course before then, they are added the next time you open it.</p>}
+              {!!shownSteps.lectures?.done && scriptsOnly && <p>The lecture scripts are written. Open <strong>Weekly AI lectures</strong> to check them and make the videos.</p>}
+              {!!shownSteps.capstone?.done && <p>The capstone is saved <strong>hidden</strong>. Check it on the Assessments tab, then make it visible.</p>}
               {shownProblems.length > 0 && <p>Press <strong>Build the whole course</strong> again to retry what failed.</p>}
             </div>
           )}

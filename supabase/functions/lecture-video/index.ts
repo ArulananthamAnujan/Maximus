@@ -282,7 +282,7 @@ async function listRows(admin: Admin, sectionId: string) {
 async function actionOptions() {
   const [looks, voices] = await Promise.all([
     heygen("/v3/avatars/looks?ownership=public&limit=50"),
-    heygen("/v3/models/audio/voices?type=public&language=English&limit=50"),
+    heygen("/v3/models/audio/voices?type=public&language=en&limit=50"),
   ]);
   return {
     avatars: (looks?.data ?? []).map((a: Record<string, unknown>) => ({
@@ -364,6 +364,48 @@ async function actionSaveScript(admin: Admin, userId: string, id: string, script
   return { parts: await listRows(admin, row.section_id) };
 }
 
+// ─── Choosing the voice engine ──────────────────────────────────────────────
+// HeyGen asks every video to name a voice engine that supports the script's language
+// (GET /v3/videos/voice-capabilities). Left out, it picks one itself and the video can be
+// rejected or fail later. We read the list, prefer HeyGen's own voice engine for English
+// in the voice's natural accent, and fall back to the next engine if one is refused.
+
+interface EngineChoice { engine_type: string; model?: string; locale?: string }
+const ENGINE_ORDER = ["heygen_voice", "elevenlabs", "fish", "cartesia", "starfish", "mockingbird"];
+const PREFERRED_MODEL: Record<string, string> = {
+  heygen_voice: "heygen-voice-1", elevenlabs: "eleven_multilingual_v2", fish: "s2.1-pro", cartesia: "sonic-3.6",
+};
+
+async function englishEngineChoices(): Promise<EngineChoice[]> {
+  type Row = { language?: string; locale?: string | null; engines?: Array<{ engine?: string; models?: string[] }> };
+  let rows: Row[] = [];
+  try {
+    const caps = await heygen("/v3/videos/voice-capabilities");
+    rows = Array.isArray(caps?.data?.capabilities) ? caps.data.capabilities : [];
+  } catch (err) {
+    console.error("voice-capabilities failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
+  const english = rows.filter(r => /^(en|eng|english)\b/i.test(String(r.language ?? "")));
+  // Natural accent first; an engine that needs a regional accent gets US English.
+  const original = english.filter(r => r.locale == null);
+  const us = english.filter(r => String(r.locale ?? "").toLowerCase() === "en-us");
+  const known = new Set(english.flatMap(r => (r.engines ?? []).map(e => String(e.engine))));
+  const order = [...ENGINE_ORDER.filter(e => known.has(e)), ...[...known].filter(e => !ENGINE_ORDER.includes(e))];
+  const choices: EngineChoice[] = [];
+  for (const engine of order) {
+    for (const [group, locale] of [[original, undefined], [us, "en-US"]] as Array<[Row[], string | undefined]>) {
+      const entry = group.flatMap(r => r.engines ?? []).find(e => e.engine === engine);
+      if (!entry) continue;
+      const models = Array.isArray(entry.models) ? entry.models : [];
+      const model = models.length ? (models.includes(PREFERRED_MODEL[engine]) ? PREFERRED_MODEL[engine] : models[0]) : undefined;
+      choices.push({ engine_type: engine, ...(model ? { model } : {}), ...(locale ? { locale } : {}) });
+      break;
+    }
+  }
+  return choices;
+}
+
 async function actionRender(admin: Admin, userId: string, sectionId: string, avatarId: string, voiceId: string) {
   if (!avatarId || !voiceId) throw new UserError("Choose a presenter and a voice first.");
   const { orgId } = await loadSectionForStaff(admin, userId, sectionId);
@@ -374,22 +416,47 @@ async function actionRender(admin: Admin, userId: string, sectionId: string, ava
   const perPart = Math.max(0, parseInt(Deno.env.get("LECTURE_VIDEO_TOKENS_PER_PART") ?? "60", 10) || 0);
   await ensureOrgBalance(admin, orgId, perPart * rows.length);
 
+  // Engines to try, best first; null = let HeyGen choose (only when the list is unavailable)
+  const engineChoices = await englishEngineChoices();
+  let candidates: Array<EngineChoice | null> = engineChoices.length ? engineChoices : [null];
+
   for (const row of rows) {
     try {
-      const created = await heygen("/v3/videos", {
-        method: "POST",
-        body: JSON.stringify({
-          type: "avatar",
-          avatar_id: avatarId,
-          voice_id: voiceId,
-          script: row.script,
-          title: row.title,
-          resolution: "720p",
-          aspect_ratio: "16:9",
-          callback_id: row.id,
-        }),
-        // A retried request for the same script version must not start (and bill) a second render.
-      }, { "Idempotency-Key": `lecture-${row.id}-${new Date(row.updated_at).getTime()}` });
+      let created: Record<string, any> | null = null;
+      let lastError: unknown = null;
+      for (const choice of candidates) {
+        try {
+          created = await heygen("/v3/videos", {
+            method: "POST",
+            body: JSON.stringify({
+              type: "avatar",
+              avatar_id: avatarId,
+              voice_id: voiceId,
+              script: row.script,
+              title: row.title,
+              resolution: "720p",
+              aspect_ratio: "16:9",
+              callback_id: row.id,
+              ...(choice ? {
+                voice_settings: {
+                  ...(choice.locale ? { locale: choice.locale } : {}),
+                  engine_settings: { engine_type: choice.engine_type, ...(choice.model ? { model: choice.model } : {}) },
+                },
+              } : {}),
+            }),
+            // A retried request for the same script version and engine must not start (and bill) a second render.
+          }, { "Idempotency-Key": `lecture-${row.id}-${new Date(row.updated_at).getTime()}-${choice?.engine_type ?? "auto"}` });
+          // Use the engine that worked first for the remaining parts
+          if (choice) candidates = [choice, ...candidates.filter(c => c !== choice)];
+          break;
+        } catch (err) {
+          lastError = err;
+          // Only a refused request (this voice, engine or language combination) is worth another engine
+          if (!(err instanceof UserError) || err.status !== 400) break;
+          console.warn(`engine ${choice?.engine_type ?? "auto"} refused:`, err.message);
+        }
+      }
+      if (!created) throw lastError ?? new UserError("Could not start the video.", 502);
       const videoId = created?.data?.video_id;
       if (!videoId) throw new UserError("The avatar video service did not return a video id.", 502);
       await admin.from("lecture_videos").update({

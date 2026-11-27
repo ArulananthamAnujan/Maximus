@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Sparkles, Upload, BookOpen, Loader2, FileText, AlertCircle, CheckCircle2, X, Copy } from 'lucide-react';
+import { Plus, Sparkles, Upload, BookOpen, Loader2, FileText, AlertCircle, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import type { NavItem } from '../../components/layout/DashboardLayout';
@@ -14,11 +14,12 @@ import { downloadPptx } from '../../lib/slides';
 import CourseHeader from '../../components/course/CourseHeader';
 import type { WorkspaceTab } from '../../components/course/CourseHeader';
 import WeeksView from '../../components/course/WeeksView';
+import BuildProgressBanner from '../../components/course/BuildProgressBanner';
 import AssistantPanel from '../../components/course/AssistantPanel';
 import type { QuizWithQuestions } from '../../components/course/QuizzesTab';
 import type { BuildFocus } from '../../components/course/BuildCourseModal';
 import { callLectureApi } from '../../lib/lectureApi';
-import { loadLatestBuild, kickServerBuild, stopServerBuild, buildCounts } from '../../lib/courseBuildJob';
+import { loadLatestBuild, kickServerBuild, stopServerBuild, buildCounts, loadRunningBuilds } from '../../lib/courseBuildJob';
 import type { BuildJob, BuildTask } from '../../lib/courseBuildJob';
 
 const LessonPanel = lazy(() => import('../../components/course/LessonPanel'));
@@ -76,6 +77,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const tab: WorkspaceTab = tabParam && TABS.includes(tabParam) ? tabParam : 'weeks';
 
   const [courses, setCourses] = useState<CourseCard[] | null>(null);
+  const [listBuilds, setListBuilds] = useState<Map<string, { done: number; total: number }>>(new Map());
   const [ws, setWs] = useState<Workspace | null>(null);
   const [wsError, setWsError] = useState('');
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
@@ -153,6 +155,16 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   }, [courseId]);
 
   useEffect(() => { if (!courseId) fetchCourses(); }, [courseId, fetchCourses]);
+  // Courses being built in the background show their progress on the list
+  useEffect(() => {
+    if (courseId || !courses?.length) return;
+    let active = true;
+    const ids = courses.map(c => c.id);
+    const load = () => loadRunningBuilds(ids).then(m => { if (active) setListBuilds(m); }).catch(() => {});
+    load();
+    const id = setInterval(load, 15000);
+    return () => { active = false; clearInterval(id); };
+  }, [courseId, courses]);
   useEffect(() => {
     setWs(null);
     setWsError('');
@@ -317,6 +329,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                           {thumb && <img src={thumb} alt="" className="w-full h-full object-cover" />}
                         </div>
                         <div className="p-4">
+                          {listBuilds.get(c.id) && (
+                            <p className="flex items-center gap-1.5 text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-200 rounded-md px-2 py-1 mb-2 w-fit">
+                              <Loader2 className="w-3 h-3 animate-spin" /> Building: {listBuilds.get(c.id)!.done} of {listBuilds.get(c.id)!.total} done
+                            </p>
+                          )}
                           <div className="flex items-start gap-2">
                             <p className="flex-1 font-semibold text-slate-900 line-clamp-2">{c.title}</p>
                             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${c.is_published ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
@@ -402,33 +419,17 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           onItem={fixItem}
         />
 
-        {latestBuild && (() => {
-          const c = buildCounts(latestBuild.tasks);
-          if (buildRunning) {
-            return (
-              <div role="status" className="flex items-center gap-3 flex-wrap bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-sm text-sky-900">
-                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                <span className="flex-1 min-w-[200px]">Building the course in the background: <strong>{c.done} of {c.total}</strong> done{c.failed ? `, ${c.failed} could not be made` : ''}. You can keep working or leave this page.</span>
-                <div className="w-32 h-1.5 bg-sky-100 rounded-full overflow-hidden"><div className="h-full bg-sky-500" style={{ width: `${c.total ? Math.round((c.finished / c.total) * 100) : 0}%` }} /></div>
-                <button onClick={() => setBuild({ showLatest: true })} className="text-xs font-semibold underline">Details</button>
-                <button onClick={() => stopServerBuild(latestBuild.job.id).then(refreshBuild).catch(() => toast.error('Could not stop the build.'))} className="text-xs font-semibold underline">Stop</button>
-              </div>
-            );
-          }
-          const recent = latestBuild.job.finished_at && Date.now() - new Date(latestBuild.job.finished_at).getTime() < 24 * 3600 * 1000;
-          if (!recent || dismissedBuild === latestBuild.job.id) return null;
-          return (
-            <div role="status" className={`flex items-center gap-3 flex-wrap rounded-xl px-4 py-3 text-sm border ${c.failed || latestBuild.job.status === 'stopped' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}`}>
-              {c.failed || latestBuild.job.status === 'stopped' ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
-              <span className="flex-1 min-w-[200px]">
-                {latestBuild.job.status === 'stopped' ? 'The course build was stopped' : 'The course build finished'}: {c.done} done{c.failed ? `, ${c.failed} could not be made` : ''}.
-                {latestBuild.job.error ? ` ${latestBuild.job.error}` : ''}
-              </span>
-              <button onClick={() => setBuild({ showLatest: true })} className="text-xs font-semibold underline">Details</button>
-              <button aria-label="Dismiss" onClick={() => { setDismissedBuild(latestBuild.job.id); try { localStorage.setItem('maximus-build-dismissed', latestBuild.job.id); } catch { /* ignore */ } }} className="p-1 rounded hover:bg-black/5"><X className="w-3.5 h-3.5" /></button>
-            </div>
-          );
-        })()}
+        {latestBuild && (buildRunning || (latestBuild.job.finished_at
+          && Date.now() - new Date(latestBuild.job.finished_at).getTime() < 24 * 3600 * 1000
+          && dismissedBuild !== latestBuild.job.id)) && (
+          <BuildProgressBanner
+            build={latestBuild}
+            onDetails={() => setBuild({ showLatest: true })}
+            onStop={() => stopServerBuild(latestBuild.job.id).then(refreshBuild).catch(() => toast.error('Could not stop the build.'))}
+            onRetry={() => setBuild({})}
+            onDismiss={() => { setDismissedBuild(latestBuild.job.id); try { localStorage.setItem('maximus-build-dismissed', latestBuild.job.id); } catch { /* ignore */ } }}
+          />
+        )}
 
         <Suspense fallback={<Loading />}>
           {tab === 'overview' && (
