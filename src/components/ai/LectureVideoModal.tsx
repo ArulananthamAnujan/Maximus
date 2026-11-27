@@ -21,6 +21,9 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   const [error, setError] = useState('');
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [avatarId, setAvatarId] = useState('');
+  // What the presenter service last said about videos still being made
+  const [checks, setChecks] = useState<Record<string, { status: string; progress: number | null }>>({});
+  const [lastCheck, setLastCheck] = useState<number | null>(null);
   const [voiceId, setVoiceId] = useState('');
   const readyCountRef = useRef(0);
 
@@ -38,8 +41,8 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   // Load what exists for this module
   useEffect(() => {
     let active = true;
-    callLectureApi<{ parts: Part[] }>('sync', { section_id: sectionId })
-      .then(r => { if (active) { readyCountRef.current = r.parts.filter(p => p.status === 'ready').length; setParts(r.parts); } })
+    callLectureApi<{ parts: Part[]; checks?: typeof checks }>('sync', { section_id: sectionId })
+      .then(r => { if (active) { readyCountRef.current = r.parts.filter(p => p.status === 'ready').length; setParts(r.parts); setChecks(r.checks ?? {}); setLastCheck(Date.now()); } })
       .catch(e => { if (active) setError(e instanceof Error ? e.message : 'Could not load.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -53,7 +56,8 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   useEffect(() => {
     if (!inProgress) return;
     const id = setInterval(() => {
-      callLectureApi<{ parts: Part[] }>('sync', { section_id: sectionId }).then(r => applyParts(r.parts)).catch(() => {});
+      callLectureApi<{ parts: Part[]; checks?: typeof checks }>('sync', { section_id: sectionId })
+        .then(r => { applyParts(r.parts); setChecks(r.checks ?? {}); setLastCheck(Date.now()); }).catch(() => {});
     }, POLL_MS);
     return () => clearInterval(id);
   }, [inProgress, sectionId, applyParts]);
@@ -152,8 +156,18 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
                         ? `Ready and added to the module as a lesson${p.duration_seconds ? ` (${Math.max(1, Math.round(p.duration_seconds / 60))} min)` : ''}.`
                         : p.status === 'saving'
                           ? 'Video finished. Saving it to your course…'
-                          : 'The presenter video is being made. This usually takes several minutes; you can close this window and come back.'}
+                          : 'The presenter video is being made. Longer parts can take 30 minutes or more; you can close this window and come back.'}
                     </p>
+                    {p.status === 'rendering' && p.error_message && (
+                      <p role="alert" className="mt-1 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">{p.error_message}</p>
+                    )}
+                    {p.status === 'rendering' && !p.error_message && checks[p.id] && (
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Presenter service: {checks[p.id].status === 'completed' ? 'finished, saving to your course' : checks[p.id].status}
+                        {checks[p.id].progress !== null ? ` (${Math.round(checks[p.id].progress!)}%)` : ''}
+                        {lastCheck ? ` · checked ${new Date(lastCheck).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}

@@ -651,6 +651,23 @@ async function actionRender(admin: Admin, userId: string, sectionId: string, ava
   return { parts: await listRows(admin, sectionId) };
 }
 
+class SaveError extends Error {
+  constructor(message: string, public sizeMb = 0) { super(message); }
+}
+
+/** Why a finished video could not be copied into course storage, in words a teacher can act on. */
+function describeSaveError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const sizeMb = err instanceof SaveError ? err.sizeMb : 0;
+  if (/\(413\)|maximum allowed size|payload too large|entity too large|too large/i.test(message)) {
+    return `The presenter service has finished this video, but it${sizeMb ? ` (${sizeMb} MB)` : ""} is larger than your Supabase upload limit, so it cannot be saved yet. In Supabase, go to Storage, Settings, and raise "Upload file size limit" above that size (the free plan allows at most 50 MB). It is then saved automatically, without making the video again.`;
+  }
+  if (/timeout|timed out|aborted/i.test(message)) {
+    return "The presenter service has finished this video, but copying it into your storage took too long. It is tried again automatically.";
+  }
+  return `The presenter service has finished this video, but saving it failed (${message.slice(0, 160)}). It is tried again automatically.`;
+}
+
 async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, detail: Record<string, unknown>) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -660,6 +677,7 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
   // download link expires, and the file is too large to hold in memory).
   const source = await fetch(String(detail.video_url), { signal: AbortSignal.timeout(110_000) });
   if (!source.ok || !source.body) throw new Error(`download failed (${source.status})`);
+  const sizeMb = Math.round((Number(source.headers.get("content-length")) || 0) / 1_048_576);
   // "duplex" is required by Deno for a streamed request body but is missing from the type.
   const uploadInit: RequestInit & { duplex: "half" } = {
     method: "POST",
@@ -673,7 +691,9 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
     duplex: "half",
   };
   const upload = await fetch(`${supabaseUrl}/storage/v1/object/${VIDEO_BUCKET}/${path}`, uploadInit);
-  if (!upload.ok) throw new Error(`storage upload failed (${upload.status}): ${(await upload.text()).slice(0, 200)}`);
+  if (!upload.ok) {
+    throw new SaveError(`storage upload failed (${upload.status}): ${(await upload.text()).slice(0, 200)}`, sizeMb);
+  }
 
   const url = `${supabaseUrl}/storage/v1/object/public/${VIDEO_BUCKET}/${path}`;
   const durationSeconds = Math.round(Number(detail.duration) || 0);
@@ -723,12 +743,20 @@ async function actionSync(admin: Admin, userId: string, sectionId: string, deadl
   if (!checked) await loadSectionForStaff(admin, userId, sectionId);
   const { data: rows } = await admin
     .from("lecture_videos").select("*").eq("section_id", sectionId).in("status", ["rendering", "saving"]);
+  // What the presenter service last said about each video still being made, for the teacher to see
+  const checks: Record<string, { status: string; progress: number | null }> = {};
 
   for (const row of rows ?? []) {
     // Copying a finished video can take a while; leave the rest for the next check.
     if (Date.now() > deadline) break;
     if (row.status === "saving" && Date.now() - new Date(row.updated_at).getTime() < STALE_SAVING_MS) continue;
     if (!row.provider_video_id) continue;
+    // A video too big for storage is not downloaded again every few seconds
+    if (/larger than your Supabase upload limit/.test(String(row.error_message ?? ""))
+      && Date.now() - new Date(row.updated_at).getTime() < 5 * 60_000) {
+      checks[row.id] = { status: "completed", progress: 100 };
+      continue;
+    }
 
     let detail: Record<string, unknown>;
     try {
@@ -736,8 +764,10 @@ async function actionSync(admin: Admin, userId: string, sectionId: string, deadl
     } catch {
       continue; // temporary problem: try again on the next check
     }
+    const progress = Number(detail.progress ?? detail.percent ?? NaN);
+    checks[row.id] = { status: String(detail.status ?? "unknown"), progress: Number.isFinite(progress) ? progress : null };
 
-    if (detail.status === "failed") {
+    if (detail.status === "failed" || detail.status === "error") {
       await admin.from("lecture_videos").update({
         status: "failed",
         error_message: `The avatar service could not make this video${detail.failure_message ? `: ${String(detail.failure_message).slice(0, 200)}` : "."}`,
@@ -756,11 +786,12 @@ async function actionSync(admin: Admin, userId: string, sectionId: string, deadl
       await saveFinishedVideo(admin, row, detail);
     } catch (err) {
       console.error("saving lecture video failed:", err instanceof Error ? err.message : err);
-      // Back to "rendering" so the next check retries the copy; the render itself is not repeated.
-      await admin.from("lecture_videos").update({ status: "rendering" }).eq("id", row.id);
+      // Back to "rendering" so the next check retries the copy (the render itself is not
+      // repeated or charged again), with the reason shown to the teacher.
+      await admin.from("lecture_videos").update({ status: "rendering", error_message: describeSaveError(err) }).eq("id", row.id);
     }
   }
-  return { parts: await listRows(admin, sectionId) };
+  return { parts: await listRows(admin, sectionId), checks };
 }
 
 /** Lecture status for every module of a course; finishes any videos that are ready. */

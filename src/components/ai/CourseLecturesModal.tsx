@@ -206,6 +206,8 @@ export default function CourseLecturesModal({ courseId, courseTitle, sections, o
                           {w.parts.length > 0 && ` · about ${minutes} min${w.parts.length > 1 ? ` in ${w.parts.length} parts` : ''}`}
                           {w.parts.length > 0 && (w.parts.every(p => p.board?.steps?.length) ? ' · live board added' : ' · no live board')}
                           {failed?.error_message ? ` · ${failed.error_message}` : ''}
+                          {w.status === 'making' && w.parts.find(p => p.status === 'rendering' && p.error_message)?.error_message
+                            ? ` · ${w.parts.find(p => p.status === 'rendering' && p.error_message)!.error_message}` : ''}
                         </p>
                       </div>
                       {w.status !== 'none' && (
