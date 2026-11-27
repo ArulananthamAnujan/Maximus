@@ -26,7 +26,10 @@ const corsHeaders = {
 const HEYGEN_BASE = "https://api.heygen.com";
 // The avatar service accepts at most 5,000 characters of script per video.
 const MAX_PART_CHARS = 4800;
-const MAX_PARTS = 2;
+// Each part is its own video lesson of about 5 to 6 minutes
+const MAX_PARTS = 4;
+// A little slower than normal speech, so new ideas have time to land (HeyGen allows 0.5 to 1.5)
+const VOICE_SPEED = Math.min(1.5, Math.max(0.5, Number(Deno.env.get("LECTURE_VOICE_SPEED") ?? "0.9") || 0.9));
 const SCRIPT_TOKEN_COST = 5;
 const VIDEO_BUCKET = "course-videos";
 const STALE_SAVING_MS = 10 * 60 * 1000;
@@ -194,13 +197,21 @@ async function writeScript(
 Return ONLY valid JSON: {"parts": [string, ...]}. No markdown fences, no text outside the JSON.
 
 Rules:
-- Teach every key concept of the module, in the order of the lessons provided. Use only what the lesson material supports; do not invent facts, figures or sources.
+- Teach every key concept of the module, in the order of the lessons provided, as a patient teacher who wants every student to really understand. Use only what the lesson material supports; do not invent facts, figures or sources.
 - This is speech, not a document: plain sentences a person would say aloud. No headings, bullet points, markdown, emojis, stage directions, or text in brackets.
-- Explain each concept clearly with a short example, then connect it to the next one.
-- Open by greeting the students and saying what the module covers. Close with a brief recap and what to do next.
+- Go slowly. Short sentences, one idea per sentence. Signpost as you go ("First", "Now", "Here is the key point", "Let's look at an example"). Never pack several new terms into one sentence.
+- For each concept, in this order:
+  1. What it is, in plain words, before any jargon.
+  2. Why it matters: a real situation where the student would need it.
+  3. How it works, step by step.
+  4. A worked example walked through slowly. For code, say what each line does and what it prints or returns, the way you would while typing it in front of the class.
+  5. A common mistake or misunderstanding, and how to avoid it.
+  6. A one-sentence summary ("So, in one sentence: ...").
+- After a hard point, say it again in different words. Now and then ask the students a quick question, give them a moment ("Think about that for a second."), then answer it.
+- Open by greeting the students, saying what the module covers and why it is useful. Close with a recap of the main ideas and what to do next (the notes, the activities, then the week's quiz).
 - Write numbers, symbols and abbreviations the way they should be spoken.
-- Length: 700 to 1300 words in total, depending on how much material there is.
-- Use one part if the script is under 4000 characters. Otherwise use exactly two parts of similar length, splitting between concepts; the second part should begin by briefly picking up where the first ended. Each part must be under 4200 characters.`;
+- Length: about 350 to 450 words for each lesson in the material, and no more than 2600 words in total. Spend longer on lessons with more material; do not rush any concept to save words.
+- Split the script into parts of 3200 to 4200 characters each (one part if the whole script is under 4200 characters), at most 4 parts, splitting between concepts. Each part after the first begins by briefly picking up where the previous one ended. Each part must be under 4200 characters.`;
 
   const material = lessons
     .map((l, i) => `Lesson ${i + 1}: ${l.title}\n${l.text || "(no written content; cover it briefly from the title)"}`)
@@ -223,11 +234,11 @@ Rules:
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 5000,
+        max_tokens: 8000,
         system,
         messages: [{ role: "user", content: user }],
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(130_000),
     });
   } catch {
     throw new UserError("The AI took too long to write the script. Please try again.", 504);
@@ -254,9 +265,25 @@ Rules:
   } catch { /* handled below */ }
   if (parts.length === 0) throw new UserError("The AI returned an unusable script. Please try again.", 502);
 
-  // Enforce the service's per-video limit whatever the model returned.
-  const fitted = parts.flatMap((p) => splitAtSentences(p, MAX_PART_CHARS)).slice(0, MAX_PARTS);
-  return fitted;
+  return fitPartsToVideos(parts);
+}
+
+/**
+ * Keeps every word of the script while meeting the service's per-video limit: parts that are
+ * too long are split at sentences, and if that makes too many videos the script is spread
+ * evenly over the most videos allowed (never silently dropping the end, with its recap).
+ */
+export function fitPartsToVideos(parts: string[]): string[] {
+  const split = parts.flatMap((p) => splitAtSentences(p, MAX_PART_CHARS));
+  if (split.length <= MAX_PARTS) return split;
+  const whole = split.join(" ");
+  for (let count = MAX_PARTS; count >= 1; count--) {
+    // Aim for even parts; the greedy split needs a little room for whole sentences
+    const target = Math.min(MAX_PART_CHARS, Math.ceil(whole.length / count) + 200);
+    const even = splitAtSentences(whole, target);
+    if (even.length <= MAX_PARTS && even.every((p) => p.length <= MAX_PART_CHARS)) return even;
+  }
+  throw new UserError("The script came out longer than the lecture videos allow. Please write it again.", 422);
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -689,6 +716,7 @@ async function actionRender(admin: Admin, userId: string, sectionId: string, ava
               ...(choice ? {
                 voice_settings: {
                   ...(choice.locale ? { locale: choice.locale } : {}),
+                  ...(VOICE_SPEED !== 1 ? { speed: VOICE_SPEED } : {}),
                   engine_settings: { engine_type: choice.engine_type, ...(choice.model ? { model: choice.model } : {}) },
                 },
               } : {}),
@@ -784,17 +812,14 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
     if (!updated) lessonId = null; // the lesson was deleted in the meantime
   }
   if (!lessonId) {
-    // Place the lecture at the top of the module, parts in order.
-    const { data: first } = await admin
-      .from("lessons").select("order_index").eq("section_id", row.section_id).order("order_index").limit(1).maybeSingle();
-    const top = Number(first?.order_index ?? 0);
     const { data: inserted, error } = await admin.from("lessons").insert({
       ...lessonFields,
       section_id: row.section_id,
       course_id: row.course_id,
-      order_index: top - (Number(row.part_count) - Number(row.part_index)),
+      order_index: -1000 + Number(row.part_index), // put in its place by arrangeModule below
       is_preview: false,
-      is_required: false,
+      // Part of finishing the module, like its other lessons
+      is_required: true,
     }).select("id").single();
     if (error) throw new Error(`lesson insert failed: ${error.message}`);
     lessonId = inserted.id;
@@ -807,6 +832,32 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
   await admin.from("lecture_videos").update({
     status: "ready", storage_path: path, lesson_id: lessonId, duration_seconds: durationSeconds, error_message: null,
   }).eq("id", row.id);
+  await arrangeModule(admin, String(row.section_id)).catch((e) => console.error("arranging lessons failed:", e));
+}
+
+/**
+ * Puts a module's lessons in learning order: the lecture first (its parts in order, however
+ * long each took to make), then the module's other lessons in the order the teacher set.
+ */
+async function arrangeModule(admin: Admin, sectionId: string) {
+  const [{ data: lectures }, { data: lessons }] = await Promise.all([
+    admin.from("lecture_videos").select("lesson_id, part_index").eq("section_id", sectionId).not("lesson_id", "is", null).order("part_index"),
+    admin.from("lessons").select("id, order_index, created_at").eq("section_id", sectionId),
+  ]);
+  if (!lessons?.length) return;
+  type L = { id: string; order_index: number | null; created_at: string | null };
+  const byId = new Map((lessons as L[]).map((l) => [l.id, l]));
+  const lectureIds: string[] = [...new Set<string>((lectures ?? []).map((r: { lesson_id: string }) => r.lesson_id))].filter((id) => byId.has(id));
+  const rest = (lessons as L[]).filter((l) => !lectureIds.includes(l.id)).sort((a, b) =>
+    (Number(a.order_index ?? 0) - Number(b.order_index ?? 0))
+    || String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
+    || a.id.localeCompare(b.id));
+  const order = [...lectureIds, ...rest.map((l) => l.id)];
+  for (const [i, id] of order.entries()) {
+    if (byId.get(id)!.order_index === i) continue;
+    const { error } = await admin.from("lessons").update({ order_index: i }).eq("id", id);
+    if (error) throw new Error(error.message);
+  }
 }
 
 async function actionSync(admin: Admin, userId: string, sectionId: string, deadline = Date.now() + 120_000, checked = false) {

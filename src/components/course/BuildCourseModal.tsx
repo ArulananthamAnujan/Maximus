@@ -58,7 +58,8 @@ const PARALLEL_LESSONS = 3;
 // Out of tokens, video service not set up, or not allowed: every remaining item would fail too.
 const STOP_ALL = /not enough tokens|insufficient tokens|out of credit|not set up|api key|permission|inactive/i;
 // Org token prices (see the ai-generate and lecture-video functions).
-const COST = { notes: 5, slides: 6, guide: 4, quiz: 6, capstone: 6, script: 5, board: 3 };
+// AI tokens per item; a board costs 3 for each lecture part, and a lecture usually has about 3 parts
+const COST = { notes: 5, slides: 6, guide: 4, quiz: 6, capstone: 6, script: 5, board: 9 };
 
 const STEP_LABEL: Record<StepKey, { title: string; icon: typeof FileText }> = {
   materials: { title: 'Notes & slides', icon: FileText },
@@ -218,7 +219,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const tokens = lessonJobs.reduce((n, j) => n + (j.needNotes ? COST.notes : 0) + (j.needSlides ? COST.slides : 0) + (j.needGuide ? COST.guide : 0), 0)
     + lecturesToRun.filter(x => x.lecture.state === 'none').length * COST.script
     + quizzesToRun.length * COST.quiz + (runCapstone ? COST.capstone : 0) + boardsToRun.length * COST.board;
-  const minutes = Math.max(1, Math.round((lessonJobs.length * 1.5) / PARALLEL_LESSONS + lecturesToRun.length * 0.7 + quizzesToRun.length * 0.5 + (runCapstone ? 1 : 0)));
+  const minutes = Math.max(1, Math.round((lessonJobs.length * 1.5) / PARALLEL_LESSONS + lecturesToRun.length * 1 + quizzesToRun.length * 0.5 + (runCapstone ? 1 : 0)));
 
   const update = (key: StepKey, patch: Partial<StepState>) => setSteps(prev => ({ ...prev, [key]: { ...(prev[key] as StepState), ...patch } }));
   const fail = (label: string, message: string) => setProblems(prev => [...prev, { label, message }]);

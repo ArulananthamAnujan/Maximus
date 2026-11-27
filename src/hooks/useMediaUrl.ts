@@ -39,18 +39,28 @@ export async function resolveMediaUrl(url: string | null | undefined): Promise<s
   return data.signedUrl;
 }
 
-/** Hook form of resolveMediaUrl. Returns '' while a private link is being prepared. */
-export function useMediaUrl(url: string | null | undefined): string {
+/** Forgets the signed link for a stored file, so the next request makes a fresh one. */
+export function forgetMediaUrl(url: string | null | undefined) {
+  const target = parseStorageUrl(url);
+  if (target) cache.delete(`${target.bucket}/${target.path}`);
+}
+
+/**
+ * Hook form of resolveMediaUrl. Returns '' while a private link is being prepared.
+ * Changing `refreshKey` makes a fresh link (for a player whose link has expired).
+ */
+export function useMediaUrl(url: string | null | undefined, refreshKey = 0): string {
   const needsSigning = !!parseStorageUrl(url);
   const [resolved, setResolved] = useState<string>(needsSigning ? '' : (url ?? ''));
 
   useEffect(() => {
     let active = true;
     if (!parseStorageUrl(url)) { setResolved(url ?? ''); return; }
-    setResolved('');
+    if (refreshKey > 0) forgetMediaUrl(url);
+    else setResolved('');
     resolveMediaUrl(url).then(u => { if (active) setResolved(u); });
     return () => { active = false; };
-  }, [url]);
+  }, [url, refreshKey]);
 
   return resolved;
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   HelpCircle, Clock, CheckCircle2, XCircle, AlertCircle,
   Trophy, ChevronRight, ChevronDown, ChevronUp, Lock, Info,
@@ -60,6 +61,11 @@ export default function StudentQuizzes() {
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<string>('');
 
+  // A link from a course week names the course and quiz to show (?course=…&quiz=…)
+  const [searchParams] = useSearchParams();
+  const linkedCourse = searchParams.get('course');
+  const linkedQuiz = searchParams.get('quiz');
+
   const { data: enrollmentData } = useMyEnrollments();
   const enrollments = enrollmentData ?? NO_ENROLLMENTS;
   // Latest answers / in-flight flag, readable from the timer without stale closures
@@ -68,6 +74,11 @@ export default function StudentQuizzes() {
   const submittingRef = useRef(false);
 
   useEffect(() => { if (profile) fetchQuizzes(); }, [profile, enrollments]);
+
+  useEffect(() => {
+    if (loading || !linkedQuiz || view !== 'list') return;
+    document.getElementById(`quiz-${linkedQuiz}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [loading, linkedQuiz, selectedCourseId, view]);
 
   const fetchQuizzes = async () => {
     if (!profile) return;
@@ -114,8 +125,12 @@ export default function StudentQuizzes() {
     const grouped = Array.from(groupMap.values());
     setGroups(grouped);
 
-    // Auto-select first course
-    if (grouped.length > 0 && !selectedCourseId) {
+    // Opened from a course's week: show that course and point at its quiz
+    const wanted = grouped.find(g => g.courseId === linkedCourse);
+    if (wanted) {
+      setSelectedCourseId(wanted.courseId);
+    } else if (grouped.length > 0 && !selectedCourseId) {
+      // Auto-select first course
       setSelectedCourseId(grouped[0].courseId);
     }
     setLoading(false);
@@ -490,7 +505,8 @@ export default function StudentQuizzes() {
                     const passMark = getPassMark(quiz);
 
                     return (
-                      <div key={quiz.id} className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-100 dark:border-navy-700 shadow-sm overflow-hidden">
+                      <div key={quiz.id} id={`quiz-${quiz.id}`}
+                        className={`bg-white dark:bg-navy-800 rounded-2xl border shadow-sm overflow-hidden scroll-mt-24 ${quiz.id === linkedQuiz ? 'border-sky-400 ring-2 ring-sky-300 dark:ring-sky-700' : 'border-gray-100 dark:border-navy-700'}`}>
                         <div className="p-5">
                           <div className="flex items-start gap-4">
                             {/* Status badge */}

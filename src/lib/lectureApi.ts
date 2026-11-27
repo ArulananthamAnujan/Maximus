@@ -22,8 +22,8 @@ export interface AvatarOption { id: string; name: string; gender: string | null;
 export interface VoiceOption { id: string; name: string; gender: string | null; language: string | null; locale: string | null; preview_audio_url: string | null }
 
 export const MAX_LECTURE_PART_CHARS = 4800;
-// Spoken English runs at roughly 900 characters a minute.
-export const lectureMinutes = (chars: number) => Math.max(1, Math.round(chars / 900));
+// Spoken a little slower than normal (about 800 characters a minute)
+export const lectureMinutes = (chars: number) => Math.max(1, Math.round(chars / 800));
 
 /** Calls the lecture-video edge function and turns failures into readable messages. */
 export async function callLectureApi<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {

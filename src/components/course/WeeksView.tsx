@@ -203,7 +203,9 @@ export default function WeeksView(props: Props) {
     setBusy(true);
     supabase.from('lessons').insert({
       section_id: section.id, course_id: courseId, title, type: newLesson.type, lesson_type: newLesson.type,
-      content: '', duration_minutes: 30, order_index: section.lessons.length, is_preview: false, is_required: true,
+      content: '', duration_minutes: 30, is_preview: false, is_required: true,
+      // After the last lesson (the count can clash with existing positions after a delete)
+      order_index: section.lessons.reduce((max, l) => Math.max(max, (l.order_index ?? 0) + 1), 0),
     }).select('id').single().then(async ({ data, error }) => {
       setBusy(false);
       if (error || !data) { toast.error('Could not add the lesson.'); return; }

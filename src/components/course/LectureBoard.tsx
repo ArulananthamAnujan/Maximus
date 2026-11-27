@@ -83,8 +83,10 @@ export default function LectureBoard({ board, videoRef, heading }: Props) {
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
+    let last = 0;
     const read = () => { setTime(video.currentTime); if (video.duration && Number.isFinite(video.duration)) setDuration(video.duration); };
-    const loop = () => { read(); frame = requestAnimationFrame(loop); };
+    // About 15 updates a second is smooth for typing and leaves the video alone
+    const loop = (now: number) => { if (now - last >= 66) { last = now; read(); } frame = requestAnimationFrame(loop); };
     const play = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(loop); };
     const stop = () => { cancelAnimationFrame(frame); read(); };
     read();

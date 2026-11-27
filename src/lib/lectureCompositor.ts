@@ -348,9 +348,8 @@ function pickMimeType(): { mimeType: string; ext: 'mp4' | 'webm'; fileType: stri
     ['video/mp4;codecs=avc1.42E01F,mp4a.40.2', 'mp4'],
     ['video/mp4;codecs=avc1.42E01F,opus', 'mp4'],
     ['video/mp4', 'mp4'],
-    ['video/webm;codecs=vp9,opus', 'webm'],
-    ['video/webm;codecs=vp8,opus', 'webm'],
-    ['video/webm', 'webm'],
+    // No WebM: a recorded WebM does not know its own length, so students could not skip
+    // through it and watching it to the end would not complete the lesson
   ];
   for (const [mimeType, ext] of candidates) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {

@@ -7,7 +7,7 @@ import {
   Link as LinkIcon, BookOpen, Lock, Menu, X, ChevronDown, ChevronUp,
   BookMarked, Sparkles, ClipboardList, Clock, Brain, Zap,
   ChevronRight, ListVideo, Award, AlignLeft, HelpCircle, ExternalLink,
-  Trophy, Eye, Star, CalendarClock,
+  Trophy, Eye, Star, CalendarClock, ListChecks,
 } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import type { NavItem } from '../../components/layout/DashboardLayout';
@@ -95,6 +95,15 @@ interface QuizWithAttempt extends Quiz {
   bestAttempt: QuizAttempt | null;
 }
 
+/** Lessons in the teacher's order; lessons with the same position keep the order they were added in. */
+const byLessonOrder = (a: Lesson, b: Lesson) =>
+  (a.order_index - b.order_index)
+  || String((a as Lesson & { created_at?: string }).created_at ?? '').localeCompare(String((b as Lesson & { created_at?: string }).created_at ?? ''))
+  || a.id.localeCompare(b.id);
+
+/** Opens the student quizzes page on one course's quiz. */
+const quizLink = (courseId: string, quizId: string) => `/student/quizzes?course=${encodeURIComponent(courseId)}&quiz=${encodeURIComponent(quizId)}`;
+
 const TYPE_LABELS: Record<string, string> = {
   video: 'Video', pdf: 'PDF', article: 'Article', link: 'Resource', text: 'Reading',
 };
@@ -152,7 +161,11 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
   const courseProgressRows = courseProgressData ?? EMPTY_PROGRESS;
   const updateProgressMutation = useUpdateLessonProgress();
 
-  const activeMediaUrl = useMediaUrl(activeLesson?.url);
+  // A private video's link expires; after a playback error the player asks for a fresh one
+  const [mediaRetry, setMediaRetry] = useState<{ lessonId: string; n: number }>({ lessonId: '', n: 0 });
+  const activeMediaUrl = useMediaUrl(activeLesson?.url, mediaRetry.lessonId === activeLesson?.id ? mediaRetry.n : 0);
+  // Where to carry on once the video has loaded (saved progress, or the spot before an error)
+  const resumeAt = useRef<{ lessonId: string; time: number; play: boolean } | null>(null);
   useEffect(() => {
     const lesson = activeLesson;
     if (!lesson || lesson.type !== 'video') return;
@@ -203,7 +216,7 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
         const secs = sectionsRes.data.map(s => ({
           ...s,
           // Weeks that have not opened yet show no lessons (the database already hides them from students)
-          lessons: opensOn(s) ? [] : [...(s.lessons || [])].sort((a, b) => a.order_index - b.order_index),
+          lessons: opensOn(s) ? [] : [...(s.lessons || [])].sort(byLessonOrder),
         })) as SectionWithLessons[];
         setSections(secs);
 
@@ -328,13 +341,26 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
   }, [activeLesson?.id]);
 
   useEffect(() => {
-    if (!activeLesson || !courseProgressRows.length) return;
-    const row = courseProgressRows.find(p => p.lesson_id === activeLesson.id);
-    if (row && row.last_position_seconds > 0 && videoRef.current) {
-      videoRef.current.currentTime = row.last_position_seconds;
-    }
     sessionStartTime.current = Date.now();
   }, [activeLesson?.id]);
+
+  // Carry on from where the student left off (progress can arrive after the lesson opens)
+  const progressLoaded = courseProgressData !== undefined;
+  useEffect(() => {
+    if (!activeLesson || !progressLoaded) return;
+    const row = courseProgressRows.find(p => p.lesson_id === activeLesson.id);
+    if (!row || !(row.last_position_seconds > 0)) return;
+    const video = videoRef.current;
+    if (video && video.readyState >= 1) {
+      // Already loaded: only jump if the student has not started watching
+      if (video.currentTime === 0 && (!Number.isFinite(video.duration) || row.last_position_seconds < video.duration - 10)) {
+        video.currentTime = row.last_position_seconds;
+      }
+      return;
+    }
+    // Not loaded yet (private links are prepared first): onLoadedMetadata carries on from here
+    resumeAt.current = { lessonId: activeLesson.id, time: row.last_position_seconds, play: false };
+  }, [activeLesson?.id, progressLoaded]);
 
   const saveVideoProgress = useCallback(() => {
     if (!activeLesson || !courseId || !hasAccess || preview) return;
@@ -399,9 +425,12 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
   const mustTakeSectionQuiz =
     !preview &&
     isLastLessonInSection &&
-    activeSectionAllLessonsComplete &&
     activeSectionQuiz !== null &&
     activeSectionQuiz.bestAttempt?.passed !== true;
+  // What is left to finish in this week, shown at its last lesson
+  const unfinishedInSection = isLastLessonInSection && activeSectionIndex >= 0 && !preview && hasAccess
+    ? sections[activeSectionIndex].lessons.filter(l => l.id !== activeLesson?.id && !completedLessons.has(l.id))
+    : [];
 
   // Issues a certificate if the course has no blocking conditions (no required quizzes unpassed, no ungraded exams)
   const maybeIssueCertificate = async (cId: string) => {
@@ -656,6 +685,32 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                       </button>
                     );
                   })}
+                  {/* The week's quiz, as the last step of the week */}
+                  {sectionQuiz && (() => {
+                    const tried = !!sectionQuiz.bestAttempt;
+                    const icon = (
+                      <div className={`mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${quizPassed && tried ? 'bg-emerald-500' : 'bg-amber-100 dark:bg-amber-900/30'}`}>
+                        {quizPassed && tried ? <CheckCircle2 className="w-3 h-3 text-white" /> : <HelpCircle className="w-3 h-3 text-amber-600 dark:text-amber-400" />}
+                      </div>
+                    );
+                    const status = preview ? 'Week quiz · students take it here'
+                      : quizPassed && tried ? 'Week quiz · passed'
+                      : tried ? 'Week quiz · not passed yet, try again'
+                      : 'Week quiz';
+                    const body = (
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium leading-snug text-gray-700 dark:text-gray-300">{sectionQuiz.title}</p>
+                        <p className={`text-xs mt-1 font-medium ${quizPassed && tried ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>{status}</p>
+                      </div>
+                    );
+                    return preview || !hasAccess || !courseId ? (
+                      <div className="flex items-start gap-3 px-4 py-3 border-l-2 border-transparent">{icon}{body}</div>
+                    ) : (
+                      <Link to={quizLink(courseId, sectionQuiz.id)} className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-navy-700/40 border-l-2 border-transparent transition-all">
+                        {icon}{body}
+                      </Link>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -865,40 +920,69 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                         );
                       }
                       const lessonBoard = board && board.lessonId === activeLesson.id ? board.board : null;
-                      const player = (
-                        <div className="rounded-2xl overflow-hidden bg-black shadow-lg">
-                          <video ref={videoRef} src={safeUrl(url)} controls className="w-full aspect-video"
-                            onTimeUpdate={() => {
-                              const video = videoRef.current;
-                              if (!video || !hasAccess || preview) return;
-                              const percent = Math.floor((video.currentTime / video.duration) * 100);
-                              if (percent >= 90 && activeLesson && !completedLessons.has(activeLesson.id) && courseId) {
-                                updateProgressMutation.mutate({
-                                  lessonId: activeLesson.id, courseId,
-                                  lastPositionSeconds: Math.floor(video.currentTime),
-                                  timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
-                                  progressPercent: 100, status: 'completed', completedAt: new Date().toISOString(),
-                                });
-                                setCompletedLessons(prev => {
-                                  const next = new Set([...prev, activeLesson.id]);
-                                  if (allRequired.length > 0 && allRequired.every(l => next.has(l.id))) maybeIssueCertificate(courseId);
-                                  return next;
-                                });
-                                sonnerToast.success('Lesson completed!');
-                              }
-                            }}
-                          />
-                        </div>
-                      );
-                      if (!lessonBoard) return player;
+                      const markWatched = (video: HTMLVideoElement) => {
+                        if (!hasAccess || preview) return;
+                        if (activeLesson && !completedLessons.has(activeLesson.id) && courseId) {
+                          updateProgressMutation.mutate({
+                            lessonId: activeLesson.id, courseId,
+                            lastPositionSeconds: Math.floor(video.currentTime),
+                            timeSpentSeconds: Math.floor((Date.now() - sessionStartTime.current) / 1000),
+                            progressPercent: 100, status: 'completed', completedAt: new Date().toISOString(),
+                          });
+                          setCompletedLessons(prev => {
+                            const next = new Set([...prev, activeLesson.id]);
+                            if (allRequired.length > 0 && allRequired.every(l => next.has(l.id))) maybeIssueCertificate(courseId);
+                            return next;
+                          });
+                          sonnerToast.success('Lesson completed!');
+                        }
+                      };
+                      // The layout keeps the same video element whether or not the board is shown,
+                      // so the board arriving a moment later never restarts the video
                       return (
-                        <div className="grid gap-3 grid-cols-1 xl:grid-cols-2 items-stretch">
-                          <div className="min-w-0">{player}</div>
-                          <div className="h-80 sm:h-96 xl:h-auto min-w-0">
-                            <Suspense fallback={<div className="h-full rounded-2xl bg-slate-900" />}>
-                              <LectureBoard board={lessonBoard} videoRef={videoRef} heading={activeLesson.title} />
-                            </Suspense>
+                        <div className={lessonBoard ? 'grid gap-3 grid-cols-1 xl:grid-cols-2 items-stretch' : ''}>
+                          <div className="min-w-0">
+                            <div className="rounded-2xl overflow-hidden bg-black shadow-lg">
+                              <video ref={videoRef} src={safeUrl(url)} controls playsInline preload="metadata" className="w-full aspect-video"
+                                onLoadedMetadata={e => {
+                                  const video = e.currentTarget;
+                                  const r = resumeAt.current;
+                                  if (!r || r.lessonId !== activeLesson.id) return;
+                                  resumeAt.current = null;
+                                  // Start again from the beginning when the student had nearly finished
+                                  if (!Number.isFinite(video.duration) || r.time < video.duration - 10) video.currentTime = r.time;
+                                  if (r.play) video.play().catch(() => {});
+                                }}
+                                onError={e => {
+                                  // Usually an expired private link (after a long pause): get a fresh one and carry on
+                                  const video = e.currentTarget;
+                                  if (!parseStorageUrl(activeLesson.url)) return;
+                                  const tries = mediaRetry.lessonId === activeLesson.id ? mediaRetry.n : 0;
+                                  if (tries >= 3) return;
+                                  // Keep a saved spot that was not used yet (the error came before the video loaded)
+                                  const pending = resumeAt.current?.lessonId === activeLesson.id ? resumeAt.current : null;
+                                  resumeAt.current = {
+                                    lessonId: activeLesson.id,
+                                    time: video.currentTime > 0 ? video.currentTime : (pending?.time ?? 0),
+                                    play: video.currentTime > 0 || !!pending?.play,
+                                  };
+                                  setMediaRetry({ lessonId: activeLesson.id, n: tries + 1 });
+                                }}
+                                onTimeUpdate={e => {
+                                  const video = e.currentTarget;
+                                  if (Number.isFinite(video.duration) && video.duration > 0 && video.currentTime / video.duration >= 0.9) markWatched(video);
+                                }}
+                                onEnded={e => markWatched(e.currentTarget)}
+                              />
+                            </div>
                           </div>
+                          {lessonBoard && (
+                            <div className="h-80 sm:h-96 xl:h-auto min-w-0">
+                              <Suspense fallback={<div className="h-full rounded-2xl bg-slate-900" />}>
+                                <LectureBoard board={lessonBoard} videoRef={videoRef} heading={activeLesson.title} />
+                              </Suspense>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
@@ -991,17 +1075,19 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                       </div>
                     )}
 
-                    {/* Quiz gate — shown when all section lessons are done but quiz not passed */}
-                    {mustTakeSectionQuiz && activeSectionQuiz && (
+                    {/* Quiz gate — at the last lesson of a week whose quiz is not passed yet */}
+                    {mustTakeSectionQuiz && activeSectionQuiz && courseId && (
                       <div className="rounded-2xl overflow-hidden border-2 border-amber-400 dark:border-amber-600 shadow-md">
                         <div className="flex items-center gap-3 px-5 py-4 bg-amber-50 dark:bg-amber-900/30">
                           <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center shrink-0">
                             <Trophy className="w-5 h-5 text-white" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Section quiz required</p>
+                            <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Week quiz</p>
                             <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                              You have completed all lessons in <strong>{sections[activeSectionIndex]?.title}</strong>. Pass the quiz below to unlock the next section.
+                              {unfinishedInSection.length > 0
+                                ? <>Pass this quiz to unlock the next week. {unfinishedInSection.length === 1 ? '1 lesson' : `${unfinishedInSection.length} lessons`} in <strong>{sections[activeSectionIndex]?.title}</strong> {unfinishedInSection.length === 1 ? 'is' : 'are'} not finished yet; {unfinishedInSection.length === 1 ? 'it is' : 'they are'} listed below.</>
+                                : <>You have finished every lesson in <strong>{sections[activeSectionIndex]?.title}</strong>. Pass this quiz to unlock the next week.</>}
                             </p>
                           </div>
                         </div>
@@ -1018,7 +1104,7 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                             </div>
                           </div>
                           <Link
-                            to="/student/quizzes"
+                            to={quizLink(courseId, activeSectionQuiz.id)}
                             className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
                           >
                             <HelpCircle className="w-4 h-4" /> Take Quiz
@@ -1047,6 +1133,23 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                       />
                     )}
 
+                    {/* What is left in this week, so nothing is missed before the quiz and the next week */}
+                    {unfinishedInSection.length > 0 && (
+                      <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3">
+                        <ListChecks className="w-4 h-4 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <div className="flex-1 min-w-0 text-sm text-amber-900 dark:text-amber-200">
+                          <p className="font-semibold">Still to finish this week</p>
+                          <ul className="mt-1 space-y-0.5">
+                            {unfinishedInSection.slice(0, 6).map(l => (
+                              <li key={l.id}>
+                                <button onClick={() => goToLesson(l)} className="text-left underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100">{l.title}</button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Lesson navigation */}
                     <div className="flex items-center justify-between gap-4 pt-2">
                       {prevLesson ? (
@@ -1057,13 +1160,13 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                         </button>
                       ) : <div />}
                       <div className="text-xs text-gray-400 font-medium">{currentIndex + 1} / {allLessons.length}</div>
-                      {mustTakeSectionQuiz ? (
+                      {mustTakeSectionQuiz && activeSectionQuiz && courseId ? (
                         <Link
-                          to="/student/quizzes"
+                          to={quizLink(courseId, activeSectionQuiz.id)}
                           className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
                         >
                           <HelpCircle className="w-4 h-4" />
-                          <span className="hidden sm:inline">Take Quiz</span>
+                          <span className="hidden sm:inline">Take the week quiz</span>
                           <span className="sm:hidden">Quiz</span>
                           <ChevronRight className="w-4 h-4" />
                         </Link>
@@ -1110,7 +1213,7 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                             <h3 className="text-sm font-bold text-gray-800 dark:text-white">Course Quizzes</h3>
                             <span className="text-xs bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 px-2 py-0.5 rounded-full font-semibold">{quizzes.length}</span>
                           </div>
-                          <Link to="/student/quizzes" className="text-xs text-sky-600 dark:text-sky-400 font-semibold hover:underline flex items-center gap-1">
+                          <Link to={courseId ? `/student/quizzes?course=${encodeURIComponent(courseId)}` : '/student/quizzes'} className="text-xs text-sky-600 dark:text-sky-400 font-semibold hover:underline flex items-center gap-1">
                             All quizzes <ChevronRight className="w-3.5 h-3.5" />
                           </Link>
                         </div>
@@ -1147,7 +1250,7 @@ export default function StudentCoursePlayer({ preview = false, navItems, backTo 
                                     )}
                                   </div>
                                 </div>
-                                <Link to="/student/quizzes"
+                                <Link to={courseId ? quizLink(courseId, quiz.id) : '/student/quizzes'}
                                   className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-colors ${
                                     passed
                                       ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100'
