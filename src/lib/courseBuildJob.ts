@@ -30,6 +30,8 @@ export interface BuildOptions {
   capstone: boolean;
   boards: boolean;
   check_scripts: boolean;
+  /** Write every week's lecture again, not only the missing ones */
+  rewrite_lectures?: boolean;
   avatar_id?: string;
   voice_id?: string;
 }

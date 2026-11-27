@@ -44,6 +44,8 @@ interface Props {
   only?: BuildFocus;
   /** Show the latest build's results even if it has finished. */
   showLatest?: boolean;
+  /** Start with "write every lecture again" switched on. */
+  rewriteLectures?: boolean;
   onClose: () => void;
   /** Something was saved; reload the course. */
   onChanged: () => void;
@@ -71,7 +73,7 @@ const STEP_LABEL: Record<StepKey, { title: string; icon: typeof FileText }> = {
 };
 const SERVER_POLL_MS = 4000;
 
-export default function BuildCourseModal({ ws, only, showLatest, onClose, onChanged, onDownloadCourse }: Props) {
+export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures, onClose, onChanged, onDownloadCourse }: Props) {
   const { profile } = useAuth();
 
   // ── What is missing ──────────────────────────────────────────────────────
@@ -83,6 +85,12 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const hasCapstone = ws.assignments.some(a => a.kind === 'capstone');
   const lectureWeeks = weeks.filter(w => w.lessons.length > 0).map(w => ({ week: w, lecture: weekLecture(w, ws) }));
   const weeksNeedingLecture = lectureWeeks.filter(x => x.lecture.state === 'none' || x.lecture.state === 'draft' || x.lecture.state === 'failed');
+  // Writing every lecture again: all weeks except those whose video is being made right now
+  const [rewrite, setRewrite] = useState(!!rewriteLectures);
+  const weeksWithLecture = lectureWeeks.filter(x => x.lecture.state !== 'none');
+  const weeksToRewrite = lectureWeeks.filter(x => x.lecture.state !== 'making');
+  const weeksBeingMade = lectureWeeks.filter(x => x.lecture.state === 'making');
+  const lectureChoices = rewrite ? weeksToRewrite : weeksNeedingLecture;
 
   const [opt, setOpt] = useState(() => only ? {
     materials: only === 'materials', guides: only === 'guides', lectures: only === 'lectures', quizzes: only === 'quizzes', capstone: false,
@@ -90,7 +98,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   } : {
     materials: missingMaterials.length > 0,
     guides: false,
-    lectures: weeksNeedingLecture.length > 0,
+    lectures: weeksNeedingLecture.length > 0 || !!rewriteLectures,
     quizzes: weeksWithoutQuiz.length > 0,
     capstone: !hasCapstone && weeks.length > 0,
     boards: true,
@@ -204,11 +212,15 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   }, [weeks, readingLessons, ws.materials, ws.guides, opt.materials, opt.guides]);
 
   // When the teacher checks scripts first, only weeks without a script have anything to do now
-  const lecturesToRun = opt.lectures ? weeksNeedingLecture.filter(x => !checkScripts || x.lecture.state === 'none') : [];
+  // (when rewriting, every week gets a new script)
+  const lecturesToRun = !opt.lectures ? []
+    : rewrite ? weeksToRewrite
+    : weeksNeedingLecture.filter(x => !checkScripts || x.lecture.state === 'none');
+  const writesScript = (x: { lecture: { state: string } }) => rewrite || x.lecture.state === 'none';
   const quizzesToRun = opt.quizzes ? weeksWithoutQuiz : [];
   const runCapstone = opt.capstone && !hasCapstone;
   // Boards: lectures that already have a script but no board, plus the scripts written now
-  const newScriptWeeks = new Set(lecturesToRun.filter(x => x.lecture.state === 'none').map(x => x.week.id));
+  const newScriptWeeks = new Set(lecturesToRun.filter(writesScript).map(x => x.week.id));
   const weeksNeedingBoard = weeks.filter(w => (boardWeeks?.get(w.id) === false) || (boardWeeks !== null && !boardWeeks.has(w.id) && newScriptWeeks.has(w.id)));
   const boardsAvailable = boardWeeks !== null && !boardsBlocked;
   const boardsToRun = opt.boards && boardsAvailable ? weeksNeedingBoard : [];
@@ -217,7 +229,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const canStart = !nothingToDo && (!needPresenter || (avatarId && voiceId && understood));
 
   const tokens = lessonJobs.reduce((n, j) => n + (j.needNotes ? COST.notes : 0) + (j.needSlides ? COST.slides : 0) + (j.needGuide ? COST.guide : 0), 0)
-    + lecturesToRun.filter(x => x.lecture.state === 'none').length * COST.script
+    + lecturesToRun.filter(writesScript).length * COST.script
     + quizzesToRun.length * COST.quiz + (runCapstone ? COST.capstone : 0) + boardsToRun.length * COST.board;
   const minutes = Math.max(1, Math.round((lessonJobs.length * 1.5) / PARALLEL_LESSONS + lecturesToRun.length * 1 + quizzesToRun.length * 0.5 + (runCapstone ? 1 : 0)));
 
@@ -271,7 +283,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         if (stopped()) break;
         update('lectures', { current: week.title });
         try {
-          if (lecture.state === 'none') await callLectureApi('draft', { section_id: week.id });
+          if (rewrite || lecture.state === 'none') await callLectureApi('draft', { section_id: week.id });
           if (!checkScripts) await callLectureApi('render', { section_id: week.id, avatar_id: avatarId, voice_id: voiceId });
           done += 1;
         } catch (e) {
@@ -358,7 +370,8 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
       const r = await startServerBuild(ws.course.id, {
         materials: opt.materials, guides: opt.guides, lectures: opt.lectures, quizzes: opt.quizzes, capstone: opt.capstone,
         boards: opt.boards && boardsAvailable,
-        check_scripts: checkScripts, avatar_id: avatarId || undefined, voice_id: voiceId || undefined,
+        check_scripts: checkScripts, rewrite_lectures: rewrite && opt.lectures,
+        avatar_id: avatarId || undefined, voice_id: voiceId || undefined,
       });
       if (!r.job_id) { setStartError('Nothing is missing any more.'); return; }
       const b = await loadLatestBuild(ws.course.id);
@@ -471,13 +484,25 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
                 {option('materials', `Notes & slides for ${missingMaterials.length} lesson${missingMaterials.length === 1 ? '' : 's'}`,
                   missingMaterials.length ? 'Complete study notes, then a slide deck with speaker notes built from them.' : 'Every lesson already has notes and slides.',
                   missingMaterials.length === 0)}
-                {option('lectures', `AI lecture video for ${weeksNeedingLecture.length} week${weeksNeedingLecture.length === 1 ? '' : 's'}`,
+                {option('lectures', rewrite
+                  ? `Write the AI lecture again for ${lectureChoices.length} week${lectureChoices.length === 1 ? '' : 's'}`
+                  : `AI lecture video for ${weeksNeedingLecture.length} week${weeksNeedingLecture.length === 1 ? '' : 's'}`,
                   lecturesBlocked ? 'Not available until lecture videos are set up in the database (see above).'
+                    : rewrite ? `A new, deeper script for every week${checkScripts ? '' : ', then a new video'}. Each week keeps its current video until the new one is ready.${weeksBeingMade.length ? ` ${weeksBeingMade.length} week${weeksBeingMade.length === 1 ? ' is' : 's are'} skipped because a video is being made right now.` : ''}`
                     : weeksNeedingLecture.length ? 'A presenter teaches each week from its notes. Videos finish on their own after this.' : 'Every week already has a lecture (or one is being made).',
-                  weeksNeedingLecture.length === 0 || lecturesBlocked)}
+                  lectureChoices.length === 0 || lecturesBlocked)}
+                {weeksWithLecture.length > 0 && !lecturesBlocked && (
+                  <label className="flex items-start gap-2.5 px-4 py-3 text-sm text-slate-700 cursor-pointer bg-sky-50/60">
+                    <input type="checkbox" checked={rewrite} onChange={e => { setRewrite(e.target.checked); if (e.target.checked) setOpt(o => ({ ...o, lectures: true })); }} className="mt-0.5 accent-sky-600" />
+                    <span>
+                      <span className="font-medium text-slate-800">Write every lecture again in the new, deeper style</span>
+                      <span className="block text-xs text-slate-500 mt-0.5">Replaces the scripts of the {weeksWithLecture.length === 1 ? 'week that already has' : `${weeksWithLecture.length} weeks that already have`} a lecture. The new lectures explain each idea step by step and run about twice as long, so they use more video minutes.</span>
+                    </span>
+                  </label>
+                )}
                 {option('boards', `Live board for ${weeksNeedingBoard.length} lecture${weeksNeedingBoard.length === 1 ? '' : 's'}`,
                   boardsBlocked ? 'Not available until it is set up in the database (see above).'
-                    : weeksNeedingBoard.length ? 'Beside the presenter: the code being typed and its output, or the key points, as she speaks.' : 'Every lecture already has a live board.',
+                    : weeksNeedingBoard.length ? 'Beside the presenter: the code being typed and its output, or the key points, as the presenter speaks.' : 'Every lecture already has a live board.',
                   !boardsAvailable || weeksNeedingBoard.length === 0)}
                 {option('quizzes', `Quiz for ${weeksWithoutQuiz.length} week${weeksWithoutQuiz.length === 1 ? '' : 's'}`,
                   weeksWithoutQuiz.length ? '8 auto-marked questions per week, written from that week\'s notes.' : 'Every week already has a quiz.',

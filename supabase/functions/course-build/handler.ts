@@ -399,6 +399,8 @@ async function runAndContinue(admin: Admin, taskId: string) {
 interface Options {
   materials?: boolean; guides?: boolean; lectures?: boolean; quizzes?: boolean; capstone?: boolean; boards?: boolean;
   check_scripts?: boolean; avatar_id?: string; voice_id?: string;
+  /** Write every week's lecture again (new script, then a new video unless check_scripts), not only missing ones */
+  rewrite_lectures?: boolean;
 }
 
 async function planTasks(admin: Admin, courseId: string, o: Options) {
@@ -426,7 +428,14 @@ async function planTasks(admin: Admin, courseId: string, o: Options) {
       const parts = lectures.filter(l => l.section_id === w.id);
       const making = parts.some(p => p.status === "rendering" || p.status === "saving");
       const ready = parts.length > 0 && parts.every(p => p.status === "ready");
-      if (making || ready) continue;
+      // A lecture whose video is still being made is left alone, even when rewriting
+      if (making) continue;
+      if (o.rewrite_lectures) {
+        add({ phase: 2, kind: "lecture_script", section_id: w.id, label: w.title });
+        if (!o.check_scripts) add({ phase: 3, kind: "lecture_video", section_id: w.id, label: w.title });
+        continue;
+      }
+      if (ready) continue;
       if (parts.length === 0) add({ phase: 2, kind: "lecture_script", section_id: w.id, label: w.title });
       if (!o.check_scripts) add({ phase: 3, kind: "lecture_video", section_id: w.id, label: w.title });
     }
@@ -504,6 +513,7 @@ export async function handler(req: Request): Promise<Response> {
       const options: Options = {
         materials: !!o.materials, guides: !!o.guides, lectures: !!o.lectures, quizzes: !!o.quizzes, capstone: !!o.capstone, boards: !!o.boards,
         check_scripts: !!o.check_scripts,
+        rewrite_lectures: !!o.rewrite_lectures && !!o.lectures,
         avatar_id: typeof o.avatar_id === "string" ? o.avatar_id.slice(0, 100) : undefined,
         voice_id: typeof o.voice_id === "string" ? o.voice_id.slice(0, 100) : undefined,
       };

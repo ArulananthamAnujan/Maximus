@@ -33,6 +33,8 @@ const VOICE_SPEED = Math.min(1.5, Math.max(0.5, Number(Deno.env.get("LECTURE_VOI
 const SCRIPT_TOKEN_COST = 5;
 const VIDEO_BUCKET = "course-videos";
 const STALE_SAVING_MS = 10 * 60 * 1000;
+// Marks the lessons this function makes (used to find leftovers from an earlier version)
+const LECTURE_LESSON_DESCRIPTION = "Lecture presented by an AI-generated avatar, based on this module's lessons.";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -797,7 +799,7 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
   const durationSeconds = Math.round(Number(detail.duration) || 0);
   const lessonFields = {
     title: row.title,
-    description: "Lecture presented by an AI-generated avatar, based on this module's lessons.",
+    description: LECTURE_LESSON_DESCRIPTION,
     type: "video",
     lesson_type: "video",
     url,
@@ -825,14 +827,37 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
     lessonId = inserted.id;
   }
 
-  // A board made from the script before the video was finished goes onto the new lesson
+  // A board made from the script before the video was finished goes onto the new lesson. Without
+  // one, a board from the lesson's earlier video (beside it, or recorded into it) no longer fits.
   const { data: withBoard, error: boardError } = await admin.from("lecture_videos").select("board").eq("id", row.id).maybeSingle();
-  if (!boardError) await publishBoard(admin, { lesson_id: lessonId, course_id: String(row.course_id) }, (withBoard?.board ?? null) as Board | null);
+  if (!boardError) {
+    const board = (withBoard?.board ?? null) as Board | null;
+    if (board?.steps?.length) await publishBoard(admin, { lesson_id: lessonId, course_id: String(row.course_id) }, board);
+    else await admin.from("lesson_boards").delete().eq("lesson_id", lessonId);
+  }
 
   await admin.from("lecture_videos").update({
     status: "ready", storage_path: path, lesson_id: lessonId, duration_seconds: durationSeconds, error_message: null,
   }).eq("id", row.id);
+  await removeOldLectureLessons(admin, String(row.section_id)).catch((e) => console.error("removing old lecture lessons failed:", e));
   await arrangeModule(admin, String(row.section_id)).catch((e) => console.error("arranging lessons failed:", e));
+}
+
+/**
+ * Once every part of a rewritten lecture is ready, removes lessons left over from an earlier
+ * version that had more parts (they would show an old video next to the new lecture).
+ * Only lessons this function made are touched: video lessons with the lecture description.
+ */
+async function removeOldLectureLessons(admin: Admin, sectionId: string) {
+  const { data: rows } = await admin.from("lecture_videos").select("lesson_id, status").eq("section_id", sectionId);
+  if (!rows?.length || rows.some((r: { status: string }) => r.status !== "ready")) return;
+  const linked = new Set(rows.map((r: { lesson_id: string | null }) => r.lesson_id).filter(Boolean));
+  const { data: lessons } = await admin.from("lessons").select("id, type, description").eq("section_id", sectionId);
+  const old = (lessons ?? []).filter((l: { id: string; type: string; description: string | null }) =>
+    !linked.has(l.id) && l.type === "video" && l.description === LECTURE_LESSON_DESCRIPTION).map((l: { id: string }) => l.id);
+  if (old.length === 0) return;
+  const { error } = await admin.from("lessons").delete().in("id", old);
+  if (error) console.error("old lecture lessons not removed:", error.code, error.message);
 }
 
 /**

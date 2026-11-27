@@ -14,6 +14,8 @@ interface Props {
   onClose: () => void;
   /** Called when finished videos have been added to the course as lessons. */
   onLessonAdded: () => void;
+  /** Opens the course build to write every lecture again (runs on the server). */
+  onRewriteAll?: () => void;
 }
 
 type WeekStatus = 'none' | 'draft' | 'making' | 'ready' | 'failed';
@@ -30,7 +32,7 @@ function statusOf(parts: LecturePart[]): WeekStatus {
 
 const STOP_ALL = /not enough tokens|out of credit|not set up|api key|permission|inactive/i;
 
-export default function CourseLecturesModal({ courseId, courseTitle, sections, onClose, onLessonAdded }: Props) {
+export default function CourseLecturesModal({ courseId, courseTitle, sections, onClose, onLessonAdded, onRewriteAll }: Props) {
   const [parts, setParts] = useState<LecturePart[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<'' | 'scripts' | 'render' | 'boards'>('');
@@ -185,6 +187,23 @@ export default function CourseLecturesModal({ courseId, courseTitle, sections, o
               <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
                 Lectures are written from each week's lesson notes, so generate the notes first (Course materials) for the most complete lectures.
               </p>
+
+              {onRewriteAll && weeks.some(w => w.parts.length > 0) && (
+                <div className="flex items-start gap-3 flex-wrap bg-sky-50 border border-sky-200 rounded-xl px-4 py-3">
+                  <div className="flex-1 min-w-[220px]">
+                    <p className="text-sm font-semibold text-slate-800">Write every lecture again</p>
+                    <p className="text-xs text-slate-600 mt-0.5">New, deeper scripts for all weeks in one go: each idea explained step by step, at a calmer pace. It runs on our servers, so you can close this window. You can check the scripts before any video is made.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onRewriteAll}
+                    disabled={!!busy}
+                    className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-xl bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Write all lectures again
+                  </button>
+                </div>
+              )}
 
               <div className="border border-slate-200 rounded-xl divide-y divide-slate-100">
                 {weeks.map(w => {

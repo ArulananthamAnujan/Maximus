@@ -94,7 +94,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [weekQuiz, setWeekQuiz] = useState<{ id: string; title: string } | null>(null);
   const [assignmentEditor, setAssignmentEditor] = useState<null | { kind: AssignmentKind; sectionId?: string | null; assignment?: WsAssignment }>(null);
   const [publishOpen, setPublishOpen] = useState(false);
-  const [build, setBuild] = useState<null | { only?: BuildFocus; showLatest?: boolean }>(null);
+  const [build, setBuild] = useState<null | { only?: BuildFocus; showLatest?: boolean; rewrite?: boolean }>(null);
   const [latestBuild, setLatestBuild] = useState<{ job: BuildJob; tasks: BuildTask[] } | null>(null);
   const [dismissedBuild, setDismissedBuild] = useState<string | null>(() => {
     try { return localStorage.getItem('maximus-build-dismissed'); } catch { return null; }
@@ -483,7 +483,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
       <Suspense fallback={null}>
         {build && (
-          <BuildCourseModal ws={ws} only={build.only} showLatest={build.showLatest} onClose={() => { setBuild(null); reload(); refreshBuild(); }} onChanged={() => { reload(); }} onDownloadCourse={downloadCourse} />
+          <BuildCourseModal ws={ws} only={build.only} showLatest={build.showLatest} rewriteLectures={build.rewrite} onClose={() => { setBuild(null); reload(); refreshBuild(); }} onChanged={() => { reload(); }} onDownloadCourse={downloadCourse} />
         )}
         {publishOpen && (
           <PublishDialog ws={ws} percent={ready.percent} items={ready.items} onClose={() => setPublishOpen(false)} onChanged={reload} onFix={fixItem} />
@@ -516,6 +516,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
             sections={ws.sections.map(s => ({ id: s.id, title: s.title, lessonCount: s.lessons.length }))}
             onClose={() => { setShowLectures(false); reload(); }}
             onLessonAdded={() => { reload(); }}
+            onRewriteAll={() => { setShowLectures(false); setBuild({ only: 'lectures', rewrite: true }); }}
           />
         )}
         {lectureSection && (
