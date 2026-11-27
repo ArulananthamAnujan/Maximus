@@ -38,6 +38,8 @@ const PARALLEL = 3;
 const STOP_JOB = /not enough tokens|insufficient tokens|organisation is inactive|not available on your current plan/i;
 // The video service is not set up or out of credit: stop the remaining lecture tasks only.
 const STOP_LECTURES = /not set up|api key|out of credit|avatar|heygen/i;
+// The deployed AI function cannot do this kind of task yet: skip the rest of that kind.
+const STOP_KIND = /AI service on the server is out of date/i;
 
 // deno-lint-ignore no-explicit-any
 type Admin = any;
@@ -80,7 +82,14 @@ async function callFunction(name: string, userId: string, body: Json, timeoutMs 
     throw new Error("The AI took too long to answer. It will be tried again.");
   }
   const data = await res.json().catch(() => ({})) as Json;
-  if (!res.ok) throw new Error(String(data.error || `Request failed (${res.status})`));
+  if (!res.ok) {
+    const message = String(data.error || `Request failed (${res.status})`);
+    const unknown = /^Unknown or unsupported task: (\w+)/.exec(message);
+    if (unknown) {
+      throw new Error(`The AI service on the server is out of date and cannot do this yet (${unknown[1]}). Deploy the latest ai-generate function, then build again.`);
+    }
+    throw new Error(message);
+  }
   return data;
 }
 
@@ -357,6 +366,10 @@ async function runAndContinue(admin: Admin, taskId: string) {
     if (STOP_JOB.test(message)) {
       await stopJob(admin, job.id, message);
       return;
+    }
+    if (STOP_KIND.test(message)) {
+      await admin.from("course_build_tasks").update({ status: "skipped", error: message, finished_at: new Date().toISOString() })
+        .eq("job_id", job.id).eq("status", "queued").eq("kind", task.kind);
     }
     if (task.kind.startsWith("lecture") && STOP_LECTURES.test(message)) {
       await admin.from("course_build_tasks").update({ status: "skipped", error: message, finished_at: new Date().toISOString() })

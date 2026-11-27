@@ -263,8 +263,19 @@ Rules:
 
 const ROW_FIELDS = "id, section_id, course_id, part_index, part_count, title, script, status, avatar_id, voice_id, lesson_id, duration_seconds, error_message, updated_at";
 
+const SETUP_MESSAGE = "Lecture videos are not set up in the database yet. An administrator needs to run database update 055 (lecture videos) in Supabase, then try again.";
+
+/** Database errors that mean the lecture_videos table (or a column) is missing. */
+function isMissingSchema(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return ["42P01", "42703", "PGRST204", "PGRST205"].includes(String(error.code ?? ""))
+    || /does not exist|could not find the (table|column)/i.test(String(error.message ?? ""));
+}
+
 async function listRows(admin: Admin, sectionId: string) {
-  const { data } = await admin.from("lecture_videos").select(ROW_FIELDS).eq("section_id", sectionId).order("part_index");
+  const { data, error } = await admin.from("lecture_videos").select(ROW_FIELDS).eq("section_id", sectionId).order("part_index");
+  if (isMissingSchema(error)) throw new UserError(SETUP_MESSAGE, 503);
+  if (error) throw new UserError("Could not load this module's lectures. Please try again.", 500);
   return data ?? [];
 }
 
@@ -311,7 +322,11 @@ async function actionDraft(admin: Admin, userId: string, sectionId: string) {
   await chargeOrgTokens(admin, orgId, userId, "lecture_script", SCRIPT_TOKEN_COST);
 
   // Replace earlier drafts / failed attempts; keep the lessons of finished videos until re-rendered.
-  await admin.from("lecture_videos").delete().eq("section_id", sectionId);
+  const { error: clearError } = await admin.from("lecture_videos").delete().eq("section_id", sectionId);
+  if (clearError) {
+    console.error("draft clear failed:", clearError.code, clearError.message);
+    throw new UserError(`Could not replace the earlier script (database error ${clearError.code ?? "unknown"}). Please try again.`, 500);
+  }
   const rows = parts.map((script, i) => ({
     course_id: course.id,
     section_id: sectionId,
@@ -325,8 +340,9 @@ async function actionDraft(admin: Admin, userId: string, sectionId: string) {
   }));
   const { error } = await admin.from("lecture_videos").insert(rows);
   if (error) {
-    console.error("draft insert failed:", error.message);
-    throw new UserError("Could not save the script. Please try again.", 500);
+    console.error("draft insert failed:", error.code, error.message);
+    if (isMissingSchema(error)) throw new UserError(SETUP_MESSAGE, 503);
+    throw new UserError(`Could not save the script (database error ${error.code ?? "unknown"}). Please try again.`, 500);
   }
   return { parts: await listRows(admin, sectionId) };
 }
@@ -501,8 +517,9 @@ async function actionSync(admin: Admin, userId: string, sectionId: string, deadl
 async function actionCourseStatus(admin: Admin, userId: string, courseId: string) {
   const { sectionIds } = await loadCourseForStaff(admin, userId, courseId);
   if (sectionIds.length === 0) return { parts: [] };
-  const { data: active } = await admin
+  const { data: active, error: activeError } = await admin
     .from("lecture_videos").select("section_id").eq("course_id", courseId).in("status", ["rendering", "saving"]);
+  if (isMissingSchema(activeError)) throw new UserError(SETUP_MESSAGE, 503);
   const deadline = Date.now() + 100_000;
   for (const sectionId of new Set((active ?? []).map((r: { section_id: string }) => r.section_id))) {
     if (Date.now() > deadline) break;

@@ -165,6 +165,7 @@ function sanitizeInput(input: Record<string, unknown>): Record<string, unknown> 
 
 function getSystemPrompt(task: string): string {
   const jsonRule = 'Return ONLY valid JSON. No markdown fences, no preamble, no explanation. Output nothing except the JSON object.';
+  const htmlOnlyRule = 'Write HTML only: no JSON, no markdown fences, nothing before or after the HTML.';
 
   const prompts: Record<string, string> = {
 
@@ -314,9 +315,9 @@ Standards:
 - Number the sections from the starting week number given, so they continue the existing course
 - When a COURSE BRIEF is given it overrides the academic style, durations and lesson types above: design every week for those learners and that result, around the real tasks, tools and projects in the brief`,
 
-    lesson_notes: `You are an expert teacher writing the complete study notes for one lesson. A learner who reads only these notes must be able to understand and apply everything the lesson promises. ${jsonRule}
-Output shape: {"title": string, "content_html": string, "key_points": string[], "estimated_read_time_minutes": number}
-content_html (1,200 to 1,800 words):
+    lesson_notes: `You are an expert teacher writing the complete study notes for one lesson. A learner who reads only these notes must be able to understand and apply everything the lesson promises.
+${htmlOnlyRule} Begin with <h1> containing the lesson title.
+The notes (1,200 to 1,800 words):
 - Semantic HTML only: h2, h3, p, ul, ol, li, strong, em, blockquote, code, pre, table, thead, tbody, tr, th, td. No scripts, styles or images.
 - Teach, do not just describe: explain each idea from first principles, then show it in use.
 Structure:
@@ -330,21 +331,19 @@ Structure:
 Rules:
 - Cover exactly what this lesson's title and description promise. Other lessons of the same week are listed: do not teach their content. Build on earlier weeks without re-teaching them.
 - Be accurate. Where details depend on versions, tools or local rules, say so instead of inventing specifics.
-- key_points: 5 to 8 complete sentences, one per essential idea.
-- estimated_read_time_minutes: at 200 words per minute.
 - When a COURSE BRIEF is given, write for those learners, at that level, in that tone and approach, instead of an academic style.`,
 
-    improve_notes: `You are an expert teacher revising one lesson's study notes exactly as the teacher asks. ${jsonRule}
-Output shape: {"content_html": string}
+    improve_notes: `You are an expert teacher revising one lesson's study notes exactly as the teacher asks.
+Return the complete revised notes. ${htmlOnlyRule}
 Rules:
 - Apply the teacher's instruction fully. Keep every part of the notes the instruction does not touch, word for word where possible.
 - Same allowed HTML: h2, h3, p, ul, ol, li, strong, em, blockquote, code, pre, table, thead, tbody, tr, th, td. No scripts, styles or images.
 - Stay accurate. Where a detail depends on versions, tools or local rules, say so instead of inventing specifics.
 - When a COURSE BRIEF is given, keep writing for those learners and in that tone.`,
 
-    teacher_guide: `You are an experienced teacher writing the session plan another teacher will use to teach this lesson live. ${jsonRule}
-Output shape: {"content_html": string}
-content_html (500 to 900 words), allowed HTML: h2, h3, p, ul, ol, li, strong, em, table, thead, tbody, tr, th, td. Sections:
+    teacher_guide: `You are an experienced teacher writing the session plan another teacher will use to teach this lesson live.
+${htmlOnlyRule}
+The plan (500 to 900 words), allowed HTML: h2, h3, p, ul, ol, li, strong, em, table, thead, tbody, tr, th, td. Sections:
   1. <h2>Before the session</h2> what to prepare (materials, setup, files), and what students should have done.
   2. <h2>Session plan</h2> a table with columns Time | Activity | What the teacher does | What students do. Timings must add up to the session length given.
   3. <h2>Key points to emphasise</h2>
@@ -391,13 +390,20 @@ Rules:
 - notes_for_planner: gaps, outdated parts, or anything the course designer should know.
 - Use only what the material contains. If it is too short or unreadable, say so in summary and return empty lists.`,
 
-    lesson_slides: `You are an expert teacher turning one lesson's study notes into the slide deck you would teach that lesson from. ${jsonRule}
-Output shape: {"slides_title": string, "slides": [{"slide_number": number, "heading": string, "content_html": string, "speaker_notes": string}]}
+    lesson_slides: `You are an expert teacher turning one lesson's study notes into the slide deck you would teach that lesson from.
+Write the deck in exactly this plain-text format, with nothing before or after it (no JSON, no markdown fences):
+TITLE: the deck title
+=== SLIDE: heading of the first slide
+the slide's content as HTML
+--- NOTES
+what the presenter says for this slide, as plain text
+=== SLIDE: heading of the next slide
+...and so on for every slide.
 Rules:
 - Cover EVERY concept, step, example, mistake and exercise in the notes, in the same order. Depth comes from more slides and full speaker notes, never from crowding one slide.
 - 10 to 14 slides: title | what you will learn | one or more slides per concept (split a big concept over several slides) | the worked example walked through over one or more slides | common mistakes | check your understanding (2 or 3 quick questions) | summary and what comes next.
-- content_html is what the audience sees: h3, p, ul, li, strong, code, pre only. At most 6 bullets and about 60 words per slide; a code snippet of at most 12 lines in <pre><code> is allowed.
-- speaker_notes: 60 to 110 words of plain text per slide: what the presenter says to teach this slide, including the explanation, the example and one question to ask the class. Someone who has not read the notes must be able to deliver the lesson from these.
+- The slide content is what the audience sees: h3, p, ul, li, strong, code, pre only. At most 6 bullets and about 60 words per slide; a code snippet of at most 12 lines in <pre><code> is allowed.
+- Speaker notes: 60 to 110 words of plain text per slide: what the presenter says to teach this slide, including the explanation, the example and one question to ask the class. Someone who has not read the notes must be able to deliver the lesson from these.
 - Use only what the notes contain; do not add new facts.
 - When a COURSE BRIEF is given, match its learners and tone.`,
 
@@ -1003,6 +1009,138 @@ function parseJSON(text: string): unknown | null {
   return null;
 }
 
+// ─── Long answers as plain text, streamed ───────────────────────────────────
+// Notes, slides and guides are long. Asking for them inside JSON made the model escape
+// every quote and line break (slower) and one stray character broke the whole answer.
+// These come back as plain HTML (or a simple text deck), streamed: if time runs short we
+// keep every complete section written so far instead of failing.
+
+/** Version of this function, reported to the app so it can tell when it is out of date. */
+const AI_SERVICE_VERSION = '2026-11-28';
+
+const TEXT_TASKS = new Set(['lesson_notes', 'lesson_slides', 'improve_notes', 'teacher_guide']);
+
+async function streamAnthropicText(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  task: string,
+  opts: { maxTokens: number; deadlineMs: number },
+): Promise<{ text: string; stopReason: string; inputTokens: number; outputTokens: number }> {
+  const controller = new AbortController();
+  let deadlineHit = false;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const timer = setTimeout(() => {
+    deadlineHit = true;
+    controller.abort();
+    reader?.cancel().catch(() => {}); // ends a pending read even if the abort does not reach it
+  }, Math.max(opts.deadlineMs, 5000));
+  let text = '';
+  let stopReason = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: opts.maxTokens,
+        temperature: getTemperature(task),
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      const body = await response.text().catch(() => '');
+      throw new AIUpstreamError(response.status, body.slice(0, 300));
+    }
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (deadlineHit) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut: number;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const event = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        for (const line of event.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          let data: Record<string, any>;
+          try { data = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (data.type === 'message_start') inputTokens = data.message?.usage?.input_tokens ?? 0;
+          else if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta') text += data.delta.text ?? '';
+          else if (data.type === 'message_delta') {
+            stopReason = data.delta?.stop_reason ?? stopReason;
+            outputTokens = data.usage?.output_tokens ?? outputTokens;
+          } else if (data.type === 'error') {
+            const kind = String(data.error?.type ?? '');
+            throw new AIUpstreamError(kind === 'overloaded_error' ? 529 : 500, String(data.error?.message ?? kind).slice(0, 300));
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (!deadlineHit) throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (deadlineHit) stopReason = 'deadline';
+  // A stopped stream does not report its output size; estimate it for the usage log.
+  if (!outputTokens) outputTokens = Math.ceil(text.length / 3.5);
+  return { text, stopReason: stopReason || 'end_turn', inputTokens, outputTokens };
+}
+
+const stripFences = (t: string) => t.replace(/^\s*```(?:html|text)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+const stripTags = (t: string) => t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** Keeps everything up to the last complete paragraph, list, table or code block. */
+function cutToLastBlock(html: string): string {
+  let end = -1;
+  for (const closer of ['</p>', '</ul>', '</ol>', '</pre>', '</table>', '</blockquote>']) {
+    const i = html.toLowerCase().lastIndexOf(closer);
+    if (i >= 0) end = Math.max(end, i + closer.length);
+  }
+  return end > 0 ? html.slice(0, end) : '';
+}
+
+/** Turns a plain-text answer into the same shape the JSON tasks return. */
+function textToResult(task: string, raw: string, complete: boolean, input: Record<string, unknown>): Record<string, unknown> | null {
+  const text = stripFences(raw);
+  if (task === 'lesson_slides') {
+    const title = /^\s*TITLE:\s*(.+)$/m.exec(text)?.[1]?.trim();
+    let slides = text.split(/^\s*===\s*SLIDE:?\s*/m).slice(1).map((chunk, i) => {
+      const nl = chunk.indexOf('\n');
+      const heading = (nl >= 0 ? chunk.slice(0, nl) : chunk).trim();
+      const [body, notes = ''] = (nl >= 0 ? chunk.slice(nl + 1) : '').split(/^\s*---\s*NOTES:?\s*$/m);
+      return { slide_number: i + 1, heading, content_html: body.trim(), speaker_notes: notes.trim() };
+    });
+    // When the answer was cut short, the last slide may be half written
+    if (!complete && slides.length > 1) slides = slides.slice(0, -1);
+    slides = slides.filter(sl => sl.heading && sl.content_html);
+    if (slides.length < 3) return null;
+    return { slides_title: title || String(input.lesson_title ?? 'Slides'), slides: slides.map((sl, i) => ({ ...sl, slide_number: i + 1 })) };
+  }
+  // A revision cut short would lose part of the teacher's notes: never keep a partial one.
+  if (task === 'improve_notes' && !complete) return null;
+  let html = complete ? text : cutToLastBlock(text);
+  if (task === 'lesson_notes') {
+    const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+    const title = h1 ? stripTags(h1[1]) : String(input.lesson_title ?? 'Lesson notes');
+    html = html.replace(/<h1[^>]*>[\s\S]*?<\/h1>/i, '').trim();
+    const words = stripTags(html).split(' ').filter(Boolean).length;
+    if (words < (complete ? 150 : 500)) return null;
+    return { title, content_html: html, key_points: [], estimated_read_time_minutes: Math.max(1, Math.round(words / 200)) };
+  }
+  if (stripTags(html).length < 200) return null;
+  return { content_html: html };
+}
+
 // How many web searches the course planner may run in one reply.
 const PLANNER_MAX_SEARCHES = 3;
 
@@ -1304,6 +1442,13 @@ Deno.serve(async (req: Request) => {
     const body = await req.json() as { task: string; input: Record<string, unknown> };
     const { task, input: rawInput } = body;
 
+    // Lets the app check that this function is up to date before it relies on a task.
+    if (task === 'capabilities') {
+      return new Response(JSON.stringify({ version: AI_SERVICE_VERSION, tasks: Object.keys(validators) }), {
+        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (!task || !rawInput || !validators[task]) {
       return new Response(JSON.stringify({ error: `Unknown or unsupported task: ${task}` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1341,7 +1486,35 @@ Deno.serve(async (req: Request) => {
     let truncated = false;
     let lastUpstreamError: unknown = null;
 
-    for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
+    // Long answers: streamed plain text, kept even when time runs short (see textToResult)
+    for (let attempt = 0; TEXT_TASKS.has(task) && attempt < 2 && !parsed; attempt++) {
+      const remaining = REQUEST_BUDGET_MS - (Date.now() - startedAt);
+      if (attempt > 0 && remaining < 45_000) break;
+      try {
+        const r = await streamAnthropicText(apiKey, systemPrompt, userPrompt, task, { maxTokens, deadlineMs: remaining - 4000 });
+        result = {
+          content: r.text, inputTokens: result.inputTokens + r.inputTokens, outputTokens: result.outputTokens + r.outputTokens,
+          stopReason: r.stopReason, sources: [], searches: 0,
+        };
+        lastUpstreamError = null;
+        parsed = textToResult(task, r.text, r.stopReason === 'end_turn' || r.stopReason === 'stop_sequence', input);
+        if (!parsed && r.stopReason === 'deadline') {
+          const timeout = new Error('time budget used up');
+          timeout.name = 'TimeoutError';
+          lastUpstreamError = timeout;
+          break;
+        }
+      } catch (err) {
+        lastUpstreamError = err;
+        if (err instanceof AIUpstreamError && [429, 500, 502, 503, 529].includes(err.status)) {
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
+        break;
+      }
+    }
+
+    for (let attempt = 0; !TEXT_TASKS.has(task) && attempt < 3 && !parsed; attempt++) {
       const remaining = REQUEST_BUDGET_MS - (Date.now() - startedAt);
       // Not enough time left for a useful attempt: stop rather than overrun.
       if (attempt > 0 && remaining < MIN_ATTEMPT_MS) break;

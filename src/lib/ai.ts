@@ -235,6 +235,31 @@ const FUNCTIONS_BASE = import.meta.env.DEV
 // than that, so it never gives up while the server is still working.
 const CLIENT_TIMEOUT_MS = 145000;
 
+/** The ai-generate function deployed on the server is older than this app. */
+export class AIServiceOutdatedError extends Error {
+  constructor(public task: string) {
+    super('The AI service on your server is out of date and cannot do this yet. Ask whoever manages your Supabase project to deploy the latest ai-generate function.');
+    this.name = 'AIServiceOutdatedError';
+  }
+}
+
+export interface AIServiceInfo {
+  /** null when the server is too old to say what it can do */
+  version: string | null;
+  tasks: Set<string> | null;
+}
+
+/** Asks the AI service what it can do, so the app can warn before relying on a task. */
+export async function aiServiceInfo(): Promise<AIServiceInfo> {
+  try {
+    const r = await callAI<{ version?: string; tasks?: string[] }>('capabilities', {});
+    return { version: r.version ?? null, tasks: Array.isArray(r.tasks) ? new Set(r.tasks) : null };
+  } catch (e) {
+    if (e instanceof AIServiceOutdatedError) return { version: null, tasks: null };
+    throw e;
+  }
+}
+
 export async function callAI<T>(task: string, input: object): Promise<T> {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
@@ -283,6 +308,7 @@ export async function callAI<T>(task: string, input: object): Promise<T> {
       const errBody = JSON.parse(rawText) as { error?: string };
       if (errBody.error) errMsg = errBody.error;
     } catch { /* ignore parse failure — errMsg stays as HTTP status */ }
+    if (/^Unknown or unsupported task/.test(errMsg)) throw new AIServiceOutdatedError(task);
     throw new Error(errMsg);
   }
 

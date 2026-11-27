@@ -12,6 +12,28 @@ import {
   startServerBuild, stopServerBuild, loadLatestBuild, groupProgress, BuildServiceUnavailable,
 } from '../../lib/courseBuildJob';
 import type { BuildJob, BuildTask } from '../../lib/courseBuildJob';
+import { checkBuildSetup, aiCannot, aiIsOld } from '../../lib/setupCheck';
+import type { BuildSetup } from '../../lib/setupCheck';
+
+interface Problem { label: string; message: string }
+
+/** Plain-language versions of messages that keep coming back. */
+function explain(message: string): string {
+  if (/AI service on (your|the) server is out of date|Unknown or unsupported task/i.test(message)) {
+    return "Your server's AI service is an older version that cannot do this yet. Deploy the latest ai-generate function, then build again.";
+  }
+  return message;
+}
+
+/** The same problem for many items is listed once, with the items it affected. */
+function groupProblems(problems: Problem[]): Array<{ message: string; labels: string[] }> {
+  const groups = new Map<string, string[]>();
+  for (const p of problems) {
+    const key = explain(p.message);
+    groups.set(key, [...(groups.get(key) ?? []), p.label]);
+  }
+  return Array.from(groups, ([message, labels]) => ({ message, labels }));
+}
 
 export type BuildFocus = 'materials' | 'lectures' | 'quizzes' | 'guides';
 
@@ -76,7 +98,8 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const [running, setRunning] = useState(false);
   const [finished, setFinished] = useState(false);
   const [steps, setSteps] = useState<Partial<Record<StepKey, StepState>>>({});
-  const [problems, setProblems] = useState<string[]>([]);
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [setup, setSetup] = useState<BuildSetup | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
@@ -93,6 +116,26 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   useEffect(() => {
     if (offerLocal || startError) bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [offerLocal, startError]);
+
+  // What the server has been set up with: switch off what it cannot do yet, and say why
+  useEffect(() => {
+    let active = true;
+    checkBuildSetup().then(result => {
+      if (!active) return;
+      setSetup(result);
+      setOpt(o => ({
+        ...o,
+        guides: o.guides && !aiCannot(result, 'teacher_guide'),
+        capstone: o.capstone && !aiCannot(result, 'assessment_draft'),
+        lectures: o.lectures && result.lectureTable !== false,
+      }));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  const guidesBlocked = aiCannot(setup, 'teacher_guide');
+  const capstoneBlocked = aiCannot(setup, 'assessment_draft');
+  const lecturesBlocked = setup?.lectureTable === false;
+  const runInBrowser = setup?.backgroundBuilds === false;
 
   // Opening the dialog while a build is under way shows its progress
   useEffect(() => {
@@ -153,7 +196,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
   const minutes = Math.max(1, Math.round((lessonJobs.length * 1.5) / PARALLEL_LESSONS + lecturesToRun.length * 0.7 + quizzesToRun.length * 0.5 + (runCapstone ? 1 : 0)));
 
   const update = (key: StepKey, patch: Partial<StepState>) => setSteps(prev => ({ ...prev, [key]: { ...(prev[key] as StepState), ...patch } }));
-  const fail = (text: string) => setProblems(prev => [...prev, text]);
+  const fail = (label: string, message: string) => setProblems(prev => [...prev, { label, message }]);
 
   const start = async () => {
     const controller = new AbortController();
@@ -184,7 +227,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         } catch (e) {
           failed += 1;
           const text = e instanceof Error ? e.message : 'Failed.';
-          fail(`${job.lesson.title}: ${text}`);
+          fail(job.lesson.title, text);
           if (STOP_ALL.test(text)) controller.abort();
         }
         update('materials', { done, failed });
@@ -207,7 +250,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         } catch (e) {
           failed += 1;
           const text = e instanceof Error ? e.message : 'Failed.';
-          fail(`Lecture for ${week.title}: ${text}`);
+          fail(`Lecture: ${week.title}`, text);
           if (STOP_ALL.test(text)) break; // only the lectures stop; quizzes can still be written
         }
         update('lectures', { done, failed });
@@ -231,7 +274,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         } catch (e) {
           failed += 1;
           const text = e instanceof Error ? e.message : 'Failed.';
-          fail(`Quiz for ${week.title}: ${text}`);
+          fail(`Quiz: ${week.title}`, text);
           if (STOP_ALL.test(text)) controller.abort();
         }
         update('quizzes', { done, failed });
@@ -248,7 +291,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         onChangedRef.current();
       } catch (e) {
         update('capstone', { failed: 1 });
-        fail(`Capstone: ${e instanceof Error ? e.message : 'Failed.'}`);
+        fail('Capstone project', e instanceof Error ? e.message : 'Failed.');
       }
       update('capstone', { status: 'done', current: '' });
     }
@@ -319,9 +362,13 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
       status: g!.done + g!.failed + g!.skipped >= g!.total ? (g!.skipped ? 'stopped' : 'done') : g!.running.length ? 'running' : serverRunning ? 'waiting' : 'stopped',
     } as StepState]))
     : steps;
-  const shownProblems = server
-    ? [...(server.job.error ? [server.job.error] : []), ...server.tasks.filter(t => t.status === 'failed').map(t => `${t.label}: ${t.error ?? 'failed'}`)]
+  const shownProblems: Problem[] = server
+    ? [
+      ...(server.job.error ? [{ label: 'Build', message: server.job.error }] : []),
+      ...server.tasks.filter(t => t.status === 'failed' || (t.status === 'skipped' && t.error)).map(t => ({ label: t.label, message: t.error ?? 'failed' })),
+    ]
     : problems;
+  const problemGroups = groupProblems(shownProblems);
   const isFinished = server ? !serverRunning : finished;
   const scriptsOnly = server ? !!server.job.options.check_scripts : checkScripts;
   const showSetup = !running && !finished && !server;
@@ -342,6 +389,18 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
         <div ref={bodyRef} className="flex-1 overflow-y-auto p-6 space-y-5">
           {showSetup && (
             <>
+              {setup && (aiIsOld(setup) || guidesBlocked || capstoneBlocked || lecturesBlocked || runInBrowser) && (
+                <div role="status" className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1.5">
+                  <p className="font-semibold">Your server is missing some updates</p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs">
+                    {(aiIsOld(setup) || guidesBlocked || capstoneBlocked) && (
+                      <li>The AI service is an older version{guidesBlocked || capstoneBlocked ? ': teacher guides and the capstone are switched off' : ''}{aiIsOld(setup) ? ', and long notes can time out' : ''}. Fix: deploy the latest <strong>ai-generate</strong> function.</li>
+                    )}
+                    {lecturesBlocked && <li>Lecture videos are not set up in the database, so they are switched off. Fix: run database update <strong>055</strong> (lecture videos).</li>}
+                    {runInBrowser && <li>Background building is not set up, so this build runs in this browser: keep this page open until it finishes. Fix: run database update <strong>058</strong> and deploy the <strong>course-build</strong> function.</li>}
+                  </ul>
+                </div>
+              )}
               {startError && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">{startError}</p>}
               {offerLocal && (
                 <div role="alert" className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-2">
@@ -352,7 +411,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
               {!nothingToDo ? (
                 <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
                   Takes about {minutes} minute{minutes === 1 ? '' : 's'} and uses about {tokens} AI tokens{lecturesToRun.length && !checkScripts ? ', plus the video minutes' : ''}.
-                  It runs on our servers, so you can close this window or leave the page and come back later.{lecturesToRun.length && !checkScripts ? ' Each video is added to its week when it is ready.' : ''}
+                  {' '}{runInBrowser ? 'Keep this page open until it finishes.' : 'It runs on our servers, so you can close this window or leave the page and come back later.'}{lecturesToRun.length && !checkScripts ? ' Each video is added to its week when it is ready.' : ''}
                 </p>
               ) : (
                 <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">Nothing is missing. You can download the whole course as a PowerPoint below.</p>
@@ -362,17 +421,20 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
                   missingMaterials.length ? 'Complete study notes, then a slide deck with speaker notes built from them.' : 'Every lesson already has notes and slides.',
                   missingMaterials.length === 0)}
                 {option('lectures', `AI lecture video for ${weeksNeedingLecture.length} week${weeksNeedingLecture.length === 1 ? '' : 's'}`,
-                  weeksNeedingLecture.length ? 'A presenter teaches each week from its notes. Videos finish on their own after this.' : 'Every week already has a lecture (or one is being made).',
-                  weeksNeedingLecture.length === 0)}
+                  lecturesBlocked ? 'Not available until lecture videos are set up in the database (see above).'
+                    : weeksNeedingLecture.length ? 'A presenter teaches each week from its notes. Videos finish on their own after this.' : 'Every week already has a lecture (or one is being made).',
+                  weeksNeedingLecture.length === 0 || lecturesBlocked)}
                 {option('quizzes', `Quiz for ${weeksWithoutQuiz.length} week${weeksWithoutQuiz.length === 1 ? '' : 's'}`,
                   weeksWithoutQuiz.length ? '8 auto-marked questions per week, written from that week\'s notes.' : 'Every week already has a quiz.',
                   weeksWithoutQuiz.length === 0)}
                 {option('capstone', 'Capstone project',
-                  hasCapstone ? 'This course already has one.' : 'Brief, rubric and model answer, saved hidden until you check it.',
-                  hasCapstone || weeks.length === 0)}
+                  capstoneBlocked ? 'Not available until the AI service is updated (see above).'
+                    : hasCapstone ? 'This course already has one.' : 'Brief, rubric and model answer, saved hidden until you check it.',
+                  hasCapstone || weeks.length === 0 || capstoneBlocked)}
                 {option('guides', `Teacher guides for ${missingGuides.length} lesson${missingGuides.length === 1 ? '' : 's'}`,
-                  missingGuides.length ? 'Optional: a session plan for teaching each lesson live.' : 'Every lesson already has a teacher guide.',
-                  missingGuides.length === 0)}
+                  guidesBlocked ? 'Not available until the AI service is updated (see above).'
+                    : missingGuides.length ? 'Optional: a session plan for teaching each lesson live.' : 'Every lesson already has a teacher guide.',
+                  missingGuides.length === 0 || guidesBlocked)}
               </div>
 
               {lecturesToRun.length > 0 && (
@@ -435,9 +497,16 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
             </div>
           )}
 
-          {shownProblems.length > 0 && (
-            <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 space-y-1 max-h-40 overflow-y-auto">
-              {shownProblems.map((p, i) => <p key={i}>{p}</p>)}
+          {problemGroups.length > 0 && (
+            <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-800 space-y-2.5 max-h-56 overflow-y-auto">
+              {problemGroups.map((g, i) => (
+                <div key={i}>
+                  <p className="font-semibold">{g.message}</p>
+                  <p className="text-red-700">
+                    {g.labels.length === 1 ? g.labels[0] : `${g.labels.length} items: ${g.labels.slice(0, 4).join('; ')}${g.labels.length > 4 ? ` and ${g.labels.length - 4} more` : ''}`}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -466,7 +535,7 @@ export default function BuildCourseModal({ ws, only, showLatest, onClose, onChan
               {!nothingToDo && needPresenter && !canStart && (
                 <span className="text-xs text-slate-500 max-w-[220px] text-right">For the videos, choose a presenter and voice and tick the box above.</span>
               )}
-              <button onClick={startOnServer} disabled={!canStart || starting} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl">
+              <button onClick={runInBrowser ? start : startOnServer} disabled={!canStart || starting} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl">
                 {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Build it
               </button>
               </>
