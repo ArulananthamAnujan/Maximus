@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, Loader2, CheckCircle2, AlertTriangle, Download, FileText, Presentation, Sparkles, Square } from 'lucide-react';
 import {
-  loadCourseStructure, loadMaterialStatus, generateLessonMaterials, runWithLimit, loadSlideDecks,
+  loadCourseStructure, loadMaterialStatus, generateLessonMaterials, runWithLimit, loadSlideDecks, hasOwnNotes,
 } from '../../lib/courseContent';
 import type { ContentSection, LessonJob, LessonMaterials } from '../../lib/courseContent';
 import { loadCoursePlan } from '../../lib/coursePlan';
@@ -79,7 +79,8 @@ export default function CourseContentStudio({ courseId, courseTitle, initialSect
       if (!selected.has(section.id)) continue;
       for (const lesson of section.lessons) {
         const st = status.get(lesson.id) ?? { notes: false, slides: false };
-        const needNotes = mode === 'all' || !st.notes;
+        // Never replace text the teacher wrote themselves, unless rewriting everything
+        const needNotes = mode === 'all' || (!st.notes && !hasOwnNotes(lesson));
         const needSlides = mode === 'all' || needNotes || !st.slides;
         const needGuide = includeGuides && (mode === 'all' || needNotes || !st.guide);
         if (needNotes || needSlides || needGuide) list.push({ section, lesson, needNotes, needSlides, needGuide });

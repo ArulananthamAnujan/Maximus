@@ -664,3 +664,23 @@ export interface MaterialSummary {
 /** Reads a teacher's own material (text, or a PDF as base64) so a course can be built around it. */
 export const summarizeMaterial = (input: { file_name: string; material_text?: string; material_pdf_base64?: string }) =>
   callAI<MaterialSummary>('summarize_material', input);
+
+export interface MarkSuggestion {
+  criteria: Array<{ name: string; level?: string; points: number; reason: string }>;
+  total: number;
+  feedback: string;
+  confidence: 'high' | 'medium' | 'low';
+  flags: string[];
+}
+
+/** Suggests rubric scores and student feedback for one submission; the teacher confirms. */
+export const suggestMarks = (input: {
+  assignment_title: string;
+  total_points: number;
+  brief_text: string;
+  rubric: Array<{ name: string; points: number; levels: Array<{ label: string; points: number; descriptor: string }> }>;
+  model_answer?: string;
+  marking_notes?: string;
+  submission_text: string;
+  attachment_note?: string;
+}) => callAI<MarkSuggestion>('suggest_marks', input);

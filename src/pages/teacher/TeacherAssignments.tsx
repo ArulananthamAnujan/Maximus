@@ -143,7 +143,7 @@ export default function TeacherAssignments() {
       )}
       {grading && (
         <GradeSubmissionModal
-          assignment={{ id: grading.assignment.id, title: grading.assignment.title, total_points: grading.assignment.total_points, rubric: grading.assignment.rubric }}
+          assignment={grading.assignment}
           submission={grading.submission}
           onClose={() => setGrading(null)}
           onSaved={fetchData}

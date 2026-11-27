@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { actingUserId } from "../_shared/internalAuth.ts";
 
 /**
  * AI avatar lecture videos (one per module).
@@ -531,7 +532,10 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
-    const { data: { user } } = await admin.auth.getUser(authHeader.replace("Bearer ", ""));
+    // The course-build worker calls with the service role key on a teacher's behalf;
+    // the teacher's role and access to the course are still checked below.
+    const actingFor = actingUserId(req);
+    const user = actingFor ? { id: actingFor } : (await admin.auth.getUser(authHeader.replace("Bearer ", ""))).data.user;
     if (!user) return json({ error: "Unauthorized" }, 401);
 
     const { data: profile } = await admin.from("profiles").select("role, is_active").eq("id", user.id).maybeSingle();

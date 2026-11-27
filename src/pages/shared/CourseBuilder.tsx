@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Sparkles, Upload, BookOpen, Loader2, FileText, AlertCircle } from 'lucide-react';
+import { Plus, Sparkles, Upload, BookOpen, Loader2, FileText, AlertCircle, CheckCircle2, X, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import type { NavItem } from '../../components/layout/DashboardLayout';
@@ -18,6 +18,8 @@ import AssistantPanel from '../../components/course/AssistantPanel';
 import type { QuizWithQuestions } from '../../components/course/QuizzesTab';
 import type { BuildFocus } from '../../components/course/BuildCourseModal';
 import { callLectureApi } from '../../lib/lectureApi';
+import { loadLatestBuild, kickServerBuild, stopServerBuild, buildCounts } from '../../lib/courseBuildJob';
+import type { BuildJob, BuildTask } from '../../lib/courseBuildJob';
 
 const LessonPanel = lazy(() => import('../../components/course/LessonPanel'));
 const OverviewView = lazy(() => import('../../components/course/OverviewView'));
@@ -32,6 +34,7 @@ const PlanWeeksModal = lazy(() => import('../../components/course/PlanWeeksModal
 const WeekQuizModal = lazy(() => import('../../components/course/WeekQuizModal'));
 const AssignmentEditorModal = lazy(() => import('../../components/course/AssignmentEditorModal'));
 const BuildCourseModal = lazy(() => import('../../components/course/BuildCourseModal'));
+const CopyCourseModal = lazy(() => import('../../components/course/CopyCourseModal'));
 const SubmissionsModal = lazy(() => import('../../components/course/SubmissionsModal'));
 const AICourseGeneratorModal = lazy(() => import('../../components/ai/AICourseGeneratorModal'));
 const LectureVideoModal = lazy(() => import('../../components/ai/LectureVideoModal'));
@@ -50,6 +53,7 @@ interface CourseCard {
   thumbnail_url: string | null;
   is_published: boolean | null;
   updated_at: string | null;
+  start_date: string | null;
 }
 
 type AssessSub = 'projects' | 'quizzes' | 'exams';
@@ -88,8 +92,13 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   const [weekQuiz, setWeekQuiz] = useState<{ id: string; title: string } | null>(null);
   const [assignmentEditor, setAssignmentEditor] = useState<null | { kind: AssignmentKind; sectionId?: string | null; assignment?: WsAssignment }>(null);
   const [publishOpen, setPublishOpen] = useState(false);
-  const [build, setBuild] = useState<null | { only?: BuildFocus }>(null);
+  const [build, setBuild] = useState<null | { only?: BuildFocus; showLatest?: boolean }>(null);
+  const [latestBuild, setLatestBuild] = useState<{ job: BuildJob; tasks: BuildTask[] } | null>(null);
+  const [dismissedBuild, setDismissedBuild] = useState<string | null>(() => {
+    try { return localStorage.getItem('maximus-build-dismissed'); } catch { return null; }
+  });
   const [marking, setMarking] = useState<WsAssignment | null>(null);
+  const [copying, setCopying] = useState<null | { id: string; title: string; start_date: string | null }>(null);
   const [marksVersion, setMarksVersion] = useState(0);
   const [downloading, setDownloading] = useState(false);
 
@@ -114,7 +123,7 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
   // ── Data ──────────────────────────────────────────────────────────────────
   const fetchCourses = useCallback(async () => {
     if (!profile) return;
-    let q = supabase.from('courses').select('id, title, short_description, thumbnail_url, is_published, updated_at');
+    let q = supabase.from('courses').select('id, title, short_description, thumbnail_url, is_published, updated_at, start_date');
     if (role === 'teacher') q = q.eq('teacher_id', profile.id);
     const { data } = await q.order('updated_at', { ascending: false });
     setCourses((data ?? []) as CourseCard[]);
@@ -168,6 +177,31 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
     }, 45000);
     return () => clearInterval(id);
   }, [lecturesMaking, courseId, reload]);
+
+  // A build running on the server: show progress, refresh as items finish, nudge it if it stalls
+  const refreshBuild = useCallback(async () => {
+    if (!courseId) return;
+    const b = await loadLatestBuild(courseId).catch(() => null);
+    setLatestBuild(b);
+  }, [courseId]);
+  useEffect(() => { setLatestBuild(null); refreshBuild(); }, [refreshBuild]);
+  const buildRunning = latestBuild?.job.status === 'running';
+  const buildFinished = latestBuild ? buildCounts(latestBuild.tasks).finished : 0;
+  const lastKick = useRef(0);
+  useEffect(() => {
+    if (!buildRunning) return;
+    const id = setInterval(() => { refreshBuild(); }, 10000);
+    return () => clearInterval(id);
+  }, [buildRunning, refreshBuild]);
+  useEffect(() => { if (buildFinished > 0) reload(); }, [buildFinished, reload]);
+  useEffect(() => {
+    if (!buildRunning || !latestBuild) return;
+    const quietFor = Date.now() - new Date(latestBuild.job.updated_at).getTime();
+    if (quietFor > 6 * 60 * 1000 && Date.now() - lastKick.current > 5 * 60 * 1000) {
+      lastKick.current = Date.now();
+      kickServerBuild(latestBuild.job.id).catch(() => {});
+    }
+  }, [buildRunning, latestBuild]);
 
   const reloadAll = useCallback(async () => {
     await reload();
@@ -273,7 +307,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
                 {courses.map(c => {
                   const thumb = safeUrl(c.thumbnail_url);
                   return (
-                    <li key={c.id}>
+                    <li key={c.id} className="relative">
+                      <button onClick={() => setCopying({ id: c.id, title: c.title, start_date: c.start_date })} aria-label={`Copy ${c.title} for a new term`}
+                        className="absolute top-2 right-2 z-10 flex items-center gap-1 px-2 py-1 text-xs font-semibold bg-white/90 hover:bg-white border border-slate-200 rounded-lg text-slate-700 shadow-sm">
+                        <Copy className="w-3.5 h-3.5" /> Copy
+                      </button>
                       <button onClick={() => openCourse(c.id)} className="w-full text-left bg-white border border-slate-200 hover:border-sky-400 hover:shadow-sm rounded-xl overflow-hidden transition">
                         <div className="aspect-[16/7] bg-gradient-to-br from-sky-100 to-slate-100">
                           {thumb && <img src={thumb} alt="" className="w-full h-full object-cover" />}
@@ -299,6 +337,11 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         {newCourse && (
           <Suspense fallback={null}>
             <AICourseGeneratorModal onClose={() => setNewCourse(null)} navigatePrefix={basePath} startWithUpload={newCourse === 'upload'} />
+          </Suspense>
+        )}
+        {copying && (
+          <Suspense fallback={null}>
+            <CopyCourseModal course={copying} onClose={() => setCopying(null)} onCopied={id => { setCopying(null); toast.success('Course copied. You are now editing the copy.'); navigate(`${basePath}?courseId=${id}&tab=schedule`); }} />
           </Suspense>
         )}
       </DashboardLayout>
@@ -359,6 +402,34 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
           onItem={fixItem}
         />
 
+        {latestBuild && (() => {
+          const c = buildCounts(latestBuild.tasks);
+          if (buildRunning) {
+            return (
+              <div role="status" className="flex items-center gap-3 flex-wrap bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-sm text-sky-900">
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                <span className="flex-1 min-w-[200px]">Building the course in the background: <strong>{c.done} of {c.total}</strong> done{c.failed ? `, ${c.failed} could not be made` : ''}. You can keep working or leave this page.</span>
+                <div className="w-32 h-1.5 bg-sky-100 rounded-full overflow-hidden"><div className="h-full bg-sky-500" style={{ width: `${c.total ? Math.round((c.finished / c.total) * 100) : 0}%` }} /></div>
+                <button onClick={() => setBuild({ showLatest: true })} className="text-xs font-semibold underline">Details</button>
+                <button onClick={() => stopServerBuild(latestBuild.job.id).then(refreshBuild).catch(() => toast.error('Could not stop the build.'))} className="text-xs font-semibold underline">Stop</button>
+              </div>
+            );
+          }
+          const recent = latestBuild.job.finished_at && Date.now() - new Date(latestBuild.job.finished_at).getTime() < 24 * 3600 * 1000;
+          if (!recent || dismissedBuild === latestBuild.job.id) return null;
+          return (
+            <div role="status" className={`flex items-center gap-3 flex-wrap rounded-xl px-4 py-3 text-sm border ${c.failed || latestBuild.job.status === 'stopped' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}`}>
+              {c.failed || latestBuild.job.status === 'stopped' ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+              <span className="flex-1 min-w-[200px]">
+                {latestBuild.job.status === 'stopped' ? 'The course build was stopped' : 'The course build finished'}: {c.done} done{c.failed ? `, ${c.failed} could not be made` : ''}.
+                {latestBuild.job.error ? ` ${latestBuild.job.error}` : ''}
+              </span>
+              <button onClick={() => setBuild({ showLatest: true })} className="text-xs font-semibold underline">Details</button>
+              <button aria-label="Dismiss" onClick={() => { setDismissedBuild(latestBuild.job.id); try { localStorage.setItem('maximus-build-dismissed', latestBuild.job.id); } catch { /* ignore */ } }} className="p-1 rounded hover:bg-black/5"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          );
+        })()}
+
         <Suspense fallback={<Loading />}>
           {tab === 'overview' && (
             <OverviewView ws={ws} items={ready.items} onFix={fixItem} onEditPlan={() => setPlanner({})} onEditDescription={() => setTab('settings')} />
@@ -402,13 +473,16 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
 
           {tab === 'schedule' && <ScheduleView key={ws.course.id} ws={ws} onSaved={reload} />}
           {tab === 'results' && <ResultsView ws={ws} />}
-          {tab === 'settings' && <CourseSettings courseId={ws.course.id} onSaved={reload} />}
+          {tab === 'settings' && (
+            <CourseSettings courseId={ws.course.id} onSaved={reload}
+              onCopy={() => setCopying({ id: ws.course.id, title: ws.course.title, start_date: ws.course.start_date })} />
+          )}
         </Suspense>
       </div>
 
       <Suspense fallback={null}>
         {build && (
-          <BuildCourseModal ws={ws} only={build.only} onClose={() => { setBuild(null); reload(); }} onChanged={() => { reload(); }} onDownloadCourse={downloadCourse} />
+          <BuildCourseModal ws={ws} only={build.only} showLatest={build.showLatest} onClose={() => { setBuild(null); reload(); refreshBuild(); }} onChanged={() => { reload(); }} onDownloadCourse={downloadCourse} />
         )}
         {publishOpen && (
           <PublishDialog ws={ws} percent={ready.percent} items={ready.items} onClose={() => setPublishOpen(false)} onChanged={reload} onFix={fixItem} />
@@ -453,6 +527,9 @@ export default function CourseBuilder({ navItems, role }: CourseBuilderProps) {
         )}
         {weekQuiz && (
           <WeekQuizModal ws={ws} section={weekQuiz} onClose={() => setWeekQuiz(null)} onCreated={reloadAll} />
+        )}
+        {copying && (
+          <CopyCourseModal course={copying} onClose={() => setCopying(null)} onCopied={id => { setCopying(null); toast.success('Course copied. You are now editing the copy.'); navigate(`${basePath}?courseId=${id}&tab=schedule`); }} />
         )}
         {marking && (
           <SubmissionsModal assignment={marking} onClose={() => setMarking(null)} onChanged={() => setMarksVersion(v => v + 1)} />

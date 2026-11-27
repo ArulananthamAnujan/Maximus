@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Sparkles, Loader2, CheckCircle2, AlertTriangle, Circle, Square, Download, FileText, Video, HelpCircle, Trophy, BookOpen } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { generateLessonMaterials, runWithLimit } from '../../lib/courseContent';
+import { generateLessonMaterials, runWithLimit, hasOwnNotes } from '../../lib/courseContent';
 import type { ContentSection, LessonJob } from '../../lib/courseContent';
 import { createWeekQuiz, createCapstoneDraft } from '../../lib/courseBuild';
 import { callLectureApi } from '../../lib/lectureApi';
 import { weekLessons, weekLecture, isReadingLesson, lessonState } from '../../lib/workspace';
 import type { Workspace } from '../../lib/workspace';
 import LecturePresenterPicker from '../ai/LecturePresenterPicker';
+import {
+  startServerBuild, stopServerBuild, loadLatestBuild, groupProgress, BuildServiceUnavailable,
+} from '../../lib/courseBuildJob';
+import type { BuildJob, BuildTask } from '../../lib/courseBuildJob';
 
 export type BuildFocus = 'materials' | 'lectures' | 'quizzes' | 'guides';
 
@@ -15,13 +19,15 @@ interface Props {
   ws: Workspace;
   /** Opened from one readiness item: preselect only that. */
   only?: BuildFocus;
+  /** Show the latest build's results even if it has finished. */
+  showLatest?: boolean;
   onClose: () => void;
   /** Something was saved; reload the course. */
   onChanged: () => void;
   onDownloadCourse: () => void;
 }
 
-type StepKey = 'materials' | 'lectures' | 'quizzes' | 'capstone';
+type StepKey = 'materials' | 'lectures' | 'quizzes' | 'capstone' | 'guides';
 type StepState = { total: number; done: number; failed: number; current: string; status: 'waiting' | 'running' | 'done' | 'skipped' | 'stopped' };
 
 // Lessons written at the same time (each is two AI requests: notes, then slides).
@@ -36,9 +42,11 @@ const STEP_LABEL: Record<StepKey, { title: string; icon: typeof FileText }> = {
   lectures: { title: 'Weekly AI lecture videos', icon: Video },
   quizzes: { title: 'Weekly quizzes', icon: HelpCircle },
   capstone: { title: 'Capstone project', icon: Trophy },
+  guides: { title: 'Teacher guides', icon: BookOpen },
 };
+const SERVER_POLL_MS = 4000;
 
-export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownloadCourse }: Props) {
+export default function BuildCourseModal({ ws, only, showLatest, onClose, onChanged, onDownloadCourse }: Props) {
   const { profile } = useAuth();
 
   // ── What is missing ──────────────────────────────────────────────────────
@@ -73,6 +81,38 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
 
+  // ── Building on the server (the default): the teacher can close the page ──
+  const [server, setServer] = useState<{ job: BuildJob; tasks: BuildTask[] } | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState('');
+  const [offerLocal, setOfferLocal] = useState(false);
+  const serverRunning = server?.job.status === 'running';
+  const lastDone = useRef(-1);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // A problem starting the build is shown at the top; bring it into view
+  useEffect(() => {
+    if (offerLocal || startError) bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [offerLocal, startError]);
+
+  // Opening the dialog while a build is under way shows its progress
+  useEffect(() => {
+    let active = true;
+    loadLatestBuild(ws.course.id).then(b => { if (active && b && (b.job.status === 'running' || showLatest)) setServer(b); }).catch(() => {});
+    return () => { active = false; };
+  }, [ws.course.id, showLatest]);
+
+  useEffect(() => {
+    if (!serverRunning) return;
+    const id = setInterval(async () => {
+      const b = await loadLatestBuild(ws.course.id).catch(() => null);
+      if (!b || b.job.id !== server?.job.id) return;
+      setServer(b);
+      const done = b.tasks.filter(t => t.status === 'done').length;
+      if (done !== lastDone.current || b.job.status !== 'running') { lastDone.current = done; onChangedRef.current(); }
+    }, SERVER_POLL_MS);
+    return () => clearInterval(id);
+  }, [serverRunning, server?.job.id, ws.course.id]);
+
   // Leaving the page mid-run would stop the remaining work.
   useEffect(() => {
     if (!running) return;
@@ -89,7 +129,8 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
         const wsLesson = readingLessons.find(l => l.id === lesson.id);
         if (!wsLesson) continue;
         const m = ws.materials.get(lesson.id) ?? { notes: false, slides: false };
-        const needNotes = opt.materials && !m.notes;
+        // Never replace text the teacher wrote themselves
+        const needNotes = opt.materials && !m.notes && !hasOwnNotes(lesson);
         const needSlides = opt.materials && (needNotes || !m.slides);
         const needGuide = opt.guides && !ws.guides.has(lesson.id);
         if (needNotes || needSlides || needGuide) jobs.push({ section, lesson, needNotes, needSlides, needGuide });
@@ -218,9 +259,39 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
     onChangedRef.current();
   };
 
+  const startOnServer = async () => {
+    setStarting(true);
+    setStartError('');
+    try {
+      const r = await startServerBuild(ws.course.id, {
+        materials: opt.materials, guides: opt.guides, lectures: opt.lectures, quizzes: opt.quizzes, capstone: opt.capstone,
+        check_scripts: checkScripts, avatar_id: avatarId || undefined, voice_id: voiceId || undefined,
+      });
+      if (!r.job_id) { setStartError('Nothing is missing any more.'); return; }
+      const b = await loadLatestBuild(ws.course.id);
+      if (b) setServer(b);
+    } catch (e) {
+      if (e instanceof BuildServiceUnavailable) setOfferLocal(true);
+      else setStartError(e instanceof Error ? e.message : 'Could not start the build.');
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const stopOnServer = async () => {
+    if (!server) return;
+    try {
+      await stopServerBuild(server.job.id);
+      const b = await loadLatestBuild(ws.course.id);
+      if (b) setServer(b);
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : 'Could not stop the build.');
+    }
+  };
+
   const stop = () => abortRef.current?.abort();
   const close = () => {
-    if (running && !window.confirm('Stop building? Everything that has finished is saved, and you can continue the rest later.')) return;
+    if (running && !server && !window.confirm('Stop building? Everything that has finished is saved, and you can continue the rest later.')) return;
     abortRef.current?.abort();
     onClose();
   };
@@ -240,7 +311,20 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
       : s.status === 'done' || s.status === 'stopped' ? <AlertTriangle className="w-4 h-4 text-amber-500" />
         : <Circle className="w-4 h-4 text-slate-300" />;
 
-  const showSetup = !running && !finished;
+  // What the progress list shows: the server build, or the run in this browser
+  const serverGroups = server ? groupProgress(server.tasks) : {};
+  const shownSteps: Partial<Record<StepKey, StepState>> = server
+    ? Object.fromEntries(Object.entries(serverGroups).map(([k, g]) => [k, {
+      total: g!.total, done: g!.done, failed: g!.failed, current: g!.running.join(' · '),
+      status: g!.done + g!.failed + g!.skipped >= g!.total ? (g!.skipped ? 'stopped' : 'done') : g!.running.length ? 'running' : serverRunning ? 'waiting' : 'stopped',
+    } as StepState]))
+    : steps;
+  const shownProblems = server
+    ? [...(server.job.error ? [server.job.error] : []), ...server.tasks.filter(t => t.status === 'failed').map(t => `${t.label}: ${t.error ?? 'failed'}`)]
+    : problems;
+  const isFinished = server ? !serverRunning : finished;
+  const scriptsOnly = server ? !!server.job.options.check_scripts : checkScripts;
+  const showSetup = !running && !finished && !server;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
@@ -255,13 +339,20 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
           <button onClick={close} aria-label="Close" className="p-2 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        <div ref={bodyRef} className="flex-1 overflow-y-auto p-6 space-y-5">
           {showSetup && (
             <>
+              {startError && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">{startError}</p>}
+              {offerLocal && (
+                <div role="alert" className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-2">
+                  <p>The build service is not set up on the server yet, so the build cannot run in the background. You can build in this browser instead; keep this page open until it finishes.</p>
+                  <button onClick={start} disabled={!canStart} className="px-3 py-1.5 text-xs font-semibold bg-white border border-amber-300 rounded-lg disabled:opacity-50">Build in this browser</button>
+                </div>
+              )}
               {!nothingToDo ? (
                 <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
                   Takes about {minutes} minute{minutes === 1 ? '' : 's'} and uses about {tokens} AI tokens{lecturesToRun.length && !checkScripts ? ', plus the video minutes' : ''}.
-                  Keep this page open until the writing is finished.{lecturesToRun.length && !checkScripts ? ' The videos keep being made after that and are added to each week when ready (the next time you open the course, if it is closed).' : ''}
+                  It runs on our servers, so you can close this window or leave the page and come back later.{lecturesToRun.length && !checkScripts ? ' Each video is added to its week when it is ready.' : ''}
                 </p>
               ) : (
                 <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">Nothing is missing. You can download the whole course as a PowerPoint below.</p>
@@ -307,8 +398,8 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
 
           {!showSetup && (
             <ol className="space-y-3" aria-live="polite">
-              {(Object.keys(STEP_LABEL) as StepKey[]).filter(k => steps[k]).map(k => {
-                const s = steps[k] as StepState;
+              {(Object.keys(STEP_LABEL) as StepKey[]).filter(k => shownSteps[k]).map(k => {
+                const s = shownSteps[k] as StepState;
                 const Icon = STEP_LABEL[k].icon;
                 return (
                   <li key={k} className="border border-slate-200 rounded-xl px-4 py-3">
@@ -330,24 +421,33 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
             </ol>
           )}
 
-          {finished && (
+          {serverRunning && (
+            <p className="text-xs text-slate-500">This keeps going on our servers. You can close this window; progress also shows at the top of the course.</p>
+          )}
+
+          {isFinished && !showSetup && (
             <div className="text-sm text-slate-700 space-y-1.5">
-              <p className="font-semibold text-slate-900">{problems.length ? 'Finished, with some problems.' : 'Done.'}</p>
-              {steps.lectures && !checkScripts && <p>The lecture videos are being made, usually within 30 minutes. Each one is added to its week when ready; if you close the course before then, they are added the next time you open it.</p>}
-              {steps.lectures && checkScripts && <p>The lecture scripts are written. Open <strong>Weekly AI lectures</strong> to check them and make the videos.</p>}
-              {steps.capstone && <p>The capstone is saved <strong>hidden</strong>. Check it on the Assessments tab, then make it visible.</p>}
+              <p className="font-semibold text-slate-900">{server?.job.status === 'stopped' ? 'Stopped.' : shownProblems.length ? 'Finished, with some problems.' : 'Done.'}</p>
+              {shownSteps.lectures && !scriptsOnly && <p>The lecture videos are being made, usually within 30 minutes. Each one is added to its week when ready; if you close the course before then, they are added the next time you open it.</p>}
+              {shownSteps.lectures && scriptsOnly && <p>The lecture scripts are written. Open <strong>Weekly AI lectures</strong> to check them and make the videos.</p>}
+              {shownSteps.capstone && <p>The capstone is saved <strong>hidden</strong>. Check it on the Assessments tab, then make it visible.</p>}
+              {shownProblems.length > 0 && <p>Press <strong>Build the whole course</strong> again to retry what failed.</p>}
             </div>
           )}
 
-          {problems.length > 0 && (
+          {shownProblems.length > 0 && (
             <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 space-y-1 max-h-40 overflow-y-auto">
-              {problems.map((p, i) => <p key={i}>{p}</p>)}
+              {shownProblems.map((p, i) => <p key={i}>{p}</p>)}
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-2 px-6 py-4 border-t border-slate-100 shrink-0 flex-wrap">
-          {running ? (
+          {serverRunning ? (
+            <button onClick={stopOnServer} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50">
+              <Square className="w-3.5 h-3.5" /> Stop after the current items
+            </button>
+          ) : running ? (
             <button onClick={stop} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50">
               <Square className="w-3.5 h-3.5" /> Stop after the current items
             </button>
@@ -357,15 +457,17 @@ export default function BuildCourseModal({ ws, only, onClose, onChanged, onDownl
             </button>
           )}
           <div className="ml-auto flex items-center gap-2">
-            {finished ? (
+            {serverRunning ? (
+              <button onClick={onClose} className="px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl">Close (it keeps going)</button>
+            ) : isFinished && !showSetup ? (
               <button onClick={onClose} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl"><BookOpen className="w-4 h-4" /> Back to the course</button>
             ) : !running && (
               <>
               {!nothingToDo && needPresenter && !canStart && (
                 <span className="text-xs text-slate-500 max-w-[220px] text-right">For the videos, choose a presenter and voice and tick the box above.</span>
               )}
-              <button onClick={start} disabled={!canStart} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl">
-                <Sparkles className="w-4 h-4" /> Build it
+              <button onClick={startOnServer} disabled={!canStart || starting} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl">
+                {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Build it
               </button>
               </>
             )}

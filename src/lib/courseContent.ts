@@ -74,6 +74,17 @@ async function replaceDocument(lessonId: string, courseId: string, type: 'notes'
   if (error) throw new Error('Could not save the generated materials. Check you have permission to edit this course.');
 }
 
+/** Text a teacher wrote into the lesson themselves; long enough to count as its notes. */
+export const hasOwnNotes = (lesson: { content?: string | null }) => stripHtml(lesson.content ?? '').length > 400;
+
+/** The lesson's saved notes, or the teacher's own lesson text when there are none. */
+async function existingNotes(lesson: ContentLesson): Promise<string> {
+  const { data } = await supabase.from('lesson_documents')
+    .select('content_html').eq('lesson_id', lesson.id).eq('type', 'notes').maybeSingle();
+  if (data?.content_html) return data.content_html;
+  return hasOwnNotes(lesson) ? lesson.content ?? '' : '';
+}
+
 export interface LessonJob {
   section: ContentSection;
   lesson: ContentLesson;
@@ -135,11 +146,7 @@ export async function generateLessonMaterials(
   }
 
   if (job.needSlides) {
-    if (!notesHtml) {
-      const { data } = await supabase.from('lesson_documents')
-        .select('content_html').eq('lesson_id', lesson.id).eq('type', 'notes').maybeSingle();
-      notesHtml = data?.content_html ?? '';
-    }
+    if (!notesHtml) notesHtml = await existingNotes(lesson);
     if (!notesHtml) throw new Error('This lesson has no notes to build slides from.');
     onStage?.('slides');
     const deck = await generateLessonSlides({
@@ -154,11 +161,7 @@ export async function generateLessonMaterials(
   }
 
   if (job.needGuide) {
-    if (!notesHtml) {
-      const { data } = await supabase.from('lesson_documents')
-        .select('content_html').eq('lesson_id', lesson.id).eq('type', 'notes').maybeSingle();
-      notesHtml = data?.content_html ?? '';
-    }
+    if (!notesHtml) notesHtml = await existingNotes(lesson);
     if (!notesHtml) throw new Error('This lesson has no notes to plan a session from.');
     onStage?.('guide');
     const guide = await generateTeacherGuide({

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Loader2, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { X, Loader2, ChevronDown, ChevronUp, ExternalLink, Sparkles, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../lib/supabase';
 import { sanitizeHtml, safeUrl } from '../../lib/utils';
-import type { RubricCriterion } from '../../lib/workspace';
+import { requestMarkSuggestion, loadMarkSuggestion, suggestionToScores, suggestedTotal } from '../../lib/aiMarking';
+import type { MarkableAssignment, MarkSuggestion } from '../../lib/aiMarking';
 import NumberInput from '../ui/NumberInput';
 
 export interface GradableSubmission {
@@ -18,13 +19,15 @@ export interface GradableSubmission {
 }
 
 interface Props {
-  assignment: { id: string; title: string; total_points: number | null; rubric: RubricCriterion[] };
+  assignment: MarkableAssignment;
+  /** An AI suggestion already made for this submission. */
+  suggestion?: MarkSuggestion | null;
   submission: GradableSubmission;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export default function GradeSubmissionModal({ assignment, submission, onClose, onSaved }: Props) {
+export default function GradeSubmissionModal({ assignment, submission, suggestion: givenSuggestion, onClose, onSaved }: Props) {
   const rubric = useMemo(() => assignment.rubric ?? [], [assignment.rubric]);
   const total = assignment.total_points ?? 100;
   const [scores, setScores] = useState<Record<string, number>>(submission.rubric_scores ?? {});
@@ -33,6 +36,41 @@ export default function GradeSubmissionModal({ assignment, submission, onClose, 
   const [saving, setSaving] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [answer, setAnswer] = useState<{ solution_html: string; marking_notes: string } | null>(null);
+  const [suggestion, setSuggestion] = useState<MarkSuggestion | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const ungraded = submission.grade == null;
+
+  const applySuggestion = (s: MarkSuggestion, replaceFeedback: boolean) => {
+    setSuggestion(s);
+    if (rubric.length) setScores(suggestionToScores(rubric, s));
+    else setManualGrade(suggestedTotal(assignment, s));
+    if (replaceFeedback) setFeedback(s.feedback);
+  };
+
+  // An earlier suggestion is shown, and filled in when the work is not marked yet
+  useEffect(() => {
+    let active = true;
+    const use = (s: MarkSuggestion | null) => { if (active && s) { if (ungraded) applySuggestion(s, !submission.feedback); else setSuggestion(s); } };
+    if (givenSuggestion !== undefined) use(givenSuggestion);
+    else loadMarkSuggestion(submission.id).then(use).catch(() => {});
+    return () => { active = false; };
+    // Once, when the dialog opens
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submission.id]);
+
+  const suggest = async () => {
+    setSuggesting(true);
+    try {
+      const s = await requestMarkSuggestion(assignment, submission);
+      const replace = !feedback.trim() || window.confirm('Replace your feedback with the AI\'s suggested feedback?');
+      applySuggestion(s, replace);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'The AI could not suggest a mark.');
+    } finally {
+      setSuggesting(false);
+    }
+  };
+  const reasonFor = (name: string) => suggestion?.criteria.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase())?.reason;
 
   useEffect(() => {
     if (!showAnswer || answer) return;
@@ -99,12 +137,28 @@ export default function GradeSubmissionModal({ assignment, submission, onClose, 
             )}
           </div>
 
+          <div className="flex items-start gap-3 flex-wrap">
+            <button onClick={suggest} disabled={suggesting || !submission.content?.trim()} title={submission.content?.trim() ? undefined : 'There is no written answer to mark'}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-50 disabled:opacity-50">
+              {suggesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {suggestion ? 'Suggest again' : 'Suggest marks with AI'}
+            </button>
+            {suggestion && (
+              <div role="status" className="flex-1 min-w-[220px] text-xs bg-sky-50 border border-sky-200 text-sky-900 rounded-lg px-3 py-2 space-y-1">
+                <p><strong>AI suggestion: {suggestedTotal(assignment, suggestion)} / {total}</strong> · {suggestion.confidence} confidence. Check each score and the feedback before saving; nothing is shown to the student until you save.</p>
+                {suggestion.flags.length > 0 && (
+                  <p className="flex items-start gap-1 text-amber-800"><AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />{suggestion.flags.join(' · ')}</p>
+                )}
+              </div>
+            )}
+          </div>
+
           {rubric.length > 0 ? (
             <div className="space-y-3">
               <p className="text-xs font-semibold text-slate-600">Rubric: choose a level for each criterion</p>
               {rubric.map(c => (
                 <fieldset key={c.name} className="border border-slate-200 rounded-xl p-3">
                   <legend className="px-1 text-sm font-semibold text-slate-800">{c.name} <span className="font-normal text-slate-500">({scores[c.name] ?? '–'} / {c.points})</span></legend>
+                  {reasonFor(c.name) && <p className="text-xs text-sky-800 bg-sky-50 rounded-md px-2 py-1.5 mb-2"><Sparkles className="inline w-3 h-3 mr-1" />{reasonFor(c.name)}</p>}
                   <div className="grid sm:grid-cols-2 gap-2">
                     {c.levels.map(lv => {
                       const active = scores[c.name] === lv.points;

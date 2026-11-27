@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Save, X, Image, DollarSign, Globe, Loader2 } from 'lucide-react';
+import { Save, X, Image, DollarSign, Globe, Loader2, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../lib/supabase';
 import { safeUrl } from '../../lib/utils';
@@ -9,6 +9,8 @@ import NumberInput from '../ui/NumberInput';
 interface Props {
   courseId: string;
   onSaved: () => Promise<void> | void;
+  /** Copy this course for a new term. */
+  onCopy?: () => void;
 }
 
 interface Form {
@@ -24,7 +26,7 @@ interface Form {
 
 const EMPTY: Form = { title: '', short_description: '', description: '', category: '', level: 'beginner', thumbnail_url: '', is_free: true, price: 0 };
 
-export default function CourseSettings({ courseId, onSaved }: Props) {
+export default function CourseSettings({ courseId, onSaved, onCopy }: Props) {
   const [form, setForm] = useState<Form>(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -179,6 +181,16 @@ export default function CourseSettings({ courseId, onSaved }: Props) {
         <button type="submit" disabled={saving} className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save details
         </button>
+
+        {onCopy && (
+          <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-2">
+            <h2 className="font-semibold text-slate-900">Run it again</h2>
+            <p className="text-sm text-slate-500">Copy everything into a new draft for the next term or another group, with new dates and no students.</p>
+            <button type="button" onClick={onCopy} className="flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50">
+              <Copy className="w-4 h-4" /> Copy for a new term
+            </button>
+          </section>
+        )}
       </div>
     </form>
   );

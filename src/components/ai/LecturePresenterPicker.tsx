@@ -26,10 +26,16 @@ export default function LecturePresenterPicker({ avatarId, voiceId, onChange }: 
     callLectureApi<{ avatars: AvatarOption[]; voices: VoiceOption[] }>('options')
       .then(r => {
         if (!active) return;
-        setAvatars(r.avatars);
-        setVoices(r.voices);
-        if (!initialAvatarRef.current && r.avatars[0]) {
-          onChangeRef.current({ avatarId: r.avatars[0].id, voiceId: r.avatars[0].default_voice_id || r.voices[0]?.id || '' });
+        const avatarList = Array.isArray(r?.avatars) ? r.avatars : [];
+        const voiceList = Array.isArray(r?.voices) ? r.voices : [];
+        if (avatarList.length === 0 || voiceList.length === 0) {
+          setError('No presenters or voices are available from the video service. Check its account, then try again.');
+          return;
+        }
+        setAvatars(avatarList);
+        setVoices(voiceList);
+        if (!initialAvatarRef.current && avatarList[0]) {
+          onChangeRef.current({ avatarId: avatarList[0].id, voiceId: avatarList[0].default_voice_id || voiceList[0]?.id || '' });
         }
       })
       .catch(e => { if (active) setError(e instanceof Error ? e.message : 'Could not load presenters.'); });
