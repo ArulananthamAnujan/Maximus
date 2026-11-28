@@ -196,7 +196,7 @@ async function writeScript(
   if (!apiKey) throw new UserError("AI is not set up yet. An administrator needs to add the ANTHROPIC_API_KEY secret.", 503);
 
   const system = `You write the spoken script for a video lecture delivered by an on-screen presenter.
-Return ONLY valid JSON: {"parts": [string, ...]}. No markdown fences, no text outside the JSON.
+Write it as plain text in exactly this format, with nothing before or after it (no JSON, no markdown): a line that is exactly === PART, then the words the presenter says in that part; then the next === PART line, and so on.
 
 Rules:
 - Teach every key concept of the module, in the order of the lessons provided, as a patient teacher who wants every student to really understand. Use only what the lesson material supports; do not invent facts, figures or sources.
@@ -229,46 +229,89 @@ Rules:
     : "";
   const user = `Course: ${courseTitle}\nLevel: ${level || "general"}\nModule: ${sectionTitle}${planLines ? `\n\nWho this course is for (speak to them directly):\n${planLines}` : ""}\n\nLesson material:\n${material}`;
 
-  let res: Response;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8000,
-        system,
-        messages: [{ role: "user", content: user }],
-      }),
-      signal: AbortSignal.timeout(130_000),
-    });
-  } catch {
-    throw new UserError("The AI took too long to write the script. Please try again.", 504);
+  // The course build waits 145 seconds for this; a second try only fits when the first was quick
+  const deadline = Date.now() + 135_000;
+  for (let attempt = 1; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 8000,
+          system,
+          messages: [{ role: "user", content: attempt === 1 ? user : `${user}\n\nImportant: start each part with a line that is exactly === PART, followed by the words the presenter says.` }],
+        }),
+        signal: AbortSignal.timeout(Math.max(30_000, deadline - Date.now())),
+      });
+    } catch {
+      throw new UserError("The AI took too long to write the script. Please try again.", 504);
+    }
+    if (!res.ok) {
+      console.error("Anthropic error", res.status, (await res.text()).slice(0, 300));
+      throw new UserError(
+        [429, 500, 502, 503, 529].includes(res.status)
+          ? "The AI service is busy right now. Please try again in a minute."
+          : "The AI could not write the script. Please try again.",
+        503,
+      );
+    }
+    const data = await res.json() as { content: Array<{ type: string; text?: string }>; stop_reason?: string };
+    if (data.stop_reason === "max_tokens") {
+      throw new UserError("This module has too much material for one lecture script. Try a module with fewer lessons.", 422);
+    }
+    const text = data.content.find((c) => c.type === "text")?.text ?? "";
+    const parts = parseScript(text);
+    if (parts.length > 0) return fitPartsToVideos(parts);
+    console.error(`script unreadable (attempt ${attempt}, ${text.length} chars):`, JSON.stringify(text.slice(0, 500)));
+    if (attempt >= 2 || deadline - Date.now() < 70_000) {
+      throw new UserError("The AI returned an unusable script. Please try again.", 502);
+    }
   }
-  if (!res.ok) {
-    console.error("Anthropic error", res.status, (await res.text()).slice(0, 300));
-    throw new UserError(
-      [429, 500, 502, 503, 529].includes(res.status)
-        ? "The AI service is busy right now. Please try again in a minute."
-        : "The AI could not write the script. Please try again.",
-      503,
-    );
-  }
-  const data = await res.json() as { content: Array<{ type: string; text?: string }>; stop_reason?: string };
-  if (data.stop_reason === "max_tokens") {
-    throw new UserError("This module has too much material for one lecture script. Try a module with fewer lessons.", 422);
-  }
-  const text = data.content.find((c) => c.type === "text")?.text ?? "";
-  const match = text.match(/\{[\s\S]*\}/);
-  let parts: string[] = [];
-  try {
-    const parsed = JSON.parse(match ? match[0] : text) as { parts?: unknown };
-    if (Array.isArray(parsed.parts)) parts = parsed.parts.map((p) => String(p ?? "").trim()).filter(Boolean);
-  } catch { /* handled below */ }
-  if (parts.length === 0) throw new UserError("The AI returned an unusable script. Please try again.", 502);
-
-  return fitPartsToVideos(parts);
 }
+
+// A part starts at a line like "=== PART" (also "=== PART 2 ===", "### Part 2", "**=== PART**")
+const PART_LINE = /^[ \t]*(?:\*\*)?[ \t]*(?:={2,}|#{1,6})[ \t]*PART\b.*$/gim;
+
+/** Speech only: drops markdown the presenter would otherwise read out. */
+function cleanSpeech(text: string): string {
+  return text
+    .replace(/^[ \t]*```[\w+-]*[ \t]*$/gm, "")
+    .replace(/\*\*|__/g, "")
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*[-*•][ \t]+/gm, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Reads the script's parts. Plain text with "=== PART" lines; the older JSON answer
+ * ({"parts": [...]}) is still read. An answer too short to be a lecture gives no parts.
+ */
+export function parseScript(text: string): string[] {
+  const raw = text.replace(/\r\n?/g, "\n").trim();
+  let parts: string[] = [];
+  const json = /^(?:```\w*\s*)?\{/.test(raw) ? raw.match(/\{[\s\S]*\}/) : null;
+  if (json) {
+    // A broken JSON answer is not read as speech (the presenter would say the brackets)
+    try {
+      const parsed = JSON.parse(json[0]) as { parts?: unknown };
+      if (!Array.isArray(parsed.parts)) return [];
+      parts = parsed.parts.map((p) => cleanSpeech(String(p ?? ""))).filter(Boolean);
+    } catch {
+      return [];
+    }
+  } else {
+    const chunks = raw.split(PART_LINE);
+    // Text before the first PART line is a remark ("Here is the script"), unless it is clearly speech
+    const body = chunks.length > 1 ? [...(chunks[0].trim().length > 300 ? [chunks[0]] : []), ...chunks.slice(1)] : chunks;
+    parts = body.map(cleanSpeech).filter(Boolean);
+  }
+  return parts.join(" ").length >= 400 ? parts : [];
+}
+
 
 /**
  * Keeps every word of the script while meeting the service's per-video limit: parts that are
