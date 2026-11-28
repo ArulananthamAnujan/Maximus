@@ -28,6 +28,13 @@ const HEYGEN_BASE = "https://api.heygen.com";
 const MAX_PART_CHARS = 4800;
 // Each part is its own video lesson of about 5 to 6 minutes
 const MAX_PARTS = 4;
+// A script that runs a little over is spread over one more video rather than refused
+const MAX_PARTS_ALLOWED = 5;
+// Words for the whole module's lecture: about 380 per lesson, within these limits
+const SCRIPT_WORDS_PER_LESSON = 380;
+const SCRIPT_MIN_WORDS = 800;
+const SCRIPT_TARGET_MAX_WORDS = 2300;
+const SCRIPT_MAX_WORDS = 2600;
 // A little slower than normal speech, so new ideas have time to land (HeyGen allows 0.5 to 1.5)
 const VOICE_SPEED = Math.min(1.5, Math.max(0.5, Number(Deno.env.get("LECTURE_VOICE_SPEED") ?? "0.9") || 0.9));
 const SCRIPT_TOKEN_COST = 5;
@@ -195,6 +202,7 @@ async function writeScript(
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new UserError("AI is not set up yet. An administrator needs to add the ANTHROPIC_API_KEY secret.", 503);
 
+  const targetWords = Math.min(SCRIPT_TARGET_MAX_WORDS, Math.max(SCRIPT_MIN_WORDS, lessons.length * SCRIPT_WORDS_PER_LESSON));
   const system = `You write the spoken script for a video lecture delivered by an on-screen presenter.
 Write it as plain text in exactly this format, with nothing before or after it (no JSON, no markdown): a line that is exactly === PART, then the words the presenter says in that part; then the next === PART line, and so on.
 
@@ -212,7 +220,7 @@ Rules:
 - After a hard point, say it again in different words. Now and then ask the students a quick question, give them a moment ("Think about that for a second."), then answer it.
 - Open by greeting the students, saying what the module covers and why it is useful. Close with a recap of the main ideas and what to do next (the notes, the activities, then the week's quiz).
 - Write numbers, symbols and abbreviations the way they should be spoken.
-- Length: about 350 to 450 words for each lesson in the material, and no more than 2600 words in total. Spend longer on lessons with more material; do not rush any concept to save words.
+- Length: about ${targetWords} words in total for this module's ${lessons.length} lesson${lessons.length === 1 ? "" : "s"}, and never more than ${SCRIPT_MAX_WORDS} words. Share the words between the lessons by how much material each has; do not rush any concept, and leave out side details rather than go over.
 - Split the script into parts of 3200 to 4200 characters each (one part if the whole script is under 4200 characters), at most 4 parts, splitting between concepts. Each part after the first begins by briefly picking up where the previous one ended. Each part must be under 4200 characters.`;
 
   const material = lessons
@@ -231,6 +239,7 @@ Rules:
 
   // The course build waits 145 seconds for this; a second try only fits when the first was quick
   const deadline = Date.now() + 135_000;
+  let retryNote = "Important: start each part with a line that is exactly === PART, followed by the words the presenter says.";
   for (let attempt = 1; ; attempt++) {
     let res: Response;
     try {
@@ -241,7 +250,7 @@ Rules:
           model: "claude-sonnet-4-6",
           max_tokens: 8000,
           system,
-          messages: [{ role: "user", content: attempt === 1 ? user : `${user}\n\nImportant: start each part with a line that is exactly === PART, followed by the words the presenter says.` }],
+          messages: [{ role: "user", content: attempt === 1 ? user : `${user}\n\n${retryNote}` }],
         }),
         signal: AbortSignal.timeout(Math.max(30_000, deadline - Date.now())),
       });
@@ -263,9 +272,19 @@ Rules:
     }
     const text = data.content.find((c) => c.type === "text")?.text ?? "";
     const parts = parseScript(text);
-    if (parts.length > 0) return fitPartsToVideos(parts);
+    const timeForAnother = attempt < 2 && deadline - Date.now() >= 70_000;
+    if (parts.length > 0) {
+      try {
+        return fitPartsToVideos(parts);
+      } catch (err) {
+        if (!(err instanceof ScriptTooLong) || !timeForAnother) throw err;
+        console.warn(`script too long (attempt ${attempt}): about ${err.words} words`);
+        retryNote = `Important: your previous script was about ${err.words} words, which is too long for the videos. Write it again in about ${targetWords} words, and never more than ${SCRIPT_MAX_WORDS}, starting each part with a line that is exactly === PART.`;
+        continue;
+      }
+    }
     console.error(`script unreadable (attempt ${attempt}, ${text.length} chars):`, JSON.stringify(text.slice(0, 500)));
-    if (attempt >= 2 || deadline - Date.now() < 70_000) {
+    if (!timeForAnother) {
       throw new UserError("The AI returned an unusable script. Please try again.", 502);
     }
   }
@@ -313,22 +332,29 @@ export function parseScript(text: string): string[] {
 }
 
 
+/** A script too long for the most videos allowed, even spread evenly. */
+class ScriptTooLong extends UserError {
+  constructor(public words: number) {
+    super(`The script came out too long for the lecture videos (about ${words} words). Please write it again.`, 422);
+  }
+}
+
 /**
  * Keeps every word of the script while meeting the service's per-video limit: parts that are
  * too long are split at sentences, and if that makes too many videos the script is spread
- * evenly over the most videos allowed (never silently dropping the end, with its recap).
+ * evenly over as few videos as it needs (never silently dropping the end, with its recap).
  */
-export function fitPartsToVideos(parts: string[]): string[] {
+export function fitPartsToVideos(parts: string[], maxParts = MAX_PARTS_ALLOWED): string[] {
   const split = parts.flatMap((p) => splitAtSentences(p, MAX_PART_CHARS));
-  if (split.length <= MAX_PARTS) return split;
+  if (split.length <= maxParts) return split;
   const whole = split.join(" ");
-  for (let count = MAX_PARTS; count >= 1; count--) {
+  for (let count = Math.ceil(whole.length / MAX_PART_CHARS); count <= maxParts; count++) {
     // Aim for even parts; the greedy split needs a little room for whole sentences
-    const target = Math.min(MAX_PART_CHARS, Math.ceil(whole.length / count) + 200);
+    const target = Math.min(MAX_PART_CHARS, Math.ceil(whole.length / count) + 150);
     const even = splitAtSentences(whole, target);
-    if (even.length <= MAX_PARTS && even.every((p) => p.length <= MAX_PART_CHARS)) return even;
+    if (even.length <= maxParts && even.every((p) => p.length <= MAX_PART_CHARS)) return even;
   }
-  throw new UserError("The script came out longer than the lecture videos allow. Please write it again.", 422);
+  throw new ScriptTooLong(whole.split(/\s+/).filter(Boolean).length);
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
