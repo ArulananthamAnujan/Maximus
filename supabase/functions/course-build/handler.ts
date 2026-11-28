@@ -475,12 +475,17 @@ async function planTasks(admin: Admin, courseId: string, o: Options) {
 
 // ─── Handler ────────────────────────────────────────────────────────────────
 
+// What this version of the build service can do, so the app can tell when it is out of date
+const BUILD_FEATURES = ["rewrite_lectures"];
+
 export async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   const admin = adminClient();
   try {
     const body = await req.json().catch(() => ({})) as Json;
     const action = String(body.action ?? "");
+
+    if (action === "ping") return json({ ok: true, features: BUILD_FEATURES });
 
     // Internal: our own invocations
     if (action === "pump" || action === "run") {
@@ -523,16 +528,16 @@ export async function handler(req: Request): Promise<Response> {
       const { data: running } = await admin.from("course_build_jobs").select("id").eq("course_id", courseId).eq("status", "running").maybeSingle();
       if (running) {
         await pump(admin, running.id);
-        return json({ job_id: running.id, already_running: true });
+        return json({ job_id: running.id, already_running: true, features: BUILD_FEATURES });
       }
       const tasks = await planTasks(admin, courseId, options);
-      if (tasks.length === 0) return json({ job_id: null, tasks: 0 });
+      if (tasks.length === 0) return json({ job_id: null, tasks: 0, features: BUILD_FEATURES });
       const { data: job, error } = await admin.from("course_build_jobs")
         .insert({ course_id: courseId, created_by: user.id, options }).select("*").single();
       if (error || !job) {
         // Two clicks at once: the other one won
         const { data: other } = await admin.from("course_build_jobs").select("id").eq("course_id", courseId).eq("status", "running").maybeSingle();
-        if (other) return json({ job_id: other.id, already_running: true });
+        if (other) return json({ job_id: other.id, already_running: true, features: BUILD_FEATURES });
         throw new Error("Could not start the build.");
       }
       const { error: tErr } = await admin.from("course_build_tasks").insert(tasks.map(t => ({ ...t, job_id: job.id, course_id: courseId })));
@@ -541,7 +546,7 @@ export async function handler(req: Request): Promise<Response> {
         throw new Error("Could not start the build.");
       }
       await pump(admin, job.id);
-      return json({ job_id: job.id, tasks: tasks.length });
+      return json({ job_id: job.id, tasks: tasks.length, features: BUILD_FEATURES });
     }
 
     if (action === "stop" || action === "kick") {

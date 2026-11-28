@@ -59,7 +59,7 @@ async function callBuildApi<T>(action: string, payload: Record<string, unknown>)
 }
 
 export const startServerBuild = (courseId: string, options: BuildOptions) =>
-  callBuildApi<{ job_id: string | null; tasks?: number; already_running?: boolean }>('start', { course_id: courseId, options });
+  callBuildApi<{ job_id: string | null; tasks?: number; already_running?: boolean; features?: string[] }>('start', { course_id: courseId, options });
 export const stopServerBuild = (jobId: string) => callBuildApi<{ ok: true }>('stop', { job_id: jobId });
 export const kickServerBuild = (jobId: string) => callBuildApi<{ ok: true }>('kick', { job_id: jobId });
 

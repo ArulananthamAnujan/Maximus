@@ -16,7 +16,13 @@ export interface BuildSetup {
   boardsTable: boolean | null;
   /** The course-build function is deployed and database update 058 has been run */
   backgroundBuilds: boolean | null;
+  /** What the deployed build service can do (an older one reports nothing); null when unknown */
+  buildFeatures: string[] | null;
 }
+
+/** True when the deployed build service is known to be too old for a feature. */
+export const buildServiceLacks = (setup: BuildSetup | null, feature: string) =>
+  !!setup?.buildFeatures && !setup.buildFeatures.includes(feature);
 
 // Tasks added after the first AI service: an old server cannot do these.
 const NEWER_TASKS = ['teacher_guide', 'assessment_draft', 'improve_notes', 'summarize_material', 'suggest_marks'];
@@ -39,31 +45,33 @@ async function tableExists(table: string): Promise<boolean | null> {
   return missing ? false : null;
 }
 
-async function functionDeployed(name: string): Promise<boolean | null> {
+/** Whether a function is deployed, and the features it reports to a ping (none from older versions). */
+async function pingFunction(name: string): Promise<{ deployed: boolean | null; features: string[] | null }> {
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return null;
+  if (!session) return { deployed: null, features: null };
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ action: 'ping' }),
     });
-    await res.text().catch(() => '');
-    return res.status !== 404;
+    const data = await res.json().catch(() => ({})) as { features?: unknown };
+    if (res.status === 404) return { deployed: false, features: null };
+    return { deployed: true, features: Array.isArray(data.features) ? data.features.map(String) : [] };
   } catch {
-    return null;
+    return { deployed: null, features: null };
   }
 }
 
 export async function checkBuildSetup(): Promise<BuildSetup> {
-  const [ai, lectureTable, boardsTable, buildTable, buildFunction] = await Promise.all([
+  const [ai, lectureTable, boardsTable, buildTable, build] = await Promise.all([
     aiServiceInfo().catch(() => null),
     tableExists('lecture_videos'),
     tableExists('lesson_boards'),
     tableExists('course_build_jobs'),
-    functionDeployed('course-build'),
+    pingFunction('course-build'),
   ]);
-  const backgroundBuilds = buildTable === false || buildFunction === false ? false
-    : buildTable === null || buildFunction === null ? null : true;
-  return { ai, lectureTable, boardsTable, backgroundBuilds };
+  const backgroundBuilds = buildTable === false || build.deployed === false ? false
+    : buildTable === null || build.deployed === null ? null : true;
+  return { ai, lectureTable, boardsTable, backgroundBuilds, buildFeatures: build.features };
 }

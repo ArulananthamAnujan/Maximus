@@ -13,7 +13,7 @@ import {
   startServerBuild, stopServerBuild, loadLatestBuild, groupProgress, BuildServiceUnavailable, buildCounts, buildMinutesLeft,
 } from '../../lib/courseBuildJob';
 import type { BuildJob, BuildTask } from '../../lib/courseBuildJob';
-import { checkBuildSetup, aiCannot, aiIsOld } from '../../lib/setupCheck';
+import { checkBuildSetup, aiCannot, aiIsOld, buildServiceLacks } from '../../lib/setupCheck';
 import type { BuildSetup } from '../../lib/setupCheck';
 
 interface Problem { label: string; message: string }
@@ -165,6 +165,8 @@ export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures
   const lecturesBlocked = setup?.lectureTable === false;
   const boardsBlocked = lecturesBlocked || setup?.boardsTable === false;
   const runInBrowser = setup?.backgroundBuilds === false;
+  // An older build service ignores "write every lecture again" and would find nothing to do
+  const REWRITE_OUTDATED = 'The build service on your server is an older version, so it cannot write the lectures again yet. Deploy the latest course-build and lecture-video functions, then press Build it again.';
 
   // Opening the dialog while a build is under way shows its progress
   useEffect(() => {
@@ -221,12 +223,14 @@ export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures
   const runCapstone = opt.capstone && !hasCapstone;
   // Boards: lectures that already have a script but no board, plus the scripts written now
   const newScriptWeeks = new Set(lecturesToRun.filter(writesScript).map(x => x.week.id));
-  const weeksNeedingBoard = weeks.filter(w => (boardWeeks?.get(w.id) === false) || (boardWeeks !== null && !boardWeeks.has(w.id) && newScriptWeeks.has(w.id)));
+  // (a new script, including one written again, needs a new board)
+  const weeksNeedingBoard = weeks.filter(w => boardWeeks !== null && (boardWeeks.get(w.id) === false || newScriptWeeks.has(w.id)));
   const boardsAvailable = boardWeeks !== null && !boardsBlocked;
   const boardsToRun = opt.boards && boardsAvailable ? weeksNeedingBoard : [];
   const nothingToDo = lessonJobs.length === 0 && lecturesToRun.length === 0 && quizzesToRun.length === 0 && !runCapstone && boardsToRun.length === 0;
   const needPresenter = lecturesToRun.length > 0 && !checkScripts;
-  const canStart = !nothingToDo && (!needPresenter || (avatarId && voiceId && understood));
+  const rewriteOutdated = rewrite && opt.lectures && !runInBrowser && buildServiceLacks(setup, 'rewrite_lectures');
+  const canStart = !nothingToDo && !rewriteOutdated && (!needPresenter || (avatarId && voiceId && understood));
 
   const tokens = lessonJobs.reduce((n, j) => n + (j.needNotes ? COST.notes : 0) + (j.needSlides ? COST.slides : 0) + (j.needGuide ? COST.guide : 0), 0)
     + lecturesToRun.filter(writesScript).length * COST.script
@@ -373,7 +377,9 @@ export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures
         check_scripts: checkScripts, rewrite_lectures: rewrite && opt.lectures,
         avatar_id: avatarId || undefined, voice_id: voiceId || undefined,
       });
-      if (!r.job_id) { setStartError('Nothing is missing any more.'); return; }
+      const outdated = rewrite && opt.lectures && !(r.features ?? []).includes('rewrite_lectures');
+      if (outdated) setStartError(REWRITE_OUTDATED);
+      if (!r.job_id) { if (!outdated) setStartError('Nothing is missing any more.'); return; }
       const b = await loadLatestBuild(ws.course.id);
       if (b) setServer(b);
     } catch (e) {
@@ -452,7 +458,7 @@ export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures
         <div ref={bodyRef} className="flex-1 overflow-y-auto p-6 space-y-5">
           {showSetup && (
             <>
-              {setup && (aiIsOld(setup) || guidesBlocked || capstoneBlocked || lecturesBlocked || runInBrowser || setup.boardsTable === false) && (
+              {setup && (aiIsOld(setup) || guidesBlocked || capstoneBlocked || lecturesBlocked || runInBrowser || setup.boardsTable === false || rewriteOutdated) && (
                 <div role="status" className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1.5">
                   <p className="font-semibold">Your server is missing some updates</p>
                   <ul className="list-disc pl-5 space-y-1 text-xs">
@@ -461,6 +467,7 @@ export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures
                     )}
                     {!lecturesBlocked && setup.boardsTable === false && <li>Live boards beside the lectures are not set up in the database, so they are switched off. Fix: run database update <strong>059</strong> (lecture boards).</li>}
                     {lecturesBlocked && <li>Lecture videos are not set up in the database, so they are switched off. Fix: run database update <strong>055</strong> (lecture videos).</li>}
+                    {rewriteOutdated && <li>The build service is an older version, so it cannot write the lectures again yet. Fix: deploy the latest <strong>course-build</strong> and <strong>lecture-video</strong> functions, then open this window again.</li>}
                     {runInBrowser && <li>Background building is not set up, so this build runs in this browser: keep this page open until it finishes. Fix: run database update <strong>058</strong> and deploy the <strong>course-build</strong> function.</li>}
                   </ul>
                 </div>
@@ -622,7 +629,9 @@ export default function BuildCourseModal({ ws, only, showLatest, rewriteLectures
               <button onClick={onClose} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold rounded-xl"><BookOpen className="w-4 h-4" /> Back to the course</button>
             ) : !running && (
               <>
-              {!nothingToDo && needPresenter && !canStart && (
+              {rewriteOutdated ? (
+                <span className="text-xs text-amber-700 max-w-[260px] text-right">Deploy the latest course-build and lecture-video functions first (see the note at the top).</span>
+              ) : !nothingToDo && needPresenter && !canStart && (
                 <span className="text-xs text-slate-500 max-w-[220px] text-right">For the videos, choose a presenter and voice and tick the box above.</span>
               )}
               <button onClick={runInBrowser ? start : startOnServer} disabled={!canStart || starting} className="flex items-center gap-2 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-sm font-bold rounded-xl">
