@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Code2, Film, Video, Loader2, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
-import { callLectureApi, MAX_LECTURE_PART_CHARS as MAX_PART_CHARS, lectureMinutes as minutesFor } from '../../lib/lectureApi';
+import { X, Code2, Film, Video, Loader2, CheckCircle2, AlertTriangle, UserRound, Upload, Download, Copy } from 'lucide-react';
+import { callLectureApi, MAX_LECTURE_PART_CHARS as MAX_PART_CHARS, lectureMinutes as minutesFor, scriptsAsText, downloadText, fileNameFrom, videoLength } from '../../lib/lectureApi';
+import { resumableUpload } from '../../lib/resumableUpload';
 import { supabase } from '../../lib/supabase';
 import ComposeLectureModal from '../course/ComposeLectureModal';
 import type { ComposablePart } from '../course/ComposeLectureModal';
@@ -21,7 +22,7 @@ const POLL_MS = 15000;
 export default function LectureVideoModal({ sectionId, sectionTitle, onClose, onLessonAdded }: Props) {
   const [parts, setParts] = useState<Part[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'' | 'draft' | 'save' | 'render' | 'discard' | 'board'>('');
+  const [busy, setBusy] = useState<'' | 'draft' | 'save' | 'render' | 'discard' | 'board' | 'upload'>('');
   const [error, setError] = useState('');
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [avatarId, setAvatarId] = useState('');
@@ -126,6 +127,78 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
   };
 
   const scriptOf = (p: Part) => edits[p.id] ?? p.script;
+
+  // ── Videos made in the teacher's own HeyGen account ──
+  const [copied, setCopied] = useState('');
+  const [uploading, setUploading] = useState<{ partId: string; percent: number } | null>(null);
+  const [ownNotice, setOwnNotice] = useState('');
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const uploadFor = useRef<Part | null>(null);
+  const partName = (p: Part) => (parts.length > 1 ? `Part ${p.part_index + 1}` : 'The lecture');
+
+  const copyScript = async (p: Part) => {
+    try {
+      await navigator.clipboard.writeText(scriptOf(p));
+      setCopied(p.id);
+      setTimeout(() => setCopied(c => (c === p.id ? '' : c)), 2500);
+    } catch {
+      setError('Could not copy the script. Use Download scripts instead.');
+    }
+  };
+
+  const downloadScripts = () => downloadText(
+    `${fileNameFrom(sectionTitle)}-lecture-script.txt`,
+    scriptsAsText(`Lecture script: ${sectionTitle}`, [{ title: sectionTitle, parts: parts.map(p => ({ ...p, script: scriptOf(p) })) }]),
+  );
+
+  const chooseVideo = (p: Part) => { uploadFor.current = p; fileInput.current?.click(); };
+
+  const uploadOwnVideo = async (file: File) => {
+    const p = uploadFor.current;
+    if (!p) return;
+    setError('');
+    setOwnNotice('');
+    if (!/^video\//.test(file.type) && !/\.(mp4|mov|webm)$/i.test(file.name)) {
+      setError('Please choose the MP4 video you downloaded from HeyGen.');
+      return;
+    }
+    if (!p.course_id) { setError('Please close this window and open it again.'); return; }
+    setBusy('upload');
+    setUploading({ partId: p.id, percent: 0 });
+    try {
+      // The board is timed to the saved script, so save what was pasted into HeyGen first
+      if (edits[p.id] !== undefined && edits[p.id] !== p.script && (p.status === 'draft' || p.status === 'failed')) {
+        await callLectureApi('save_script', { id: p.id, script: edits[p.id] });
+      }
+      const seconds = await videoLength(file);
+      if (seconds < 5) throw new Error('Could not read this video. Please choose the MP4 file you downloaded from HeyGen.');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Please sign in again.');
+      const ext = (file.name.split('.').pop() ?? '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
+      const objectName = `${p.course_id}/lecture-${p.id}-heygen-${Date.now()}.${ext}`;
+      await resumableUpload({
+        file, bucket: 'course-videos', objectName, accessToken: session.access_token,
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL as string,
+        onProgress: ({ bytesUploaded, bytesTotal }) => setUploading({ partId: p.id, percent: Math.round((bytesUploaded / bytesTotal) * 100) }),
+      }).catch(err => {
+        const text = err instanceof Error ? err.message : '';
+        throw new Error(/413|too large|maximum allowed size/i.test(text)
+          ? `This video (${Math.round(file.size / 1_048_576)} MB) is larger than your Supabase upload limit. In Supabase, go to Storage, Settings, set "Global file size limit" to 5 GB, then try again.`
+          : 'Could not upload the video. Please try again.');
+      });
+      const r = await callLectureApi<{ parts: Part[] }>('attach', { id: p.id, storage_path: objectName, duration_seconds: Math.round(seconds) });
+      applyParts(r.parts);
+      setEdits(prev => { const next = { ...prev }; delete next[p.id]; return next; });
+      await loadEmbedded();
+      setOwnNotice(`${partName(p)} now plays your HeyGen video${p.board?.steps?.length ? ', with its live board beside it' : ''}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not add the video. Please try again.');
+    } finally {
+      setUploading(null);
+      setBusy('');
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
   const tooLong = drafts.some(p => scriptOf(p).length > MAX_PART_CHARS);
 
   const handleRender = () => run('render', async () => {
@@ -276,6 +349,53 @@ export default function LectureVideoModal({ sectionId, sectionTitle, onClose, on
                     ))}
                   </ol>
                 )}
+              </div>
+
+              {/* Made in the teacher's own HeyGen account, then uploaded here */}
+              <div className="border border-slate-200 rounded-xl px-4 py-3 space-y-2">
+                <div className="flex items-start gap-3 flex-wrap">
+                  <Upload className="w-5 h-5 text-violet-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-slate-800">Make it in your own HeyGen account</p>
+                    <p className="text-xs text-slate-500">Paste a part's script into a new video in HeyGen word for word, make it there with your plan's credits, download the MP4 and upload it here. It becomes the lesson, with its live board.</p>
+                  </div>
+                  <button onClick={downloadScripts} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-50">
+                    <Download className="w-3.5 h-3.5" /> Download {parts.length > 1 ? 'scripts' : 'script'}
+                  </button>
+                </div>
+                {parts.map(p => {
+                  const beingMade = p.status === 'rendering' || p.status === 'saving';
+                  return (
+                    <div key={p.id} className="flex items-center gap-2 flex-wrap bg-slate-50 rounded-lg px-3 py-2">
+                      <span className="flex-1 min-w-[180px] text-xs text-slate-700">
+                        <strong className="font-semibold">{parts.length > 1 ? `Part ${p.part_index + 1} of ${parts.length}` : 'Script'}</strong>
+                        {' · '}{scriptOf(p).length.toLocaleString()} characters
+                        {p.status === 'ready' ? ' · video added' : beingMade ? ' · being made by the presenter service' : ''}
+                      </span>
+                      {uploading?.partId === p.id ? (
+                        <span className="flex items-center gap-1.5 text-xs font-semibold text-sky-700"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading… {uploading.percent}%</span>
+                      ) : (
+                        <>
+                          <button onClick={() => copyScript(p)} disabled={!!busy} className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                            {copied === p.id ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} {copied === p.id ? 'Copied' : 'Copy script'}
+                          </button>
+                          <button onClick={() => chooseVideo(p)} disabled={!!busy || beingMade} className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">
+                            <Upload className="w-3.5 h-3.5" /> {p.status === 'ready' ? 'Replace with my video' : 'Upload my video'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                {ownNotice && <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1.5">{ownNotice}</p>}
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                  className="hidden"
+                  aria-label="Video file from HeyGen"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadOwnVideo(f); }}
+                />
               </div>
 
               {/* Script review */}

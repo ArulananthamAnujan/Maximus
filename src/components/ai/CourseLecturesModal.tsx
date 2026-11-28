@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Video, Loader2, CheckCircle2, AlertTriangle, FileText, Pencil } from 'lucide-react';
-import { callLectureApi, lectureMinutes } from '../../lib/lectureApi';
+import { X, Video, Loader2, CheckCircle2, AlertTriangle, FileText, Pencil, Download } from 'lucide-react';
+import { callLectureApi, lectureMinutes, scriptsAsText, downloadText, fileNameFrom } from '../../lib/lectureApi';
 import type { LecturePart } from '../../lib/lectureApi';
 import LecturePresenterPicker from './LecturePresenterPicker';
 import LectureVideoModal from './LectureVideoModal';
@@ -187,6 +187,25 @@ export default function CourseLecturesModal({ courseId, courseTitle, sections, o
               <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
                 Lectures are written from each week's lesson notes, so generate the notes first (Course materials) for the most complete lectures.
               </p>
+
+              {weeks.some(w => w.parts.length > 0) && (
+                <div className="flex items-start gap-3 flex-wrap border border-slate-200 rounded-xl px-4 py-3">
+                  <div className="flex-1 min-w-[220px]">
+                    <p className="text-sm font-semibold text-slate-800">Make the videos in your own HeyGen account</p>
+                    <p className="text-xs text-slate-600 mt-0.5">Download every script, make each part as a video in HeyGen with your plan's credits, then open each week here and use Upload my video. Each becomes the week's lesson, with its live board.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadText(
+                      `${fileNameFrom(courseTitle)}-lecture-scripts.txt`,
+                      scriptsAsText(`Lecture scripts: ${courseTitle}`, weeks.filter(w => w.parts.length > 0).map(w => ({ title: w.title, parts: w.parts }))),
+                    )}
+                    className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Download all scripts
+                  </button>
+                </div>
+              )}
 
               {onRewriteAll && weeks.some(w => w.parts.length > 0) && (
                 <div className="flex items-start gap-3 flex-wrap bg-sky-50 border border-sky-200 rounded-xl px-4 py-3">

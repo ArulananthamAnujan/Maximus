@@ -694,6 +694,35 @@ async function actionDraft(admin: Admin, userId: string, sectionId: string) {
   return { parts: await listRows(admin, sectionId) };
 }
 
+/**
+ * A video the teacher made from this part's script in their own HeyGen account and uploaded
+ * to course storage: it becomes the part's lesson, exactly like a video made here.
+ */
+async function actionAttach(admin: Admin, userId: string, id: string, storagePath: string, duration: unknown) {
+  if (!id) throw new UserError("id is required");
+  const { data: row } = await admin.from("lecture_videos").select("*").eq("id", id).maybeSingle();
+  if (!row) throw new UserError("This lecture part no longer exists. Close the window and open it again.", 404);
+  await loadSectionForStaff(admin, userId, row.section_id);
+  if (row.status === "rendering" || row.status === "saving") {
+    throw new UserError("The presenter service is still making this part's video. Wait for it to finish before uploading your own.", 409);
+  }
+  const path = String(storagePath ?? "");
+  const folder = String(row.course_id);
+  const name = path.slice(folder.length + 1);
+  if (!path.startsWith(`${folder}/`) || !name || name.includes("/") || path.includes("..") || path.length > 300) {
+    throw new UserError("That upload does not belong to this course.", 400);
+  }
+  // The file must really be in course storage
+  const { data: found, error: listError } = await admin.storage.from(VIDEO_BUCKET).list(folder, { search: name, limit: 10 });
+  if (listError || !(found ?? []).some((f: { name: string }) => f.name === name)) {
+    throw new UserError("The uploaded video could not be found. Please upload it again.", 400);
+  }
+  const seconds = Math.round(Number(duration) || 0);
+  if (seconds < 5 || seconds > 4 * 3600) throw new UserError("Could not read the length of this video. Please upload the MP4 file from HeyGen.", 400);
+  await linkLectureLesson(admin, row, path, seconds);
+  return { parts: await listRows(admin, row.section_id) };
+}
+
 async function actionSaveScript(admin: Admin, userId: string, id: string, script: string) {
   const text = String(script ?? "").trim();
   if (!id) throw new UserError("id is required");
@@ -864,8 +893,16 @@ async function saveFinishedVideo(admin: Admin, row: Record<string, unknown>, det
     throw new SaveError(`storage upload failed (${upload.status}): ${(await upload.text()).slice(0, 200)}`, sizeMb);
   }
 
+  await linkLectureLesson(admin, row, path, Math.round(Number(detail.duration) || 0));
+}
+
+/**
+ * Makes a lecture part's video (made by the presenter service, or uploaded by the teacher
+ * from their own HeyGen account) the module's lesson, with its board, in learning order.
+ */
+async function linkLectureLesson(admin: Admin, row: Record<string, unknown>, path: string, durationSeconds: number) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const url = `${supabaseUrl}/storage/v1/object/public/${VIDEO_BUCKET}/${path}`;
-  const durationSeconds = Math.round(Number(detail.duration) || 0);
   const lessonFields = {
     title: row.title,
     description: LECTURE_LESSON_DESCRIPTION,
@@ -1064,6 +1101,7 @@ Deno.serve(async (req: Request) => {
       }
       case "draft": return json(await actionDraft(admin, user.id, body.section_id));
       case "save_script": return json(await actionSaveScript(admin, user.id, body.id, body.script));
+      case "attach": return json(await actionAttach(admin, user.id, body.id, body.storage_path, body.duration_seconds));
       case "render": return json(await actionRender(admin, user.id, body.section_id, body.avatar_id, body.voice_id));
       case "sync": return json(await actionSync(admin, user.id, body.section_id));
       case "discard": return json(await actionDiscard(admin, user.id, body.section_id));
